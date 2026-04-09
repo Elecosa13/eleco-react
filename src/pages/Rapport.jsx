@@ -10,8 +10,7 @@ export default function Rapport() {
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
   const [sd, setSd] = useState(null)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [debut, setDebut] = useState('07:30')
-  const [fin, setFin] = useState('17:00')
+  const [duree, setDuree] = useState(8)
   const [remarques, setRemarques] = useState('')
   const [materiaux, setMateriaux] = useState([])
   const [catalogue, setCatalogue] = useState([])
@@ -23,17 +22,31 @@ export default function Rapport() {
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [creditUtilise, setCreditUtilise] = useState(0)
+  const CREDIT_JOUR = 8
 
   useEffect(() => {
-    supabase.from('sous_dossiers').select('*, chantiers(nom)').eq('id', id).single().then(({ data }) => { if (data) setSd(data) })
-    supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom').then(({ data }) => {
-      if (data && data.length > 0) {
-        setCatalogue(data)
-        setCategories(['Favoris', ...Array.from(new Set(data.map(a => a.categorie).filter(Boolean)))])
-      }
-      setLoading(false)
-    })
+    supabase.from('sous_dossiers').select('*, chantiers(nom)').eq('id', id).single()
+      .then(({ data }) => { if (data) setSd(data) })
+    supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setCatalogue(data)
+          setCategories(['Favoris', ...Array.from(new Set(data.map(a => a.categorie).filter(Boolean)))])
+        }
+        setLoading(false)
+      })
+    chargerCredit(new Date().toISOString().split('T')[0])
   }, [id])
+
+  async function chargerCredit(d) {
+    const { data } = await supabase
+      .from('time_entries')
+      .select('duree')
+      .eq('employe_id', user.id)
+      .eq('date_travail', d)
+    if (data) setCreditUtilise(data.reduce((s, e) => s + Number(e.duree), 0))
+  }
 
   function toggleFavori(favId) {
     const n = favoris.includes(favId) ? favoris.filter(f => f !== favId) : [...favoris, favId]
@@ -59,25 +72,50 @@ export default function Rapport() {
     setMateriaux(materiaux.map(m => m.id === mId ? { ...m, qte: Math.max(0, m.qte + d) } : m).filter(m => m.qte > 0))
   }
 
-  function heures() {
-    const [h1, m1] = debut.split(':').map(Number)
-    const [h2, m2] = fin.split(':').map(Number)
-    return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60
-  }
+  const DUREES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8]
+  const creditRestant = CREDIT_JOUR - creditUtilise
+  const depasse = creditUtilise + duree > CREDIT_JOUR
 
   async function envoyer(e) {
     e.preventDefault()
     if (!user || !sd) return
     setEnvoi(true)
+
     const { data: r } = await supabase.from('rapports').insert({
-      sous_dossier_id: id, employe_id: user.id, date_travail: date, heure_debut: debut, heure_fin: fin, remarques
+      sous_dossier_id: id,
+      employe_id: user.id,
+      date_travail: date,
+      heure_debut: '07:30',
+      heure_fin: '17:00',
+      remarques
     }).select().single()
-    if (r && materiaux.length > 0) {
-      await supabase.from('rapport_materiaux').insert(
-        materiaux.map(m => ({ rapport_id: r.id, ref_article: m.id, designation: m.nom, unite: m.unite, quantite: m.qte, prix_net: m.pu }))
-      )
+
+    if (r) {
+      // Enregistrer dans time_entries
+      await supabase.from('time_entries').insert({
+        employe_id: user.id,
+        date_travail: date,
+        type: 'chantier',
+        reference_id: r.id,
+        duree
+      })
+
+      if (materiaux.length > 0) {
+        await supabase.from('rapport_materiaux').insert(
+          materiaux.map(m => ({
+            rapport_id: r.id,
+            ref_article: m.id,
+            designation: m.nom,
+            unite: m.unite,
+            quantite: m.qte,
+            prix_net: m.pu
+          }))
+        )
+      }
     }
-    setEnvoi(false); setSucces(true)
+
+    setEnvoi(false)
+    setSucces(true)
     setTimeout(() => navigate(`/employe/chantier/${sd.chantier_id}`), 2000)
   }
 
@@ -106,9 +144,7 @@ export default function Rapport() {
               border: catFiltre === c ? 'none' : '1px solid #ddd',
               background: catFiltre === c ? '#185FA5' : 'white',
               color: catFiltre === c ? 'white' : '#333', whiteSpace: 'nowrap'
-            }}>
-              {c === 'Favoris' ? `⭐ Favoris (${favoris.length})` : c}
-            </button>
+            }}>{c === 'Favoris' ? `⭐ Favoris (${favoris.length})` : c}</button>
           ))}
         </div>
         {loading && <div style={{ textAlign: 'center', padding: '30px', color: '#888' }}>Chargement...</div>}
@@ -158,15 +194,42 @@ export default function Rapport() {
       </div>
       <form onSubmit={envoyer}>
         <div className="page-content">
+
+          {/* Crédit restant */}
+          <div style={{
+            background: depasse ? '#FCEBEB' : '#E6F1FB',
+            border: `1px solid ${depasse ? '#f09595' : '#185FA5'}`,
+            borderRadius: '8px', padding: '10px 14px', fontSize: '12px',
+            color: depasse ? '#A32D2D' : '#185FA5', fontWeight: 500
+          }}>
+            {depasse
+              ? `⚠️ Dépassement — crédit restant : ${creditRestant.toFixed(1)}h`
+              : `Crédit restant aujourd'hui : ${creditRestant.toFixed(1)}h`}
+          </div>
+
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Heures travaillées</div>
-            <div className="form-group"><label>Date</label><input type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
-            <div className="grid2">
-              <div className="form-group"><label>Début</label><input type="time" value={debut} onChange={e => setDebut(e.target.value)} required /></div>
-              <div className="form-group"><label>Fin</label><input type="time" value={fin} onChange={e => setFin(e.target.value)} required /></div>
+            <div className="form-group">
+              <label>Date</label>
+              <input type="date" value={date} onChange={e => { setDate(e.target.value); chargerCredit(e.target.value) }} required />
             </div>
-            <div style={{ fontSize: '12px', color: '#185FA5', fontWeight: 500 }}>Durée : {heures().toFixed(1)}h</div>
+            <div className="form-group">
+              <label>Durée sur ce chantier</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                {DUREES.map(d => (
+                  <button key={d} type="button" onClick={() => setDuree(d)} style={{
+                    padding: '8px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 500,
+                    cursor: 'pointer', border: duree === d ? 'none' : '1px solid #ddd',
+                    background: duree === d ? '#185FA5' : 'white',
+                    color: duree === d ? 'white' : '#333'
+                  }}>
+                    {d % 1 === 0 ? `${d}h` : `${Math.floor(d)}h30`}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
+
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
@@ -184,10 +247,12 @@ export default function Rapport() {
               </div>
             ))}
           </div>
+
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Remarques</div>
             <textarea placeholder="Observations..." value={remarques} onChange={e => setRemarques(e.target.value)} rows={3} />
           </div>
+
           <button type="submit" className="btn-primary" disabled={envoi}>{envoi ? 'Envoi...' : '✓ Envoyer le rapport'}</button>
         </div>
       </form>

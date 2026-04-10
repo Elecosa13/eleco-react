@@ -16,13 +16,7 @@ export default function Admin() {
   const [sousDossierActif, setSousDossierActif] = useState(null)
   const [rapports, setRapports] = useState([])
   const [rapportDetail, setRapportDetail] = useState(null)
-  const [depannageDetail, setDepannageDetail] = useState(null)
   const [catalogue, setCatalogue] = useState([])
-  const [catalogueVue, setCatalogueVue] = useState(false)
-  const [recherche, setRecherche] = useState('')
-  const [categories, setCategories] = useState([])
-  const [catFiltre, setCatFiltre] = useState('Tous')
-  const [loadingCat, setLoadingCat] = useState(true)
   const [confirm, setConfirm] = useState(null)
   const [corbeille, setCorbeille] = useState([])
   const [vueCorbeille, setVueCorbeille] = useState(false)
@@ -34,6 +28,10 @@ export default function Admin() {
   const [nouveauSd, setNouveauSd] = useState(false)
   const [nouveauSdNom, setNouveauSdNom] = useState('')
   const [editMateriaux, setEditMateriaux] = useState(null)
+  const [ajoutArticleVue, setAjoutArticleVue] = useState(false)
+  const [rechercheArticle, setRechercheArticle] = useState('')
+  const [catFiltre, setCatFiltre] = useState('Tous')
+  const [categories, setCategories] = useState([])
 
   useEffect(() => { chargerTout() }, [])
 
@@ -55,7 +53,6 @@ export default function Admin() {
     if (cat) {
       setCatalogue(cat)
       setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
-      setLoadingCat(false)
     }
   }
 
@@ -73,42 +70,49 @@ export default function Admin() {
 
   function deconnecter() { localStorage.removeItem('eleco_user'); navigate('/') }
 
-  // SUPPRESSION AVEC CORBEILLE
+  // CORBEILLE — stocke tout en 1 bloc
   async function supprimerChantier(c) {
-    setCorbeille(prev => [...prev, { type: 'chantier', data: c }])
+    const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
+    setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
     await supabase.from('chantiers').update({ actif: false }).eq('id', c.id)
-    chargerTout()
-    setConfirm(null)
+    chargerTout(); setConfirm(null); setVue('chantiers'); setChantierActif(null)
   }
 
   async function supprimerSousDossier(sd) {
-    setCorbeille(prev => [...prev, { type: 'sous_dossier', data: sd }])
+    const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
+    setCorbeille(prev => [...prev, { type: 'sous_dossier', label: sd.nom, data: sd, enfants: raps || [] }])
     await supabase.from('sous_dossiers').delete().eq('id', sd.id)
-    chargerSousDossiers(chantierActif.id)
-    setConfirm(null)
+    chargerSousDossiers(chantierActif.id); setConfirm(null)
   }
 
   async function supprimerRapport(r) {
-    setCorbeille(prev => [...prev, { type: 'rapport', data: r }])
+    setCorbeille(prev => [...prev, { type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }])
     await supabase.from('rapports').delete().eq('id', r.id)
-    chargerRapports(sousDossierActif.id)
-    setRapportDetail(null)
-    setConfirm(null)
+    if (sousDossierActif) chargerRapports(sousDossierActif.id)
+    setRapportDetail(null); setConfirm(null)
   }
 
   async function restaurerCorbeille(item) {
     if (item.type === 'chantier') {
       await supabase.from('chantiers').update({ actif: true }).eq('id', item.data.id)
     } else if (item.type === 'sous_dossier') {
-      await supabase.from('sous_dossiers').insert(item.data)
+      await supabase.from('sous_dossiers').insert({ chantier_id: item.data.chantier_id, nom: item.data.nom })
     } else if (item.type === 'rapport') {
-      await supabase.from('rapports').insert(item.data)
+      const { data: newR } = await supabase.from('rapports').insert({
+        sous_dossier_id: item.data.sous_dossier_id, employe_id: item.data.employe_id,
+        date_travail: item.data.date_travail, heure_debut: item.data.heure_debut,
+        heure_fin: item.data.heure_fin, remarques: item.data.remarques, valide: item.data.valide
+      }).select().single()
+      if (newR && item.data.rapport_materiaux?.length > 0) {
+        await supabase.from('rapport_materiaux').insert(
+          item.data.rapport_materiaux.map(m => ({ rapport_id: newR.id, ref_article: m.ref_article, designation: m.designation, unite: m.unite, quantite: m.quantite, prix_net: m.prix_net }))
+        )
+      }
     }
     setCorbeille(prev => prev.filter(i => i !== item))
     chargerTout()
   }
 
-  // RENOMMER
   async function renommer() {
     if (!renommerItem || !nouveauNom.trim()) return
     if (renommerItem.type === 'chantier') {
@@ -118,11 +122,9 @@ export default function Admin() {
       await supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id)
       chargerSousDossiers(chantierActif.id)
     }
-    setRenommerItem(null)
-    setNouveauNom('')
+    setRenommerItem(null); setNouveauNom('')
   }
 
-  // VALIDER RAPPORT
   async function valider(rid) {
     await supabase.from('rapports').update({ valide: true }).eq('id', rid)
     chargerTout()
@@ -130,17 +132,24 @@ export default function Admin() {
     setRapportDetail(null)
   }
 
-  // MODIFIER MATERIAUX RAPPORT
   async function sauvegarderMateriaux(rapportId, newMat) {
     await supabase.from('rapport_materiaux').delete().eq('rapport_id', rapportId)
     if (newMat.length > 0) {
       await supabase.from('rapport_materiaux').insert(
-        newMat.map(m => ({ rapport_id: rapportId, ref_article: m.ref_article, designation: m.designation, unite: m.unite, quantite: m.quantite, prix_net: m.prix_net }))
+        newMat.map(m => ({
+          rapport_id: rapportId,
+          ref_article: m.ref_article || m.id,
+          designation: m.designation || m.nom,
+          unite: m.unite,
+          quantite: m.quantite,
+          prix_net: m.prix_net || m.pu || 0
+        }))
       )
     }
     if (sousDossierActif) chargerRapports(sousDossierActif.id)
     chargerTout()
     setEditMateriaux(null)
+    setAjoutArticleVue(false)
   }
 
   function totaux(r) {
@@ -153,14 +162,13 @@ export default function Admin() {
 
   const articlesFiltres = (() => {
     let l = catalogue
-    if (catFiltre !== 'Tous') l = catalogue.filter(a => a.categorie === catFiltre)
-    if (recherche) l = l.filter(a => a.nom.toLowerCase().includes(recherche.toLowerCase()) || (a.categorie || '').toLowerCase().includes(recherche.toLowerCase()))
+    if (catFiltre !== 'Tous') l = l.filter(a => a.categorie === catFiltre)
+    if (rechercheArticle) l = l.filter(a => a.nom.toLowerCase().includes(rechercheArticle.toLowerCase()) || (a.categorie || '').toLowerCase().includes(rechercheArticle.toLowerCase()))
     return l.slice(0, 100)
   })()
 
   // ===================== VUES =====================
 
-  // CORBEILLE
   if (vueCorbeille) return (
     <div>
       <div className="top-bar">
@@ -175,7 +183,7 @@ export default function Admin() {
           <div key={i} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: '12px', color: '#888', textTransform: 'uppercase' }}>{item.type}</div>
-              <div style={{ fontWeight: 500, fontSize: '13px' }}>{item.data.nom || item.data.adresse || 'Élément'}</div>
+              <div style={{ fontWeight: 500, fontSize: '13px' }}>{item.label}</div>
             </div>
             <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => restaurerCorbeille(item)}>↩ Restaurer</button>
           </div>
@@ -184,7 +192,6 @@ export default function Admin() {
     </div>
   )
 
-  // CONFIRMATION SUPPRESSION
   if (confirm) return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
       <div style={{ fontSize: '40px' }}>⚠️</div>
@@ -201,47 +208,104 @@ export default function Admin() {
     </div>
   )
 
-  // EDIT MATERIAUX
-  if (editMateriaux) {
-    const [rapportId, mats, setMats] = [editMateriaux.id, editMateriaux.mats, editMateriaux.setMats]
-    return (
-      <div>
-        <div className="top-bar">
-          <div>
-            <button onClick={() => setEditMateriaux(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Modifier matériaux</div>
-          </div>
-        </div>
-        <div className="page-content">
-          {editMateriaux.mats.map((m, i) => (
-            <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ fontWeight: 500, fontSize: '13px' }}>{m.designation}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '12px', color: '#888' }}>Qté:</span>
-                <button onClick={() => {
-                  const n = [...editMateriaux.mats]
-                  n[i] = { ...n[i], quantite: Math.max(0, n[i].quantite - 1) }
-                  setEditMateriaux({ ...editMateriaux, mats: n.filter(x => x.quantite > 0) })
-                }} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer' }}>−</button>
-                <span style={{ fontWeight: 600 }}>{m.quantite}</span>
-                <button onClick={() => {
-                  const n = [...editMateriaux.mats]
-                  n[i] = { ...n[i], quantite: n[i].quantite + 1 }
-                  setEditMateriaux({ ...editMateriaux, mats: n })
-                }} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#185FA5', color: 'white', cursor: 'pointer' }}>+</button>
-                <button onClick={() => {
-                  setEditMateriaux({ ...editMateriaux, mats: editMateriaux.mats.filter((_, j) => j !== i) })
-                }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#A32D2D', fontSize: '18px', cursor: 'pointer' }}>🗑️</button>
-              </div>
-            </div>
-          ))}
-          <button className="btn-primary" onClick={() => sauvegarderMateriaux(editMateriaux.rapportId, editMateriaux.mats)}>✓ Sauvegarder</button>
+  if (renommerItem) return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
+      <div style={{ fontWeight: 600, fontSize: '16px' }}>Renommer</div>
+      <input value={nouveauNom} onChange={e => setNouveauNom(e.target.value)} placeholder="Nouveau nom"
+        style={{ width: '100%', maxWidth: '300px', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '14px' }} />
+      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '300px' }}>
+        <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setRenommerItem(null); setNouveauNom('') }}>Annuler</button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={renommer}>Renommer</button>
+      </div>
+    </div>
+  )
+
+  // AJOUT ARTICLE DEPUIS CATALOGUE (dans edit matériaux)
+  if (ajoutArticleVue && editMateriaux) return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setAjoutArticleVue(false)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Ajouter article</div>
         </div>
       </div>
-    )
-  }
+      <div className="page-content">
+        <input type="search" placeholder="Rechercher..." value={rechercheArticle} onChange={e => setRechercheArticle(e.target.value)}
+          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', marginBottom: '8px' }} />
+        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '8px' }}>
+          {categories.map(c => (
+            <button key={c} onClick={() => setCatFiltre(c)} style={{
+              padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
+              border: catFiltre === c ? 'none' : '1px solid #ddd',
+              background: catFiltre === c ? '#185FA5' : 'white',
+              color: catFiltre === c ? 'white' : '#333', whiteSpace: 'nowrap'
+            }}>{c}</button>
+          ))}
+        </div>
+        <div className="card" style={{ padding: 0 }}>
+          {articlesFiltres.map((a, i) => {
+            const dejaDans = editMateriaux.mats.find(m => (m.ref_article || m.id) === a.id)
+            return (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', gap: '8px', borderBottom: i < articlesFiltres.length - 1 ? '1px solid #eee' : 'none' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{a.nom}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{a.categorie} · {a.unite}</div>
+                </div>
+                {dejaDans ? (
+                  <span style={{ fontSize: '12px', color: '#27ae60', fontWeight: 500 }}>✓ Ajouté</span>
+                ) : (
+                  <button onClick={() => {
+                    setEditMateriaux(prev => ({ ...prev, mats: [...prev.mats, { ref_article: a.id, designation: a.nom, unite: a.unite, quantite: 1, prix_net: a.prix_net || 0 }] }))
+                  }} style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #185FA5', background: '#E6F1FB', color: '#185FA5', fontSize: '18px', cursor: 'pointer' }}>+</button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        <button className="btn-primary" onClick={() => setAjoutArticleVue(false)}>✓ Confirmer</button>
+      </div>
+    </div>
+  )
 
-  // DETAIL RAPPORT
+  // EDIT MATERIAUX
+  if (editMateriaux) return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setEditMateriaux(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Modifier matériaux</div>
+        </div>
+        <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => { setRechercheArticle(''); setCatFiltre('Tous'); setAjoutArticleVue(true) }}>+ Ajouter</button>
+      </div>
+      <div className="page-content">
+        {editMateriaux.mats.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px' }}>Aucun article</div>}
+        {editMateriaux.mats.map((m, i) => (
+          <div key={i} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500, fontSize: '13px' }}>{m.designation}</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>{m.unite}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button onClick={() => {
+                const n = editMateriaux.mats.map((x, j) => j === i ? { ...x, quantite: Math.max(1, x.quantite - 1) } : x)
+                setEditMateriaux(prev => ({ ...prev, mats: n }))
+              }} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
+              <span style={{ fontWeight: 600, minWidth: '20px', textAlign: 'center' }}>{m.quantite}</span>
+              <button onClick={() => {
+                const n = editMateriaux.mats.map((x, j) => j === i ? { ...x, quantite: x.quantite + 1 } : x)
+                setEditMateriaux(prev => ({ ...prev, mats: n }))
+              }} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
+              <button onClick={() => {
+                setEditMateriaux(prev => ({ ...prev, mats: prev.mats.filter((_, j) => j !== i) }))
+              }} style={{ background: 'none', border: 'none', color: '#A32D2D', fontSize: '18px', cursor: 'pointer' }}>🗑️</button>
+            </div>
+          </div>
+        ))}
+        <button className="btn-primary" onClick={() => sauvegarderMateriaux(editMateriaux.rapportId, editMateriaux.mats)}>✓ Sauvegarder</button>
+      </div>
+    </div>
+  )
+
   if (rapportDetail) {
     const t = totaux(rapportDetail)
     return (
@@ -263,7 +327,6 @@ export default function Admin() {
             </div>
             {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
           </div>
-
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
@@ -277,15 +340,9 @@ export default function Admin() {
               </div>
             ))}
           </div>
-
           <div className="card">
             <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Estimation</div>
-            {[
-              [`Matériaux`, `${t.mat.toFixed(2)} CHF`],
-              [`M.O. (${t.duree}h × ${TAUX})`, `${t.mo.toFixed(2)} CHF`],
-              [`HT`, `${t.ht.toFixed(2)} CHF`],
-              [`TVA 8.1%`, `${t.tva.toFixed(2)} CHF`]
-            ].map(([l, v]) => (
+            {[['Matériaux', `${t.mat.toFixed(2)} CHF`], [`M.O. (${t.duree}h × ${TAUX})`, `${t.mo.toFixed(2)} CHF`], ['HT', `${t.ht.toFixed(2)} CHF`], ['TVA 8.1%', `${t.tva.toFixed(2)} CHF`]].map(([l, v]) => (
               <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
                 <span style={{ color: '#666' }}>{l}</span><span style={{ fontWeight: 500 }}>{v}</span>
               </div>
@@ -294,7 +351,6 @@ export default function Admin() {
               <span>TOTAL TTC</span><span>{t.ttc.toFixed(2)} CHF</span>
             </div>
           </div>
-
           {!rapportDetail.valide && (
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
@@ -309,19 +365,6 @@ export default function Admin() {
     )
   }
 
-  // RENOMMER MODAL
-  if (renommerItem) return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
-      <div style={{ fontWeight: 600, fontSize: '16px' }}>Renommer</div>
-      <input value={nouveauNom} onChange={e => setNouveauNom(e.target.value)} placeholder="Nouveau nom" style={{ width: '100%', maxWidth: '300px', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '14px' }} />
-      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '300px' }}>
-        <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setRenommerItem(null); setNouveauNom('') }}>Annuler</button>
-        <button className="btn-primary" style={{ flex: 1 }} onClick={renommer}>Renommer</button>
-      </div>
-    </div>
-  )
-
-  // SOUS-DOSSIERS D'UN CHANTIER
   if (vue === 'sous_dossiers' && chantierActif) return (
     <div>
       <div className="top-bar">
@@ -343,9 +386,12 @@ export default function Admin() {
           </div>
           {nouveauSd && (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-              <input placeholder="Nom du sous-dossier" value={nouveauSdNom} onChange={e => setNouveauSdNom(e.target.value)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+              <input placeholder="Nom du sous-dossier" value={nouveauSdNom} onChange={e => setNouveauSdNom(e.target.value)}
+                style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
               <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={async () => {
                 if (!nouveauSdNom.trim()) return
+                const existe = sousDossiers.find(s => s.nom.toLowerCase() === nouveauSdNom.toLowerCase())
+                if (existe) { alert(`"${nouveauSdNom}" existe déjà dans ce chantier !`); return }
                 await supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom })
                 setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
               }}>OK</button>
@@ -369,7 +415,6 @@ export default function Admin() {
     </div>
   )
 
-  // RAPPORTS D'UN SOUS-DOSSIER
   if (vue === 'rapports' && sousDossierActif) return (
     <div>
       <div className="top-bar">
@@ -401,7 +446,6 @@ export default function Admin() {
     </div>
   )
 
-  // LISTE CHANTIERS
   if (vue === 'chantiers') return (
     <div>
       <div className="top-bar">
@@ -415,8 +459,10 @@ export default function Admin() {
         {ajoutChantier && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
-            <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
-            <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)}
+              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)}
+              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <div style={{ display: 'flex', gap: '8px' }}>
               <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
               <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
@@ -451,7 +497,6 @@ export default function Admin() {
     </div>
   )
 
-  // LISTE DEPANNAGES
   if (vue === 'depannages') return (
     <div>
       <div className="top-bar">
@@ -468,7 +513,7 @@ export default function Admin() {
             const mo = (d.duree || 1) * TAUX
             const ttc = (mat + mo) * 1.081
             return (
-              <div key={d.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setDepannageDetail(d)}>
+              <div key={d.id} className="row-item" style={{ cursor: 'pointer' }}>
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 500 }}>{d.adresse}</div>
                   <div style={{ fontSize: '11px', color: '#888' }}>{d.employe?.prenom} · {d.duree}h · {new Date(d.date_travail).toLocaleDateString('fr-CH')}</div>
@@ -482,7 +527,6 @@ export default function Admin() {
     </div>
   )
 
-  // ACCUEIL ADMIN
   return (
     <div>
       <div className="top-bar">
@@ -500,9 +544,7 @@ export default function Admin() {
           <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{user?.initiales}</button>
         </div>
       </div>
-
       <div className="page-content">
-        {/* Rapports en attente */}
         {rapportsEnAttente.length > 0 && (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
@@ -523,21 +565,13 @@ export default function Admin() {
             })}
           </div>
         )}
-
-        {/* Navigation chantiers / dépannages */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-          <button onClick={() => setVue('chantiers')} style={{
-            background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px',
-            padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
-          }}>
+          <button onClick={() => setVue('chantiers')} style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>🏗️</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantiers</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{chantiers.length} actifs</span>
           </button>
-          <button onClick={() => setVue('depannages')} style={{
-            background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px',
-            padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
-          }}>
+          <button onClick={() => setVue('depannages')} style={{ background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>⚡</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>

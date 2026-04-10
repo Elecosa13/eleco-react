@@ -7,9 +7,6 @@ export default function Employe() {
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
   const [chantiers, setChantiers] = useState([])
   const [vue, setVue] = useState('accueil')
-  const [nom, setNom] = useState('')
-  const [adresse, setAdresse] = useState('')
-  const [ssd, setSsd] = useState('')
   const [creditUtilise, setCreditUtilise] = useState(0)
   const CREDIT_JOUR = 8
 
@@ -23,7 +20,6 @@ export default function Employe() {
       .order('created_at', { ascending: false })
     if (data) setChantiers(data)
 
-    // Calcul crédit utilisé aujourd'hui
     const aujourd_hui = new Date().toISOString().split('T')[0]
     const { data: entries } = await supabase
       .from('time_entries')
@@ -34,17 +30,6 @@ export default function Employe() {
       const total = entries.reduce((s, e) => s + Number(e.duree), 0)
       setCreditUtilise(total)
     }
-  }
-
-  async function creerChantier(e) {
-    e.preventDefault()
-    const { data: c } = await supabase
-      .from('chantiers')
-      .insert({ nom, adresse })
-      .select()
-      .single()
-    if (c && ssd) await supabase.from('sous_dossiers').insert({ chantier_id: c.id, nom: ssd })
-    setNom(''); setAdresse(''); setSsd(''); setVue('accueil'); charger()
   }
 
   function deconnecter() { localStorage.removeItem('eleco_user'); navigate('/') }
@@ -58,7 +43,7 @@ export default function Employe() {
       <div className="top-bar">
         <div>
           <div style={{ fontWeight: 600, fontSize: '15px' }}>
-            {vue === 'accueil' ? `Bonjour, ${user?.prenom}` : vue === 'nouveau' ? 'Nouveau chantier' : 'Choisir'}
+            {vue === 'accueil' ? `Bonjour, ${user?.prenom}` : 'Chantiers actifs'}
           </div>
           <div style={{ fontSize: '11px', color: '#888' }}>Espace employé</div>
         </div>
@@ -72,8 +57,6 @@ export default function Employe() {
 
       <div className="page-content">
         {vue === 'accueil' && <>
-
-          {/* Crédit heures du jour */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Crédit heures aujourd'hui</span>
@@ -85,13 +68,10 @@ export default function Employe() {
               <div style={{ width: `${pourcent}%`, background: couleurBarre, height: '100%', borderRadius: '6px', transition: 'width 0.3s' }} />
             </div>
             <div style={{ fontSize: '12px', color: '#888' }}>
-              {creditRestant > 0
-                ? `Il reste ${creditRestant.toFixed(1)}h à saisir`
-                : '✅ Journée complète'}
+              {creditRestant > 0 ? `Il reste ${creditRestant.toFixed(1)}h à saisir` : '✅ Journée complète'}
             </div>
           </div>
 
-          {/* Choix type de saisie */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <button
               onClick={() => setVue('chantiers')}
@@ -118,17 +98,12 @@ export default function Employe() {
               <span style={{ fontSize: '11px', color: '#666' }}>Intervention rapide</span>
             </button>
           </div>
-
-          {/* Liste chantiers (visible si vue chantiers) */}
-          {vue === 'accueil' && null}
-
         </>}
 
         {vue === 'chantiers' && <>
           <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div style={{ marginBottom: '12px' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Chantiers actifs</span>
-              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setVue('nouveau')}>+ Nouveau</button>
             </div>
             {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
             {chantiers.map(c => (
@@ -145,15 +120,6 @@ export default function Employe() {
             ))}
           </div>
         </>}
-
-        {vue === 'nouveau' && (
-          <form className="card" onSubmit={creerChantier} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div className="form-group"><label>Nom *</label><input value={nom} onChange={e => setNom(e.target.value)} required placeholder="Ex: Villa Müller" /></div>
-            <div className="form-group"><label>Adresse</label><input value={adresse} onChange={e => setAdresse(e.target.value)} placeholder="Rue, NPA Ville" /></div>
-            <div className="form-group"><label>Premier sous-dossier</label><input value={ssd} onChange={e => setSsd(e.target.value)} placeholder="Ex: Cuisine" /></div>
-            <button type="submit" className="btn-primary">Créer</button>
-          </form>
-        )}
       </div>
     </div>
   )

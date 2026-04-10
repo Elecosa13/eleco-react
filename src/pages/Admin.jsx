@@ -7,78 +7,285 @@ const TAUX = 115
 export default function Admin() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const [vue, setVue] = useState('accueil')
+  const [rapportsEnAttente, setRapportsEnAttente] = useState([])
+  const [chantiers, setChantiers] = useState([])
+  const [depannages, setDepannages] = useState([])
+  const [chantierActif, setChantierActif] = useState(null)
+  const [sousDossiers, setSousDossiers] = useState([])
+  const [sousDossierActif, setSousDossierActif] = useState(null)
   const [rapports, setRapports] = useState([])
-  const [detail, setDetail] = useState(null)
+  const [rapportDetail, setRapportDetail] = useState(null)
+  const [depannageDetail, setDepannageDetail] = useState(null)
+  const [catalogue, setCatalogue] = useState([])
+  const [catalogueVue, setCatalogueVue] = useState(false)
+  const [recherche, setRecherche] = useState('')
+  const [categories, setCategories] = useState([])
+  const [catFiltre, setCatFiltre] = useState('Tous')
+  const [loadingCat, setLoadingCat] = useState(true)
+  const [confirm, setConfirm] = useState(null)
+  const [corbeille, setCorbeille] = useState([])
+  const [vueCorbeille, setVueCorbeille] = useState(false)
+  const [nouveauNomChantier, setNouveauNomChantier] = useState('')
+  const [nouvelleAdresse, setNouvelleAdresse] = useState('')
+  const [ajoutChantier, setAjoutChantier] = useState(false)
+  const [renommerItem, setRenommerItem] = useState(null)
+  const [nouveauNom, setNouveauNom] = useState('')
+  const [nouveauSd, setNouveauSd] = useState(false)
+  const [nouveauSdNom, setNouveauSdNom] = useState('')
+  const [editMateriaux, setEditMateriaux] = useState(null)
 
-  useEffect(() => { charger() }, [])
+  useEffect(() => { chargerTout() }, [])
 
-  async function charger() {
-    const { data } = await supabase.from('rapports').select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)').order('created_at', { ascending: false })
+  async function chargerTout() {
+    const { data: rap } = await supabase.from('rapports')
+      .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
+      .eq('valide', false).order('created_at', { ascending: false })
+    if (rap) setRapportsEnAttente(rap)
+
+    const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+    if (ch) setChantiers(ch)
+
+    const { data: dep } = await supabase.from('depannages')
+      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+      .order('date_travail', { ascending: false })
+    if (dep) setDepannages(dep)
+
+    const { data: cat } = await supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
+    if (cat) {
+      setCatalogue(cat)
+      setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
+      setLoadingCat(false)
+    }
+  }
+
+  async function chargerSousDossiers(chantierId) {
+    const { data } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', chantierId).order('created_at')
+    if (data) setSousDossiers(data)
+  }
+
+  async function chargerRapports(sdId) {
+    const { data } = await supabase.from('rapports')
+      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+      .eq('sous_dossier_id', sdId).order('date_travail', { ascending: false })
     if (data) setRapports(data)
-  }
-
-  async function valider(rid) {
-    await supabase.from('rapports').update({ valide: true }).eq('id', rid)
-    charger(); if (detail?.id === rid) setDetail(null)
-  }
-
-  async function refuser(rid) {
-    if (!confirm('Refuser ce rapport ?')) return
-    await supabase.from('rapports').delete().eq('id', rid)
-    charger(); if (detail?.id === rid) setDetail(null)
-  }
-
-  function hStr(debut, fin) {
-    const [h1, m1] = debut.split(':').map(Number)
-    const [h2, m2] = fin.split(':').map(Number)
-    const d = (h2 * 60 + m2) - (h1 * 60 + m1)
-    return `${Math.floor(d / 60)}h${String(d % 60).padStart(2, '0')}`
-  }
-
-  function totaux(r) {
-    const h = (() => { const [h1, m1] = r.heure_debut.split(':').map(Number); const [h2, m2] = r.heure_fin.split(':').map(Number); return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60 })()
-    const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-    const mo = h * TAUX
-    const ht = mat + mo
-    return { h, mat, mo, ht, tva: ht * 0.081, ttc: ht * 1.081 }
   }
 
   function deconnecter() { localStorage.removeItem('eleco_user'); navigate('/') }
 
-  if (detail) {
-    const t = totaux(detail)
+  // SUPPRESSION AVEC CORBEILLE
+  async function supprimerChantier(c) {
+    setCorbeille(prev => [...prev, { type: 'chantier', data: c }])
+    await supabase.from('chantiers').update({ actif: false }).eq('id', c.id)
+    chargerTout()
+    setConfirm(null)
+  }
+
+  async function supprimerSousDossier(sd) {
+    setCorbeille(prev => [...prev, { type: 'sous_dossier', data: sd }])
+    await supabase.from('sous_dossiers').delete().eq('id', sd.id)
+    chargerSousDossiers(chantierActif.id)
+    setConfirm(null)
+  }
+
+  async function supprimerRapport(r) {
+    setCorbeille(prev => [...prev, { type: 'rapport', data: r }])
+    await supabase.from('rapports').delete().eq('id', r.id)
+    chargerRapports(sousDossierActif.id)
+    setRapportDetail(null)
+    setConfirm(null)
+  }
+
+  async function restaurerCorbeille(item) {
+    if (item.type === 'chantier') {
+      await supabase.from('chantiers').update({ actif: true }).eq('id', item.data.id)
+    } else if (item.type === 'sous_dossier') {
+      await supabase.from('sous_dossiers').insert(item.data)
+    } else if (item.type === 'rapport') {
+      await supabase.from('rapports').insert(item.data)
+    }
+    setCorbeille(prev => prev.filter(i => i !== item))
+    chargerTout()
+  }
+
+  // RENOMMER
+  async function renommer() {
+    if (!renommerItem || !nouveauNom.trim()) return
+    if (renommerItem.type === 'chantier') {
+      await supabase.from('chantiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id)
+      chargerTout()
+    } else if (renommerItem.type === 'sous_dossier') {
+      await supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id)
+      chargerSousDossiers(chantierActif.id)
+    }
+    setRenommerItem(null)
+    setNouveauNom('')
+  }
+
+  // VALIDER RAPPORT
+  async function valider(rid) {
+    await supabase.from('rapports').update({ valide: true }).eq('id', rid)
+    chargerTout()
+    if (sousDossierActif) chargerRapports(sousDossierActif.id)
+    setRapportDetail(null)
+  }
+
+  // MODIFIER MATERIAUX RAPPORT
+  async function sauvegarderMateriaux(rapportId, newMat) {
+    await supabase.from('rapport_materiaux').delete().eq('rapport_id', rapportId)
+    if (newMat.length > 0) {
+      await supabase.from('rapport_materiaux').insert(
+        newMat.map(m => ({ rapport_id: rapportId, ref_article: m.ref_article, designation: m.designation, unite: m.unite, quantite: m.quantite, prix_net: m.prix_net }))
+      )
+    }
+    if (sousDossierActif) chargerRapports(sousDossierActif.id)
+    chargerTout()
+    setEditMateriaux(null)
+  }
+
+  function totaux(r) {
+    const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
+    const duree = r.duree || 8
+    const mo = duree * TAUX
+    const ht = mat + mo
+    return { duree, mat, mo, ht, tva: ht * 0.081, ttc: ht * 1.081 }
+  }
+
+  const articlesFiltres = (() => {
+    let l = catalogue
+    if (catFiltre !== 'Tous') l = catalogue.filter(a => a.categorie === catFiltre)
+    if (recherche) l = l.filter(a => a.nom.toLowerCase().includes(recherche.toLowerCase()) || (a.categorie || '').toLowerCase().includes(recherche.toLowerCase()))
+    return l.slice(0, 100)
+  })()
+
+  // ===================== VUES =====================
+
+  // CORBEILLE
+  if (vueCorbeille) return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVueCorbeille(false)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>🗑️ Corbeille</div>
+        </div>
+      </div>
+      <div className="page-content">
+        {corbeille.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Corbeille vide</div>}
+        {corbeille.map((item, i) => (
+          <div key={i} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', textTransform: 'uppercase' }}>{item.type}</div>
+              <div style={{ fontWeight: 500, fontSize: '13px' }}>{item.data.nom || item.data.adresse || 'Élément'}</div>
+            </div>
+            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => restaurerCorbeille(item)}>↩ Restaurer</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+
+  // CONFIRMATION SUPPRESSION
+  if (confirm) return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
+      <div style={{ fontSize: '40px' }}>⚠️</div>
+      <div style={{ fontWeight: 600, fontSize: '16px', textAlign: 'center' }}>Supprimer "{confirm.data.nom || confirm.data.adresse}" ?</div>
+      <div style={{ fontSize: '13px', color: '#888', textAlign: 'center' }}>L'élément sera mis en corbeille et récupérable.</div>
+      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '300px' }}>
+        <button className="btn-outline" style={{ flex: 1 }} onClick={() => setConfirm(null)}>Annuler</button>
+        <button className="btn-primary" style={{ flex: 1, background: '#A32D2D' }} onClick={() => {
+          if (confirm.type === 'chantier') supprimerChantier(confirm.data)
+          else if (confirm.type === 'sous_dossier') supprimerSousDossier(confirm.data)
+          else if (confirm.type === 'rapport') supprimerRapport(confirm.data)
+        }}>Supprimer</button>
+      </div>
+    </div>
+  )
+
+  // EDIT MATERIAUX
+  if (editMateriaux) {
+    const [rapportId, mats, setMats] = [editMateriaux.id, editMateriaux.mats, editMateriaux.setMats]
     return (
       <div>
         <div className="top-bar">
           <div>
-            <button onClick={() => setDetail(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Détail rapport</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>{detail.sous_dossiers?.chantiers?.nom} › {detail.sous_dossiers?.nom}</div>
+            <button onClick={() => setEditMateriaux(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Modifier matériaux</div>
           </div>
-          {!detail.valide && <span className="badge badge-amber">À valider</span>}
         </div>
         <div className="page-content">
-          <div className="card">
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{detail.employe?.prenom}</div></div>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(detail.date_travail).toLocaleDateString('fr-CH')}</div></div>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{hStr(detail.heure_debut, detail.heure_fin)}</div></div>
+          {editMateriaux.mats.map((m, i) => (
+            <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ fontWeight: 500, fontSize: '13px' }}>{m.designation}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '12px', color: '#888' }}>Qté:</span>
+                <button onClick={() => {
+                  const n = [...editMateriaux.mats]
+                  n[i] = { ...n[i], quantite: Math.max(0, n[i].quantite - 1) }
+                  setEditMateriaux({ ...editMateriaux, mats: n.filter(x => x.quantite > 0) })
+                }} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer' }}>−</button>
+                <span style={{ fontWeight: 600 }}>{m.quantite}</span>
+                <button onClick={() => {
+                  const n = [...editMateriaux.mats]
+                  n[i] = { ...n[i], quantite: n[i].quantite + 1 }
+                  setEditMateriaux({ ...editMateriaux, mats: n })
+                }} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#185FA5', color: 'white', cursor: 'pointer' }}>+</button>
+                <button onClick={() => {
+                  setEditMateriaux({ ...editMateriaux, mats: editMateriaux.mats.filter((_, j) => j !== i) })
+                }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#A32D2D', fontSize: '18px', cursor: 'pointer' }}>🗑️</button>
+              </div>
             </div>
-            {detail.remarques && <div style={{ marginTop: '10px', padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {detail.remarques}</div>}
+          ))}
+          <button className="btn-primary" onClick={() => sauvegarderMateriaux(editMateriaux.rapportId, editMateriaux.mats)}>✓ Sauvegarder</button>
+        </div>
+      </div>
+    )
+  }
+
+  // DETAIL RAPPORT
+  if (rapportDetail) {
+    const t = totaux(rapportDetail)
+    return (
+      <div>
+        <div className="top-bar">
+          <div>
+            <button onClick={() => setRapportDetail(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Rapport</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>{rapportDetail.employe?.prenom} · {new Date(rapportDetail.date_travail).toLocaleDateString('fr-CH')}</div>
           </div>
+          {!rapportDetail.valide && <span className="badge badge-amber">À valider</span>}
+        </div>
+        <div className="page-content">
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{rapportDetail.employe?.prenom}</div></div>
+              <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(rapportDetail.date_travail).toLocaleDateString('fr-CH')}</div></div>
+              <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{t.duree}h</div></div>
+            </div>
+            {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
+          </div>
+
           <div className="card">
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>Matériaux</div>
-            {(detail.rapport_materiaux || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun</div>}
-            {(detail.rapport_materiaux || []).map((m, i) => (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setEditMateriaux({ rapportId: rapportDetail.id, mats: [...(rapportDetail.rapport_materiaux || [])] })}>✏️ Modifier</button>
+            </div>
+            {(rapportDetail.rapport_materiaux || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun</div>}
+            {(rapportDetail.rapport_materiaux || []).map((m, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid #eee' }}>
                 <div><div style={{ fontSize: '13px', fontWeight: 500 }}>{m.designation}</div><div style={{ fontSize: '11px', color: '#888' }}>{m.quantite} × {m.unite}</div></div>
                 <div style={{ fontSize: '13px', fontWeight: 600 }}>{(m.quantite * (m.prix_net || 0)).toFixed(2)} CHF</div>
               </div>
             ))}
           </div>
+
           <div className="card">
             <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Estimation</div>
-            {[['Matériaux', `${t.mat.toFixed(2)} CHF`], [`M.O. (${t.h.toFixed(1)}h × ${TAUX})`, `${t.mo.toFixed(2)} CHF`], ['HT', `${t.ht.toFixed(2)} CHF`], ['TVA 8.1%', `${t.tva.toFixed(2)} CHF`]].map(([l, v]) => (
+            {[
+              [`Matériaux`, `${t.mat.toFixed(2)} CHF`],
+              [`M.O. (${t.duree}h × ${TAUX})`, `${t.mo.toFixed(2)} CHF`],
+              [`HT`, `${t.ht.toFixed(2)} CHF`],
+              [`TVA 8.1%`, `${t.tva.toFixed(2)} CHF`]
+            ].map(([l, v]) => (
               <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
                 <span style={{ color: '#666' }}>{l}</span><span style={{ fontWeight: 500 }}>{v}</span>
               </div>
@@ -87,75 +294,255 @@ export default function Admin() {
               <span>TOTAL TTC</span><span>{t.ttc.toFixed(2)} CHF</span>
             </div>
           </div>
-          {!detail.valide && (
+
+          {!rapportDetail.valide && (
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => refuser(detail.id)} className="btn-outline" style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}>✕ Refuser</button>
-              <button onClick={() => valider(detail.id)} className="btn-primary" style={{ flex: 1 }}>✓ Valider</button>
+              <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
+              <button onClick={() => valider(rapportDetail.id)} className="btn-primary" style={{ flex: 1 }}>✓ Valider</button>
             </div>
+          )}
+          {rapportDetail.valide && (
+            <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
           )}
         </div>
       </div>
     )
   }
 
-  const nonValides = rapports.filter(r => !r.valide)
-  const valides = rapports.filter(r => r.valide)
+  // RENOMMER MODAL
+  if (renommerItem) return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
+      <div style={{ fontWeight: 600, fontSize: '16px' }}>Renommer</div>
+      <input value={nouveauNom} onChange={e => setNouveauNom(e.target.value)} placeholder="Nouveau nom" style={{ width: '100%', maxWidth: '300px', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '14px' }} />
+      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '300px' }}>
+        <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setRenommerItem(null); setNouveauNom('') }}>Annuler</button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={renommer}>Renommer</button>
+      </div>
+    </div>
+  )
 
+  // SOUS-DOSSIERS D'UN CHANTIER
+  if (vue === 'sous_dossiers' && chantierActif) return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => { setVue('chantiers'); setChantierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{chantierActif.nom}</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>{chantierActif.adresse}</div>
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button onClick={() => { setRenommerItem({ type: 'chantier', data: chantierActif }); setNouveauNom(chantierActif.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
+          <button onClick={() => setConfirm({ type: 'chantier', data: chantierActif })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+        </div>
+      </div>
+      <div className="page-content">
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ fontWeight: 600, fontSize: '14px' }}>Sous-dossiers</span>
+            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setNouveauSd(true)}>+ Nouveau</button>
+          </div>
+          {nouveauSd && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <input placeholder="Nom du sous-dossier" value={nouveauSdNom} onChange={e => setNouveauSdNom(e.target.value)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={async () => {
+                if (!nouveauSdNom.trim()) return
+                await supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom })
+                setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
+              }}>OK</button>
+            </div>
+          )}
+          {sousDossiers.length === 0 && !nouveauSd && <div style={{ fontSize: '13px', color: '#888' }}>Aucun sous-dossier</div>}
+          {sousDossiers.map(sd => (
+            <div key={sd.id} className="row-item">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setSousDossierActif(sd); chargerRapports(sd.id); setVue('rapports') }}>
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📁</div>
+                <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button onClick={() => { setRenommerItem({ type: 'sous_dossier', data: sd }); setNouveauNom(sd.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
+                <button onClick={() => setConfirm({ type: 'sous_dossier', data: sd })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  // RAPPORTS D'UN SOUS-DOSSIER
+  if (vue === 'rapports' && sousDossierActif) return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => { setVue('sous_dossiers'); setSousDossierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{sousDossierActif.nom}</div>
+        </div>
+      </div>
+      <div className="page-content">
+        <div className="card">
+          {rapports.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun rapport</div>}
+          {rapports.map(r => {
+            const t = totaux(r)
+            return (
+              <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom} · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{t.duree}h · {(r.rapport_materiaux || []).length} articles</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{t.ttc.toFixed(0)} CHF</div>
+                  {r.valide ? <span className="badge badge-green" style={{ fontSize: '10px' }}>✓</span> : <span className="badge badge-amber" style={{ fontSize: '10px' }}>En attente</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+
+  // LISTE CHANTIERS
+  if (vue === 'chantiers') return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chantiers</div>
+        </div>
+        <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutChantier(true)}>+ Nouveau</button>
+      </div>
+      <div className="page-content">
+        {ajoutChantier && (
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
+            <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
+                if (!nouveauNomChantier.trim()) return
+                const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
+                if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
+                await supabase.from('chantiers').insert({ nom: nouveauNomChantier, adresse: nouvelleAdresse })
+                setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
+              }}>Créer</button>
+            </div>
+          </div>
+        )}
+        <div className="card">
+          {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
+          {chantiers.map(c => (
+            <div key={c.id} className="row-item">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
+                <button onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  // LISTE DEPANNAGES
+  if (vue === 'depannages') return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Dépannages</div>
+        </div>
+      </div>
+      <div className="page-content">
+        <div className="card">
+          {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
+          {depannages.map(d => {
+            const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
+            const mo = (d.duree || 1) * TAUX
+            const ttc = (mat + mo) * 1.081
+            return (
+              <div key={d.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setDepannageDetail(d)}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{d.adresse}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{d.employe?.prenom} · {d.duree}h · {new Date(d.date_travail).toLocaleDateString('fr-CH')}</div>
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+
+  // ACCUEIL ADMIN
   return (
     <div>
       <div className="top-bar">
         <div>
           <div style={{ fontWeight: 600, fontSize: '15px' }}>Bonjour, {user?.prenom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Tableau de bord</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>Tableau de bord admin</div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {corbeille.length > 0 && (
+            <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+              🗑️ {corbeille.length}
+            </button>
+          )}
           <span className="badge badge-amber">Admin</span>
           <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{user?.initiales}</button>
         </div>
       </div>
+
       <div className="page-content">
-        {nonValides.length > 0 && (
+        {/* Rapports en attente */}
+        {rapportsEnAttente.length > 0 && (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>À valider</span>
-              <span className="badge badge-amber">{nonValides.length}</span>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>⏳ À valider</span>
+              <span className="badge badge-amber">{rapportsEnAttente.length}</span>
             </div>
-            {nonValides.map(r => {
+            {rapportsEnAttente.map(r => {
               const t = totaux(r)
               return (
-                <div key={r.id} style={{ paddingBottom: '12px', marginBottom: '12px', borderBottom: '1px solid #eee', cursor: 'pointer' }} onClick={() => setDetail(r)}>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
-                  <div style={{ fontSize: '11px', color: '#888', margin: '3px 0' }}>{r.employe?.prenom} · {hStr(r.heure_debut, r.heure_fin)} · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '11px', color: '#185FA5' }}>Voir détail →</span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#185FA5' }}>{t.ttc.toFixed(0)} CHF</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {valides.length > 0 && (
-          <div className="card">
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Validés</div>
-            {valides.slice(0, 20).map(r => {
-              const t = totaux(r)
-              return (
-                <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setDetail(r)}>
+                <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {t.duree}h · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 600 }}>{t.ttc.toFixed(0)} CHF</div>
-                    <span className="badge badge-green" style={{ fontSize: '10px' }}>✓</span>
-                  </div>
+                  <span style={{ color: '#185FA5' }}>›</span>
                 </div>
               )
             })}
           </div>
         )}
-        {rapports.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucun rapport</div>}
+
+        {/* Navigation chantiers / dépannages */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <button onClick={() => setVue('chantiers')} style={{
+            background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px',
+            padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
+          }}>
+            <span style={{ fontSize: '28px' }}>🏗️</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantiers</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>{chantiers.length} actifs</span>
+          </button>
+          <button onClick={() => setVue('depannages')} style={{
+            background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px',
+            padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
+          }}>
+            <span style={{ fontSize: '28px' }}>⚡</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
+          </button>
+        </div>
       </div>
     </div>
   )

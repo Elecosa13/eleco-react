@@ -68,7 +68,7 @@ export default function Login() {
         <div style={{ fontSize: '15px', fontWeight: 600, textAlign: 'center' }}>Connexion</div>
         <div className="form-group">
           <label>Email</label>
-          <input type="email" placeholder="votre@email.com" value={email} onChange={e => setEmail(e.target.value)} autoCapitalize="none" required />
+          <input type="email" placeholder="prenom@eleco.ch" value={email} onChange={e => setEmail(e.target.value)} autoCapitalize="none" required />
         </div>
         <div className="form-group">
           <label>Mot de passe</label>

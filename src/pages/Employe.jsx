@@ -99,6 +99,13 @@ export default function Employe() {
               <span style={{ fontSize: '11px', color: '#666' }}>Intervention rapide</span>
             </button>
           </div>
+          <button onClick={() => navigate('/employe/heures')} style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '16px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+            <span style={{ fontSize: '28px' }}>⏱️</span>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Mes heures</div>
+              <div style={{ fontSize: '11px', color: '#666' }}>Saisie début · fin · pause</div>
+            </div>
+          </button>
         </>}
 
         {vue === 'chantiers' && <>

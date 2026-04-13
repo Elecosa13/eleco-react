@@ -154,7 +154,90 @@ Notification push (PWA) → tous les employés
 
 ---
 
-## 5. Roadmap — Ordre de priorité
+## 5. Gestion des Heures
+
+### 5.1 Saisie des heures par l'employé
+- Remplace les feuilles papier signées à la main
+- L'employé sélectionne : chantier, date, heure début, heure fin, pause (minutes), commentaire optionnel
+- Calcul automatique des heures nettes : (fin - début) - pause
+- Sauvegarde dans `time_entries`
+
+### 5.2 Colonnes à ajouter à `time_entries`
+- `semaine` int — numéro de semaine ISO (calculé auto selon la date)
+- `annee` int — année
+- `heures_nettes` numeric — (fin - début) - pause
+
+### 5.3 Cumul heures par chantier
+- Vue admin : total heures par chantier en temps réel
+- Somme des `heures_nettes` groupée par `chantier_id`
+
+### 5.4 Feuille hebdomadaire automatique (PDF)
+- Admin sélectionne : employé + semaine
+- PDF généré avec : tableau lundi→dimanche, total heures semaine, signature numérique de l'employé
+- Remplace le papier signé à la main
+
+---
+
+## 6. Signature Numérique
+
+### 6.1 Capture
+- Canvas tactile à la première connexion de l'employé
+- Convertie en PNG base64 et stockée dans Supabase
+
+### 6.2 Table `signatures` (à créer)
+- `id` uuid PK
+- `employe_id` uuid unique FK → `utilisateurs`
+- `signature_base64` text
+- `signee_le` timestamptz
+- `ip_address` text
+- `device_info` text
+
+### 6.3 Usage
+- Intégrée automatiquement dans les feuilles hebdomadaires PDF
+- Intégrée dans le PDF de la charte numérique
+- Non modifiable par l'employé sans validation admin
+
+---
+
+## 7. Charte Numérique Employé
+
+### 7.1 Objectif
+Remplace le document papier signé à l'embauche.
+
+### 7.2 Clauses
+1. Confidentialité — aucune info client/chantier/prix ne peut être divulguée
+2. Usage exclusif professionnel
+3. Interdiction de partager ses identifiants
+4. Aucun screenshot ou export partagé hors entreprise
+5. Signalement de tout accès suspect à l'admin
+6. Données et documents = propriété exclusive de Eleco SA
+7. Valable pour toute la durée du contrat
+8. Violation = mesures disciplinaires (droit suisse du travail)
+
+### 7.3 Flux
+- Première connexion → affichage charte complète (scroll obligatoire)
+- Bouton "J'ai lu et j'accepte" activé seulement après scroll complet
+- Employé signe via canvas → signature sauvegardée dans `signatures`
+- PDF généré (charte + signature + date + IP) → archivé dans Supabase Storage
+- Employé bloqué sur cette page tant qu'il n'a pas signé
+
+### 7.4 Table `chartes_acceptees` (à créer)
+- `id` uuid PK
+- `employe_id` uuid FK → `utilisateurs`
+- `version_charte` text (ex: "v1.0")
+- `acceptee_le` timestamptz
+- `ip_address` text
+- `device_info` text
+- `pdf_url` text
+
+### 7.5 Vue admin
+- Liste employés avec statut : ✅ signé / ❌ en attente
+- Date + IP de signature
+- Téléchargement PDF par employé
+
+---
+
+## 8. Roadmap — Ordre de priorité
 
 ### Phase 1 — Sécurité (URGENT, avant tout le reste)
 - ✅ Activer RLS sur `depannages`, `absences`, `time_entries`
@@ -167,12 +250,26 @@ Notification push (PWA) → tous les employés
 - ✅ Page de connexion avec redirection selon le rôle
 - ✅ Guards de navigation (impossible d'accéder à une route sans le bon rôle)
 
-### Phase 3 — Catalogue de prix
+### Phase 3 — Signature numérique & Charte ✅
+- ✅ Créer tables `signatures` et `chartes_acceptees` (`supabase/migrations/sections_5_6_7.sql`)
+- ✅ Canvas signature tactile dans app employés (`src/pages/Charte.jsx`)
+- ✅ Flux acceptation charte à la première connexion (guard `CharteGuard` dans `App.jsx`)
+- ✅ Génération PDF charte signée + téléchargement auto (jsPDF dans `Charte.jsx`)
+- ✅ Vue admin : statut charte par employé (`vue === 'chartes'` dans `Admin.jsx`)
+- [ ] **TODO Lucas** : exécuter `supabase/migrations/sections_5_6_7.sql` dans Supabase SQL Editor
+
+### Phase 4 — Gestion des heures ✅
+- ✅ Ajouter colonnes `semaine`, `annee`, `heures_nettes`, `heure_debut`, `heure_fin`, `pause_minutes` à `time_entries`
+- ✅ Interface saisie heures dans app employés (`src/pages/SaisieHeures.jsx` — route `/employe/heures`)
+- ✅ Vue cumul heures par chantier (admin — `vue === 'heures'`)
+- ✅ Générateur feuille hebdomadaire PDF avec signature intégrée (admin — `genererFeuilleHebdo()`)
+
+### Phase 5 — Catalogue de prix
 - [ ] Importer les Excel de facturation existants dans `catalogue`
 - [ ] Interface admin pour modifier les prix
 - [ ] Lier le catalogue aux chantiers/dépannages
 
-### Phase 4 — Agent Email (mode test silencieux)
+### Phase 6 — Agent Email (mode test silencieux)
 - [ ] Connexion IMAP Infomaniak (lecture seule)
 - [ ] Détection automatique des bons de Régie
 - [ ] Création automatique du dossier dans `depannages`
@@ -180,24 +277,24 @@ Notification push (PWA) → tous les employés
 - [ ] Table `agent_logs` pour traçabilité
 - [ ] Tests pendant plusieurs semaines — validation manuelle en parallèle
 
-### Phase 5 — Notifications
+### Phase 7 — Notifications
 - [ ] Système de push notifications PWA
 - [ ] Remplacement progressif du groupe WhatsApp
 - [ ] Validation avec les employés
 
-### Phase 6 — Facturation automatique
+### Phase 8 — Facturation automatique
 - [ ] Générateur de facture basé sur le catalogue
 - [ ] Template identique aux Excel existants
 - [ ] Export PDF + sauvegarde Supabase
 
-### Phase 7 — Retard admin
+### Phase 9 — Retard admin
 - [ ] Audit complet de ce qui est en retard
 - [ ] Automatisation des tâches répétitives identifiées
 - [ ] Tableaux de bord pour ton père
 
 ---
 
-## 6. Ce dont Claude Code a besoin pour travailler seul
+## 9. Ce dont Claude Code a besoin pour travailler seul
 
 | Feature | Peut faire seul | Nécessite ton input |
 |---|---|---|
@@ -209,10 +306,17 @@ Notification push (PWA) → tous les employés
 | Import catalogue Excel | ❌ | Les fichiers Excel finalisés |
 | Template facture | ❌ | Validation du format exact |
 | Notifications push | ✅ | Non |
+| Canvas signature employé | ✅ | Non |
+| Flux acceptation charte | ✅ | Non |
+| Génération PDF charte signée | ✅ | Non |
+| Interface saisie heures | ✅ | Non |
+| Cumul heures par chantier | ✅ | Non |
+| Générateur feuille hebdo PDF | ✅ | Non |
+| Contenu final charte | ❌ | Validation recommandée |
 
 ---
 
-## 7. Questions ouvertes à clarifier
+## 10. Questions ouvertes à clarifier
 
 1. **Matching Régie → Chantier** : comment l'agent identifie-t-il quel client correspond à un bon ? Par le nom dans l'email ? Un code ?
 2. **Format des bons de Régie** : ils arrivent toujours en PDF joint ? Ou parfois dans le corps du mail ?
@@ -222,7 +326,7 @@ Notification push (PWA) → tous les employés
 
 ---
 
-## 8. Règles de comportement — TOUJOURS RESPECTER
+## 11. Règles de comportement — TOUJOURS RESPECTER
 
 ### Actions interdites sans confirmation explicite de Lucas
 - Ne jamais supprimer de fichiers ou dossiers
@@ -254,7 +358,7 @@ Notification push (PWA) → tous les employés
 
 ---
 
-## 9. Décisions techniques
+## 12. Décisions techniques
 
 ### Email — Migration info@eleco-sa.ch vers Infomaniak
 

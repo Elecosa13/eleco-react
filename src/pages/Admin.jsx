@@ -61,6 +61,16 @@ export default function Admin() {
   const [empDetailMois, setEmpDetailMois] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })
   const [empDetailRapports, setEmpDetailRapports] = useState([])
   const [empDetailDepannages, setEmpDetailDepannages] = useState([])
+  // Section 5 — Heures
+  const [heuresCumul, setHeuresCumul] = useState([])
+  const [heuresLoading, setHeuresLoading] = useState(false)
+  const [pdfEmp, setPdfEmp] = useState('')
+  const [pdfSemaine, setPdfSemaine] = useState('')
+  const [pdfAnnee, setPdfAnnee] = useState(new Date().getFullYear())
+  const [pdfLoading, setPdfLoading] = useState(false)
+  // Section 7 — Chartes
+  const [chartesEmployes, setChartesEmployes] = useState([])
+  const [chartesLoading, setChartesLoading] = useState(false)
 
   useEffect(() => { chargerTout() }, [])
 
@@ -186,6 +196,121 @@ export default function Admin() {
       .gte('date_travail', debut).lte('date_travail', fin)
       .order('date_travail')
     if (deps) setEmpDetailDepannages(deps)
+  }
+
+  async function chargerHeures() {
+    setHeuresLoading(true)
+    const { data } = await supabase
+      .from('time_entries')
+      .select('chantier_id, heures_nettes, duree, chantiers(nom)')
+      .eq('type', 'heures')
+    if (data) {
+      const cumul = {}
+      for (const e of data) {
+        const id = e.chantier_id || 'inconnu'
+        const nom = e.chantiers?.nom || 'Chantier inconnu'
+        if (!cumul[id]) cumul[id] = { nom, total: 0 }
+        cumul[id].total += Number(e.heures_nettes || e.duree || 0)
+      }
+      setHeuresCumul(Object.values(cumul).sort((a, b) => b.total - a.total))
+    }
+    setHeuresLoading(false)
+  }
+
+  async function chargerChartes() {
+    setChartesLoading(true)
+    const { data: empList } = await supabase
+      .from('utilisateurs')
+      .select('id, prenom, initiales')
+      .eq('role', 'employe')
+      .order('prenom')
+    if (empList) {
+      const { data: chartesList } = await supabase
+        .from('chartes_acceptees')
+        .select('employe_id, acceptee_le')
+        .in('employe_id', empList.map(e => e.id))
+      const map = {}
+      if (chartesList) {
+        for (const c of chartesList) map[c.employe_id] = c.acceptee_le
+      }
+      setChartesEmployes(empList.map(emp => ({
+        ...emp,
+        charteSigne: !!map[emp.id],
+        charteDate: map[emp.id] || null
+      })))
+    }
+    setChartesLoading(false)
+  }
+
+  async function genererFeuilleHebdo() {
+    if (!pdfEmp || !pdfSemaine) return
+    setPdfLoading(true)
+    const { data: entries } = await supabase
+      .from('time_entries')
+      .select('date_travail, heure_debut, heure_fin, pause_minutes, heures_nettes, duree, commentaire, chantiers(nom)')
+      .eq('employe_id', pdfEmp)
+      .eq('type', 'heures')
+      .eq('semaine', parseInt(pdfSemaine))
+      .eq('annee', parseInt(pdfAnnee))
+      .order('date_travail')
+    const { data: sigData } = await supabase
+      .from('signatures')
+      .select('signature_base64')
+      .eq('employe_id', pdfEmp)
+      .maybeSingle()
+    const emp = employes.find(e => e.id === pdfEmp)
+    const { jsPDF } = await import('jspdf')
+    const doc = new jsPDF({ format: 'a4' })
+    const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold')
+    doc.text('Eleco SA — Feuille hebdomadaire', 20, 20)
+    doc.setFontSize(11); doc.setFont('helvetica', 'normal')
+    doc.text(`Employé : ${emp?.prenom || '—'}`, 20, 30)
+    doc.text(`Semaine ${pdfSemaine} — ${pdfAnnee}`, 20, 37)
+    doc.setDrawColor(180); doc.line(20, 42, 190, 42)
+    let y = 52
+    const totalH = (entries || []).reduce((s, e) => s + Number(e.heures_nettes || e.duree || 0), 0)
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+    doc.setFillColor(230, 241, 251); doc.rect(20, y - 5, 170, 8, 'F')
+    doc.text('Jour', 22, y); doc.text('Date', 52, y); doc.text('Chantier', 82, y)
+    doc.text('Horaires', 138, y); doc.text('Heures', 168, y)
+    y += 10; doc.setFont('helvetica', 'normal')
+    for (let wd = 0; wd < 7; wd++) {
+      const dayEntries = (entries || []).filter(e => {
+        return ((new Date(e.date_travail + 'T12:00:00').getDay() + 6) % 7) === wd
+      })
+      if (wd % 2 === 0) {
+        doc.setFillColor(248, 248, 248)
+        doc.rect(20, y - 5, 170, Math.max(1, dayEntries.length) * 8 + 2, 'F')
+      }
+      if (dayEntries.length === 0) {
+        doc.setTextColor(180); doc.text(JOURS[wd], 22, y); doc.text('—', 52, y); doc.setTextColor(0)
+      } else {
+        for (let i = 0; i < dayEntries.length; i++) {
+          const e = dayEntries[i]
+          const dateStr = new Date(e.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')
+          const nomChantier = (e.chantiers?.nom || '—').slice(0, 22)
+          const hor = e.heure_debut && e.heure_fin
+            ? `${e.heure_debut.slice(0, 5)}–${e.heure_fin.slice(0, 5)}`
+            : '—'
+          const heures = Number(e.heures_nettes || e.duree || 0).toFixed(2) + 'h'
+          doc.setTextColor(0)
+          doc.text(JOURS[wd], 22, y + i * 8); doc.text(dateStr, 52, y + i * 8)
+          doc.text(nomChantier, 82, y + i * 8); doc.text(hor, 138, y + i * 8); doc.text(heures, 168, y + i * 8)
+        }
+      }
+      y += Math.max(1, dayEntries.length) * 8 + 2
+      doc.setDrawColor(230); doc.line(20, y - 2, 190, y - 2)
+    }
+    y += 6; doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    doc.text(`Total semaine ${pdfSemaine} : ${totalH.toFixed(2)}h`, 20, y)
+    if (sigData?.signature_base64) {
+      y += 16; doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120)
+      doc.text(`Signature de ${emp?.prenom}`, 20, y); doc.setTextColor(0)
+      y += 4; doc.addImage(sigData.signature_base64, 'PNG', 20, y, 80, 35)
+    }
+    doc.save(`heures_${emp?.prenom || 'employe'}_sem${pdfSemaine}_${pdfAnnee}.pdf`)
+    setPdfLoading(false)
   }
 
   async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
@@ -902,6 +1027,124 @@ export default function Admin() {
     )
   }
 
+  // ===================== HEURES =====================
+  if (vue === 'heures') return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Heures — Cumul par chantier</div>
+        </div>
+      </div>
+      <div className="page-content">
+        {heuresLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '30px 0' }}>Chargement…</div>}
+        {!heuresLoading && heuresCumul.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>
+            Aucune saisie d'heures pour l'instant.
+          </div>
+        )}
+        {!heuresLoading && heuresCumul.length > 0 && (
+          <div className="card">
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Total heures par chantier</div>
+            {heuresCumul.map((c, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < heuresCumul.length - 1 ? '1px solid #eee' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>🏗️</div>
+                  <span style={{ fontSize: '13px', fontWeight: 500 }}>{c.nom}</span>
+                </div>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>{c.total.toFixed(2)}h</span>
+              </div>
+            ))}
+            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '2px solid #185FA5', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5' }}>TOTAL GÉNÉRAL</span>
+              <span style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{heuresCumul.reduce((s, c) => s + c.total, 0).toFixed(2)}h</span>
+            </div>
+          </div>
+        )}
+
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ fontWeight: 600, fontSize: '14px' }}>Feuille hebdomadaire PDF</div>
+          <div className="form-group">
+            <label>Employé</label>
+            <select value={pdfEmp} onChange={e => setPdfEmp(e.target.value)}
+              style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e2e2', fontSize: '14px', background: 'white' }}>
+              <option value="">Sélectionner un employé...</option>
+              {employes.map(e => <option key={e.id} value={e.id}>{e.prenom}</option>)}
+            </select>
+          </div>
+          <div className="grid2">
+            <div className="form-group">
+              <label>Semaine (1–53)</label>
+              <input
+                type="number" min="1" max="53" value={pdfSemaine}
+                onChange={e => setPdfSemaine(e.target.value)}
+                placeholder="ex: 15"
+              />
+            </div>
+            <div className="form-group">
+              <label>Année</label>
+              <input
+                type="number" min="2024" max="2099" value={pdfAnnee}
+                onChange={e => setPdfAnnee(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <button
+            className="btn-primary"
+            disabled={!pdfEmp || !pdfSemaine || pdfLoading}
+            onClick={genererFeuilleHebdo}
+          >
+            {pdfLoading ? 'Génération...' : '⬇ Télécharger PDF'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  // ===================== CHARTES =====================
+  if (vue === 'chartes') return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chartes numériques</div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <span className="badge badge-green">{chartesEmployes.filter(e => e.charteSigne).length} signées</span>
+          <span className="badge badge-red">{chartesEmployes.filter(e => !e.charteSigne).length} en attente</span>
+        </div>
+      </div>
+      <div className="page-content">
+        {chartesLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '30px 0' }}>Chargement…</div>}
+        {!chartesLoading && chartesEmployes.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucun employé trouvé.</div>
+        )}
+        {!chartesLoading && chartesEmployes.length > 0 && (
+          <div className="card">
+            {chartesEmployes.map((emp, i) => (
+              <div key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: i < chartesEmployes.length - 1 ? '1px solid #eee' : 'none' }}>
+                <div style={{ width: 40, height: 40, borderRadius: '50%', background: emp.charteSigne ? '#EAF3DE' : '#FCEBEB', color: emp.charteSigne ? '#3B6D11' : '#A32D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px', flexShrink: 0 }}>
+                  {emp.initiales || emp.prenom?.slice(0, 2).toUpperCase()}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{emp.prenom}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>
+                    {emp.charteSigne
+                      ? `Signé le ${new Date(emp.charteDate).toLocaleDateString('fr-CH')}`
+                      : 'Non signé — en attente'}
+                  </div>
+                </div>
+                <span className={`badge ${emp.charteSigne ? 'badge-green' : 'badge-red'}`}>
+                  {emp.charteSigne ? '✓ Signé' : '⏳ En attente'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
   // ===================== ACCUEIL =====================
   return (
     <div>
@@ -962,6 +1205,18 @@ export default function Admin() {
             <span style={{ fontSize: '28px' }}>👷</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#7D3C98' }}>Employés</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{employes.length} actifs</span>
+          </button>
+          <button onClick={() => { setVue('heures'); chargerHeures() }}
+            style={{ background: '#EBF5FB', border: '1px solid #2E86C1', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '28px' }}>⏱️</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#2E86C1' }}>Heures</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>Cumul & PDF hebdo</span>
+          </button>
+          <button onClick={() => { setVue('chartes'); chargerChartes() }}
+            style={{ background: '#FEF5E4', border: '1px solid #E67E22', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '28px' }}>📋</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#CA6F1E' }}>Chartes</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>Statuts de signature</span>
           </button>
         </div>
       </div>

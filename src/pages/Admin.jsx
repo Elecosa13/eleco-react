@@ -134,29 +134,30 @@ export default function Admin() {
     setEmployes(listeEmp)
 
     const now = new Date()
-    const moisActuel = { year: now.getFullYear(), month: now.getMonth() }
+    const { debut: debutMois, fin: finMois } = debutFin(now.getFullYear(), now.getMonth())
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    const moisPrev = { year: prevDate.getFullYear(), month: prevDate.getMonth() }
+    const { debut: debutPrev, fin: finPrev } = debutFin(prevDate.getFullYear(), prevDate.getMonth())
 
-    const { debut: debutPrev } = debutFin(moisPrev.year, moisPrev.month)
-    const { fin: finActuel } = debutFin(moisActuel.year, moisActuel.month)
-    const { debut: debutMois, fin: finMois } = debutFin(moisActuel.year, moisActuel.month)
-    const { debut: debutPrevMois, fin: finPrevMois } = debutFin(moisPrev.year, moisPrev.month)
-
-    const { data: raps } = await supabase.from('rapports')
-      .select('employe_id, duree, date_travail, sous_dossiers(chantier_id)')
-      .gte('date_travail', debutPrev)
-      .lte('date_travail', finActuel)
+    // 2 requêtes Supabase parallèles — filtre de date côté DB, pas en JS
+    const [{ data: rapsMois }, { data: rapsPrev }] = await Promise.all([
+      supabase.from('rapports')
+        .select('employe_id, duree, sous_dossiers(chantier_id)')
+        .gte('date_travail', debutMois)
+        .lte('date_travail', finMois),
+      supabase.from('rapports')
+        .select('employe_id, duree')
+        .gte('date_travail', debutPrev)
+        .lte('date_travail', finPrev)
+    ])
 
     const stats = {}
     for (const emp of listeEmp) {
-      const empRaps = (raps || []).filter(r => String(r.employe_id) === String(emp.id))
-      const rapsMois = empRaps.filter(r => r.date_travail >= debutMois && r.date_travail <= finMois)
-      const rapsPrev = empRaps.filter(r => r.date_travail >= debutPrevMois && r.date_travail <= finPrevMois)
+      const rapsEmpMois = (rapsMois || []).filter(r => String(r.employe_id) === String(emp.id))
+      const rapsEmpPrev = (rapsPrev || []).filter(r => String(r.employe_id) === String(emp.id))
       stats[emp.id] = {
-        heureMois: rapsMois.reduce((s, r) => s + (r.duree || 8), 0),
-        heurePrev: rapsPrev.reduce((s, r) => s + (r.duree || 8), 0),
-        chantiersCount: new Set(rapsMois.map(r => r.sous_dossiers?.chantier_id).filter(Boolean)).size
+        heureMois: rapsEmpMois.reduce((s, r) => s + (r.duree || 8), 0),
+        heurePrev: rapsEmpPrev.reduce((s, r) => s + (r.duree || 8), 0),
+        chantiersCount: new Set(rapsEmpMois.map(r => r.sous_dossiers?.chantier_id).filter(Boolean)).size
       }
     }
     setEmpStats(stats)

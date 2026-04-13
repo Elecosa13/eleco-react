@@ -254,4 +254,16 @@ Notification push (PWA) → tous les employés
 
 ---
 
+## 9. Décisions techniques
+
+### Email — Migration info@eleco-sa.ch vers Infomaniak
+
+**Décision :** Transférer la gestion de `info@eleco-sa.ch` d'Area Publicité directement vers Infomaniak, sous Eleco SA.
+
+**Quand :** Quand l'application est stable et validée en production.
+
+**Règle absolue :** Ne perdre aucun email ni dossier pendant la migration.
+
+---
+
 *Document vivant — à mettre à jour à chaque session de travail*

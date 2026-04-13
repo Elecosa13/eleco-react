@@ -12,6 +12,13 @@ function debutFin(year, month) {
   return { debut, fin }
 }
 
+function calcDuree(debut, fin) {
+  if (!debut || !fin) return 0
+  const [hd, md] = debut.split(':').map(Number)
+  const [hf, mf] = fin.split(':').map(Number)
+  return (hf * 60 + mf - hd * 60 - md) / 60
+}
+
 export default function Admin() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
@@ -98,7 +105,7 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
 
     const { data: raps } = await supabase.from('rapports')
-      .select('*, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
+      .select('employe_id, heure_debut, heure_fin, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
       .gte('date_travail', debut).lte('date_travail', fin)
     if (raps) setCalRapports(raps)
 
@@ -116,11 +123,9 @@ export default function Admin() {
     chargerCalendrier(newMois)
   }
 
-  // Charge les employés ET leurs stats en autonomie (sans dépendre du state employes)
   async function chargerStatsEmployes() {
     setEmpLoading(true)
 
-    // Fetch employees fresh depuis Supabase
     const { data: listeEmp } = await supabase
       .from('utilisateurs')
       .select('id, prenom, initiales')
@@ -138,14 +143,14 @@ export default function Admin() {
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const { debut: debutPrev, fin: finPrev } = debutFin(prevDate.getFullYear(), prevDate.getMonth())
 
-    // 2 requêtes Supabase parallèles — filtre de date côté DB, pas en JS
+    // 2 requêtes Supabase parallèles — filtre de date côté DB
     const [{ data: rapsMois }, { data: rapsPrev }] = await Promise.all([
       supabase.from('rapports')
-        .select('employe_id, duree, sous_dossiers(chantier_id)')
+        .select('employe_id, heure_debut, heure_fin, sous_dossiers(chantier_id)')
         .gte('date_travail', debutMois)
         .lte('date_travail', finMois),
       supabase.from('rapports')
-        .select('employe_id, duree')
+        .select('employe_id, heure_debut, heure_fin')
         .gte('date_travail', debutPrev)
         .lte('date_travail', finPrev)
     ])
@@ -155,8 +160,8 @@ export default function Admin() {
       const rapsEmpMois = (rapsMois || []).filter(r => String(r.employe_id) === String(emp.id))
       const rapsEmpPrev = (rapsPrev || []).filter(r => String(r.employe_id) === String(emp.id))
       stats[emp.id] = {
-        heureMois: rapsEmpMois.reduce((s, r) => s + (r.duree || 8), 0),
-        heurePrev: rapsEmpPrev.reduce((s, r) => s + (r.duree || 8), 0),
+        heureMois: rapsEmpMois.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0),
+        heurePrev: rapsEmpPrev.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0),
         chantiersCount: new Set(rapsEmpMois.map(r => r.sous_dossiers?.chantier_id).filter(Boolean)).size
       }
     }
@@ -269,7 +274,7 @@ export default function Admin() {
 
   function totaux(r) {
     const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-    const duree = r.duree || 8
+    const duree = calcDuree(r.heure_debut, r.heure_fin)
     const mo = duree * TAUX
     const ht = mat + mo
     return { duree, mat, mo, ht, tva: ht * 0.081, ttc: ht * 1.081 }
@@ -437,6 +442,7 @@ export default function Admin() {
               <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{rapportDetail.employe?.prenom}</div></div>
               <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(rapportDetail.date_travail).toLocaleDateString('fr-CH')}</div></div>
               <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{t.duree}h</div></div>
+              <div><div style={{ fontSize: '11px', color: '#888' }}>Horaires</div><div style={{ fontWeight: 500 }}>{rapportDetail.heure_debut} – {rapportDetail.heure_fin}</div></div>
             </div>
             {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
           </div>
@@ -712,7 +718,7 @@ export default function Admin() {
                     <span className="badge badge-blue" style={{ fontSize: '10px' }}>Chantier</span>
                   </div>
                   <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{r.sous_dossiers?.chantiers?.nom}{r.sous_dossiers?.nom ? ` › ${r.sous_dossiers.nom}` : ''}</div>
-                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{r.duree || 8}h</div>
+                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{calcDuree(r.heure_debut, r.heure_fin)}h</div>
                 </div>
               ))}
               {depsJour.map(d => (
@@ -796,7 +802,7 @@ export default function Admin() {
   )
 
   if (vue === 'employe_detail' && empDetail) {
-    const totalRapports = empDetailRapports.reduce((s, r) => s + (r.duree || 8), 0)
+    const totalRapports = empDetailRapports.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0)
     const totalDeps = empDetailDepannages.reduce((s, d) => s + (d.duree || 1), 0)
     const totalGeneral = totalRapports + totalDeps
 
@@ -841,7 +847,7 @@ export default function Admin() {
           )}
 
           {Object.entries(parChantier).map(([nomChantier, raps]) => {
-            const totalChantier = raps.reduce((s, r) => s + (r.duree || 8), 0)
+            const totalChantier = raps.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0)
             return (
               <div key={nomChantier} className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -857,7 +863,7 @@ export default function Admin() {
                       {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
                       {r.sous_dossiers?.nom && <span style={{ color: '#999', marginLeft: '6px' }}>· {r.sous_dossiers.nom}</span>}
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{r.duree || 8}h</span>
+                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{calcDuree(r.heure_debut, r.heure_fin)}h</span>
                   </div>
                 ))}
               </div>

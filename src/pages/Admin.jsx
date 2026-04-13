@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 const TAUX = 115
+const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
+const JOURS_FR = ['L','M','M','J','V','S','D']
 
 export default function Admin() {
   const navigate = useNavigate()
@@ -32,6 +34,13 @@ export default function Admin() {
   const [rechercheArticle, setRechercheArticle] = useState('')
   const [catFiltre, setCatFiltre] = useState('Tous')
   const [categories, setCategories] = useState([])
+  // Calendrier
+  const [calMois, setCalMois] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })
+  const [calEmployeFiltre, setCalEmployeFiltre] = useState('tous')
+  const [employes, setEmployes] = useState([])
+  const [calRapports, setCalRapports] = useState([])
+  const [calDepannages, setCalDepannages] = useState([])
+  const [calJour, setCalJour] = useState(null)
 
   useEffect(() => { chargerTout() }, [])
 
@@ -54,6 +63,9 @@ export default function Admin() {
       setCatalogue(cat)
       setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
     }
+
+    const { data: emp } = await supabase.from('utilisateurs').select('id, prenom').eq('role', 'employe').order('prenom')
+    if (emp) setEmployes(emp)
   }
 
   async function chargerSousDossiers(chantierId) {
@@ -68,9 +80,37 @@ export default function Admin() {
     if (data) setRapports(data)
   }
 
+  async function chargerCalendrier(mois) {
+    const m = mois || calMois
+    const year = m.year
+    const month = m.month
+    const debut = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const fin = `${year}-${String(month + 1).padStart(2, '0')}-${String(new Date(year, month + 1, 0).getDate()).padStart(2, '0')}`
+
+    const { data: raps } = await supabase.from('rapports')
+      .select('*, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
+      .gte('date_travail', debut)
+      .lte('date_travail', fin)
+    if (raps) setCalRapports(raps)
+
+    const { data: deps } = await supabase.from('depannages')
+      .select('*, employe:employe_id(id, prenom)')
+      .gte('date_travail', debut)
+      .lte('date_travail', fin)
+    if (deps) setCalDepannages(deps)
+  }
+
+  function changerMois(delta) {
+    const d = new Date(calMois.year, calMois.month + delta, 1)
+    const newMois = { year: d.getFullYear(), month: d.getMonth() }
+    setCalMois(newMois)
+    setCalJour(null)
+    chargerCalendrier(newMois)
+  }
+
   async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
 
-  // CORBEILLE — stocke tout en 1 bloc
+  // CORBEILLE
   async function supprimerChantier(c) {
     const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
     setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
@@ -220,7 +260,6 @@ export default function Admin() {
     </div>
   )
 
-  // AJOUT ARTICLE DEPUIS CATALOGUE (dans edit matériaux)
   if (ajoutArticleVue && editMateriaux) return (
     <div>
       <div className="top-bar">
@@ -267,7 +306,6 @@ export default function Admin() {
     </div>
   )
 
-  // EDIT MATERIAUX
   if (editMateriaux) return (
     <div>
       <div className="top-bar">
@@ -527,6 +565,139 @@ export default function Admin() {
     </div>
   )
 
+  if (vue === 'calendrier') {
+    const { year, month } = calMois
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7 // 0=Lun
+
+    // Filtre employé appliqué aux données
+    const rapsFiltrés = calEmployeFiltre === 'tous'
+      ? calRapports
+      : calRapports.filter(r => String(r.employe_id) === String(calEmployeFiltre))
+    const depsFiltrés = calEmployeFiltre === 'tous'
+      ? calDepannages
+      : calDepannages.filter(d => String(d.employe_id) === String(calEmployeFiltre))
+
+    // Données du jour sélectionné
+    const rapsJour = calJour ? rapsFiltrés.filter(r => r.date_travail === calJour) : []
+    const depsJour = calJour ? depsFiltrés.filter(d => d.date_travail === calJour) : []
+
+    return (
+      <div>
+        <div className="top-bar">
+          <div>
+            <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Calendrier</div>
+          </div>
+        </div>
+        <div className="page-content">
+          {/* Filtre employé */}
+          <select
+            value={calEmployeFiltre}
+            onChange={e => { setCalEmployeFiltre(e.target.value); setCalJour(null) }}
+            style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e2e2', fontSize: '13px', background: 'white', color: '#1a1a1a' }}
+          >
+            <option value="tous">Tous les employés</option>
+            {employes.map(e => <option key={e.id} value={e.id}>{e.prenom}</option>)}
+          </select>
+
+          {/* Navigation mois */}
+          <div className="card" style={{ padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <button onClick={() => changerMois(-1)} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>‹</button>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>{MOIS_FR[month]} {year}</span>
+              <button onClick={() => changerMois(1)} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>›</button>
+            </div>
+
+            {/* En-têtes jours */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '4px' }}>
+              {JOURS_FR.map((j, i) => (
+                <div key={i} style={{ textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: 600, padding: '2px 0' }}>{j}</div>
+              ))}
+            </div>
+
+            {/* Grille des jours */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+              {Array.from({ length: firstWeekday }).map((_, i) => <div key={`empty-${i}`} />)}
+              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                const hasRap = rapsFiltrés.some(r => r.date_travail === dateStr)
+                const hasDep = depsFiltrés.some(d => d.date_travail === dateStr)
+                const isSelected = calJour === dateStr
+                const dotColor = hasRap && hasDep ? '#27ae60' : hasRap ? '#185FA5' : hasDep ? '#d68910' : null
+
+                return (
+                  <div
+                    key={day}
+                    onClick={() => { setCalJour(isSelected ? null : dateStr) }}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                      padding: '5px 2px', borderRadius: '6px', cursor: dotColor || !isSelected ? 'pointer' : 'default',
+                      background: isSelected ? '#185FA5' : 'transparent',
+                      minHeight: '36px'
+                    }}
+                  >
+                    <span style={{ fontSize: '13px', fontWeight: isSelected ? 700 : 400, color: isSelected ? 'white' : '#1a1a1a' }}>{day}</span>
+                    {dotColor && (
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: isSelected ? 'white' : dotColor, marginTop: '2px' }} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Légende */}
+          <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            {[['#185FA5', 'Chantier'], ['#d68910', 'Dépannage'], ['#27ae60', 'Les deux']].map(([color, label]) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
+                <span style={{ fontSize: '11px', color: '#666' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Détail du jour sélectionné */}
+          {calJour && (rapsJour.length > 0 || depsJour.length > 0) && (
+            <div className="card">
+              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>
+                {new Date(calJour + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </div>
+              {rapsJour.map(r => (
+                <div key={r.id} style={{ padding: '8px 0', borderBottom: '1px solid #eee' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#185FA5', flexShrink: 0 }} />
+                    <span style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom}</span>
+                    <span className="badge badge-blue" style={{ fontSize: '10px' }}>Chantier</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>
+                    {r.sous_dossiers?.chantiers?.nom}{r.sous_dossiers?.nom ? ` › ${r.sous_dossiers.nom}` : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{r.duree || 8}h</div>
+                </div>
+              ))}
+              {depsJour.map(d => (
+                <div key={d.id} style={{ padding: '8px 0', borderBottom: '1px solid #eee' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#d68910', flexShrink: 0 }} />
+                    <span style={{ fontSize: '13px', fontWeight: 500 }}>{d.employe?.prenom}</span>
+                    <span className="badge badge-amber" style={{ fontSize: '10px' }}>Dépannage</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{d.adresse}</div>
+                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{d.duree || 1}h</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {calJour && rapsJour.length === 0 && depsJour.length === 0 && (
+            <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '16px 0' }}>Aucune activité ce jour</div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ===================== ACCUEIL =====================
   return (
     <div>
       <div className="top-bar">
@@ -577,6 +748,13 @@ export default function Admin() {
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
           </button>
         </div>
+        <button
+          onClick={() => { setVue('calendrier'); chargerCalendrier() }}
+          style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '16px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', width: '100%' }}
+        >
+          <span style={{ fontSize: '24px' }}>📅</span>
+          <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Calendrier</span>
+        </button>
       </div>
     </div>
   )

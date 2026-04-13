@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [prenom, setPrenom] = useState('')
+  const [email, setEmail] = useState('')
   const [mdp, setMdp] = useState('')
   const [erreur, setErreur] = useState('')
   const [loading, setLoading] = useState(false)
@@ -13,10 +13,50 @@ export default function Login() {
     e.preventDefault()
     setLoading(true)
     setErreur('')
-    const { data, error } = await supabase.from('utilisateurs').select('*').eq('prenom', prenom.toLowerCase().trim()).eq('mot_de_passe', mdp).eq('actif', true).single()
-    if (error || !data) { setErreur('Prénom ou mot de passe incorrect.'); setLoading(false); return }
-    localStorage.setItem('eleco_user', JSON.stringify({ id: data.id, prenom: data.prenom, role: data.role, initiales: data.initiales }))
-    navigate(data.role === 'admin' ? '/admin' : '/employe')
+
+    try {
+      // Authentifier avec Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: mdp
+      })
+
+      if (authError) {
+        setErreur('Email ou mot de passe incorrect.')
+        setLoading(false)
+        return
+      }
+
+      // Récupérer les données utilisateur depuis la table utilisateurs
+      const { data: userData, error: userError } = await supabase
+        .from('utilisateurs')
+        .select('*')
+        .eq('email', email.toLowerCase().trim())
+        .eq('actif', true)
+        .single()
+
+      if (userError || !userData) {
+        setErreur('Utilisateur non trouvé ou inactif.')
+        setLoading(false)
+        return
+      }
+
+      // Sauvegarder les données utilisateur
+      localStorage.setItem('eleco_user', JSON.stringify({
+        id: userData.id,
+        prenom: userData.prenom,
+        role: userData.role,
+        initiales: userData.initiales,
+        email: userData.email
+      }))
+
+      navigate(userData.role === 'admin' ? '/admin' : '/employe')
+    } catch (err) {
+      setErreur('Une erreur est survenue lors de la connexion.')
+      console.error('Erreur de login:', err)
+    }
+
+    setLoading(false)
   }
 
   return (
@@ -27,8 +67,8 @@ export default function Login() {
       <form onSubmit={handleLogin} style={{ background: 'white', borderRadius: '12px', border: '1px solid #e2e2e2', padding: '24px', width: '100%', maxWidth: '310px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <div style={{ fontSize: '15px', fontWeight: 600, textAlign: 'center' }}>Connexion</div>
         <div className="form-group">
-          <label>Prénom</label>
-          <input type="text" placeholder="Votre prénom" value={prenom} onChange={e => setPrenom(e.target.value)} autoCapitalize="none" required />
+          <label>Email</label>
+          <input type="email" placeholder="votre@email.com" value={email} onChange={e => setEmail(e.target.value)} autoCapitalize="none" required />
         </div>
         <div className="form-group">
           <label>Mot de passe</label>

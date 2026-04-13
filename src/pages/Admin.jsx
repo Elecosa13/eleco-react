@@ -68,7 +68,7 @@ export default function Admin() {
     if (data) setRapports(data)
   }
 
-  function deconnecter() { localStorage.removeItem('eleco_user'); navigate('/') }
+  async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
 
   // CORBEILLE — stocke tout en 1 bloc
   async function supprimerChantier(c) {

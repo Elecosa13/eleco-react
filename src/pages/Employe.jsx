@@ -35,7 +35,7 @@ export default function Employe() {
     setNouveauNom(''); setNouvelleAdresse(''); setAjoutChantier(false); setConfirmDoublon(null); charger()
   }
 
-  function deconnecter() { localStorage.removeItem('eleco_user'); navigate('/') }
+  async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
 
   const creditRestant = CREDIT_JOUR - creditUtilise
   const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)

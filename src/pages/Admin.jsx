@@ -49,6 +49,7 @@ export default function Admin() {
   const [calJour, setCalJour] = useState(null)
   // Employés
   const [empStats, setEmpStats] = useState({})
+  const [empLoading, setEmpLoading] = useState(false)
   const [empDetail, setEmpDetail] = useState(null)
   const [empDetailMois, setEmpDetailMois] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })
   const [empDetailRapports, setEmpDetailRapports] = useState([])
@@ -115,23 +116,40 @@ export default function Admin() {
     chargerCalendrier(newMois)
   }
 
-  async function chargerStatsEmployes(listeEmployes) {
+  // Charge les employés ET leurs stats en autonomie (sans dépendre du state employes)
+  async function chargerStatsEmployes() {
+    setEmpLoading(true)
+
+    // Fetch employees fresh depuis Supabase
+    const { data: listeEmp } = await supabase
+      .from('utilisateurs')
+      .select('id, prenom, initiales')
+      .eq('role', 'employe')
+      .order('prenom')
+
+    if (!listeEmp || listeEmp.length === 0) {
+      setEmpLoading(false)
+      return
+    }
+    setEmployes(listeEmp)
+
     const now = new Date()
     const moisActuel = { year: now.getFullYear(), month: now.getMonth() }
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const moisPrev = { year: prevDate.getFullYear(), month: prevDate.getMonth() }
 
     const { debut: debutPrev } = debutFin(moisPrev.year, moisPrev.month)
-    const { fin } = debutFin(moisActuel.year, moisActuel.month)
+    const { fin: finActuel } = debutFin(moisActuel.year, moisActuel.month)
     const { debut: debutMois, fin: finMois } = debutFin(moisActuel.year, moisActuel.month)
     const { debut: debutPrevMois, fin: finPrevMois } = debutFin(moisPrev.year, moisPrev.month)
 
     const { data: raps } = await supabase.from('rapports')
       .select('employe_id, duree, date_travail, sous_dossiers(chantier_id)')
-      .gte('date_travail', debutPrev).lte('date_travail', fin)
+      .gte('date_travail', debutPrev)
+      .lte('date_travail', finActuel)
 
     const stats = {}
-    for (const emp of listeEmployes) {
+    for (const emp of listeEmp) {
       const empRaps = (raps || []).filter(r => String(r.employe_id) === String(emp.id))
       const rapsMois = empRaps.filter(r => r.date_travail >= debutMois && r.date_travail <= finMois)
       const rapsPrev = empRaps.filter(r => r.date_travail >= debutPrevMois && r.date_travail <= finPrevMois)
@@ -142,6 +160,7 @@ export default function Admin() {
       }
     }
     setEmpStats(stats)
+    setEmpLoading(false)
   }
 
   async function chargerDetailEmploye(empId, mois) {
@@ -725,8 +744,25 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
-        {employes.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucun employé</div>}
-        {employes.map(emp => {
+        {empLoading && (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <div style={{ fontSize: '13px', color: '#888' }}>Chargement…</div>
+            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center', gap: '6px' }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{
+                  width: 8, height: 8, borderRadius: '50%', background: '#185FA5',
+                  animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+                  opacity: 0.6
+                }} />
+              ))}
+            </div>
+            <style>{`@keyframes pulse { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }`}</style>
+          </div>
+        )}
+        {!empLoading && employes.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucun employé</div>
+        )}
+        {!empLoading && employes.map(emp => {
           const s = empStats[emp.id] || { heureMois: 0, heurePrev: 0, chantiersCount: 0 }
           return (
             <div key={emp.id} className="card" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '14px' }}
@@ -763,7 +799,6 @@ export default function Admin() {
     const totalDeps = empDetailDepannages.reduce((s, d) => s + (d.duree || 1), 0)
     const totalGeneral = totalRapports + totalDeps
 
-    // Grouper les rapports par chantier
     const parChantier = {}
     for (const r of empDetailRapports) {
       const nomChantier = r.sous_dossiers?.chantiers?.nom || 'Chantier inconnu'
@@ -784,7 +819,6 @@ export default function Admin() {
           </div>
         </div>
         <div className="page-content">
-          {/* Navigation mois */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'white', borderRadius: '10px', border: '1px solid #e2e2e2', padding: '10px 14px' }}>
             <button onClick={() => {
               const d = new Date(empDetailMois.year, empDetailMois.month - 1, 1)
@@ -801,12 +835,10 @@ export default function Admin() {
             }} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>›</button>
           </div>
 
-          {/* Aucune activité */}
           {Object.keys(parChantier).length === 0 && empDetailDepannages.length === 0 && (
             <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucune activité ce mois</div>
           )}
 
-          {/* Rapports groupés par chantier */}
           {Object.entries(parChantier).map(([nomChantier, raps]) => {
             const totalChantier = raps.reduce((s, r) => s + (r.duree || 8), 0)
             return (
@@ -831,7 +863,6 @@ export default function Admin() {
             )
           })}
 
-          {/* Dépannages */}
           {empDetailDepannages.length > 0 && (
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -853,7 +884,6 @@ export default function Admin() {
             </div>
           )}
 
-          {/* Total général */}
           {totalGeneral > 0 && (
             <div style={{ background: '#E6F1FB', borderRadius: '10px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Total {MOIS_FR[empDetailMois.month]}</span>
@@ -920,7 +950,7 @@ export default function Admin() {
             <span style={{ fontSize: '28px' }}>📅</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Calendrier</span>
           </button>
-          <button onClick={() => { setVue('employes'); chargerStatsEmployes(employes) }}
+          <button onClick={() => { setVue('employes'); chargerStatsEmployes() }}
             style={{ background: '#F3EEFB', border: '1px solid #7D3C98', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>👷</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#7D3C98' }}>Employés</span>

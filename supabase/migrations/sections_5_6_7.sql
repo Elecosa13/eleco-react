@@ -59,7 +59,8 @@ CREATE POLICY "Employe gere sa charte"
   ON chartes_acceptees FOR ALL TO authenticated
   USING (true) WITH CHECK (true);
 
--- -------------------------------------------------------
+-- -------------------------------------------
+------------
 -- NOTE : créer le bucket Supabase Storage "chartes"
 -- depuis le dashboard Storage > New bucket > "chartes" (private)
 -- -------------------------------------------------------

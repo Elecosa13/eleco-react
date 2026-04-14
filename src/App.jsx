@@ -7,7 +7,6 @@ import Chantier from './pages/Chantier'
 import Rapport from './pages/Rapport'
 import Admin from './pages/Admin'
 import Depannage from './pages/Depannage'
-import SaisieHeures from './pages/SaisieHeures'
 import Charte from './pages/Charte'
 
 function PrivateRoute({ children, requiredRole }) {
@@ -28,7 +27,6 @@ function PrivateRoute({ children, requiredRole }) {
   if (status === 'loading') return null
   if (status === 'denied' || !user) return <Navigate to="/login" replace />
 
-  // Mauvais rôle → redirige vers SA propre app
   if (requiredRole && user.role !== requiredRole) {
     return <Navigate to={user.role === 'admin' ? '/admin' : '/employe'} replace />
   }
@@ -37,7 +35,6 @@ function PrivateRoute({ children, requiredRole }) {
 }
 
 // Guard charte : vérifie si l'employé a signé la charte
-// Utilisé sur toutes les routes employé sauf /employe/charte elle-même
 function CharteGuard({ children }) {
   const [status, setStatus] = useState('loading')
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
@@ -88,9 +85,6 @@ export default function App() {
       } />
       <Route path="/employe/depannage" element={
         <PrivateRoute requiredRole="employe"><CharteGuard><Depannage /></CharteGuard></PrivateRoute>
-      } />
-      <Route path="/employe/heures" element={
-        <PrivateRoute requiredRole="employe"><CharteGuard><SaisieHeures /></CharteGuard></PrivateRoute>
       } />
 
       {/* Routes admin */}

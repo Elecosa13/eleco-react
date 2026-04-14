@@ -5,6 +5,19 @@ import { supabase } from '../lib/supabase'
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
 const JOURS_FR = ['L','M','M','J','V','S','D']
+const JOURS_LONG = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
+
+// Clauses de la charte (identiques à Charte.jsx) — nécessaires pour régénérer le PDF côté admin
+const CLAUSES_CHARTE = [
+  { titre: '1. Confidentialité', texte: "Aucune information relative aux clients, chantiers, prix ou données internes d'Eleco SA ne peut être divulguée à des tiers, que ce soit verbalement, par écrit ou via tout support numérique." },
+  { titre: '2. Usage exclusif professionnel', texte: "L'application Eleco SA est réservée exclusivement à un usage professionnel dans le cadre de votre activité au sein de la société. Toute utilisation à des fins personnelles est interdite." },
+  { titre: '3. Identifiants personnels et confidentiels', texte: "Vos identifiants de connexion (nom d'utilisateur et mot de passe) sont strictement personnels. Il est formellement interdit de les communiquer à quiconque, y compris à d'autres employés." },
+  { titre: '4. Interdiction de capture et d\'export', texte: "Il est interdit de réaliser des captures d'écran, des impressions ou tout export de données vers l'extérieur de l'entreprise, sauf autorisation écrite explicite de la direction." },
+  { titre: '5. Signalement des accès suspects', texte: "Tout accès inhabituel ou suspect à votre compte doit être immédiatement signalé à l'administration. En cas de perte ou de vol de vos identifiants, vous devez en informer la direction sans délai." },
+  { titre: '6. Propriété des données', texte: "Toutes les données, documents, images et informations accessibles via cette application sont la propriété exclusive d'Eleco SA. Vous ne disposez d'aucun droit de propriété sur ces éléments." },
+  { titre: '7. Durée de validité', texte: "La présente charte est valable pour toute la durée de votre contrat de travail au sein d'Eleco SA. Elle reste en vigueur même après résiliation du contrat pour les obligations de confidentialité." },
+  { titre: '8. Sanctions', texte: "Toute violation des présentes règles pourra entraîner des mesures disciplinaires allant jusqu'au licenciement immédiat, conformément au Code des obligations suisse et au droit du travail applicable." }
+]
 
 function debutFin(year, month) {
   const debut = `${year}-${String(month + 1).padStart(2, '0')}-01`
@@ -16,69 +29,120 @@ function calcDuree(debut, fin) {
   if (!debut || !fin) return 0
   const [hd, md] = debut.split(':').map(Number)
   const [hf, mf] = fin.split(':').map(Number)
-  return (hf * 60 + mf - hd * 60 - md) / 60
+  return Math.max(0, (hf * 60 + mf - hd * 60 - md) / 60)
+}
+
+// Calcule la plage lundi–dimanche d'une semaine ISO
+function getWeekDateRange(semaine, annee) {
+  const jan4 = new Date(annee, 0, 4)
+  const dayOfWeek = (jan4.getDay() + 6) % 7 // 0=Lun … 6=Dim
+  const mondayW1 = new Date(jan4)
+  mondayW1.setDate(jan4.getDate() - dayOfWeek)
+  const lundi = new Date(mondayW1)
+  lundi.setDate(mondayW1.getDate() + (semaine - 1) * 7)
+  const dimanche = new Date(lundi)
+  dimanche.setDate(lundi.getDate() + 6)
+  const fmt = d => d.toISOString().split('T')[0]
+  return { lundi, dimanche, lundiStr: fmt(lundi), dimancheStr: fmt(dimanche) }
+}
+
+function fmtDuree(h) {
+  const hrs = Math.floor(h)
+  const mins = Math.round((h - hrs) * 60)
+  return mins === 0 ? `${hrs}h` : `${hrs}h${String(mins).padStart(2, '0')}`
 }
 
 export default function Admin() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+
+  // Navigation
   const [vue, setVue] = useState('accueil')
+
+  // Données globales
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
   const [chantiers, setChantiers] = useState([])
   const [depannages, setDepannages] = useState([])
+  const [employes, setEmployes] = useState([])
+  const [catalogue, setCatalogue] = useState([])
+  const [categories, setCategories] = useState([])
+
+  // Chantiers
   const [chantierActif, setChantierActif] = useState(null)
   const [sousDossiers, setSousDossiers] = useState([])
   const [sousDossierActif, setSousDossierActif] = useState(null)
   const [rapports, setRapports] = useState([])
   const [rapportDetail, setRapportDetail] = useState(null)
-  const [catalogue, setCatalogue] = useState([])
-  const [confirm, setConfirm] = useState(null)
   const [corbeille, setCorbeille] = useState([])
   const [vueCorbeille, setVueCorbeille] = useState(false)
+  const [confirm, setConfirm] = useState(null)
+  const [renommerItem, setRenommerItem] = useState(null)
+  const [nouveauNom, setNouveauNom] = useState('')
   const [nouveauNomChantier, setNouveauNomChantier] = useState('')
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
-  const [renommerItem, setRenommerItem] = useState(null)
-  const [nouveauNom, setNouveauNom] = useState('')
   const [nouveauSd, setNouveauSd] = useState(false)
   const [nouveauSdNom, setNouveauSdNom] = useState('')
+
+  // Matériaux
   const [editMateriaux, setEditMateriaux] = useState(null)
   const [ajoutArticleVue, setAjoutArticleVue] = useState(false)
   const [rechercheArticle, setRechercheArticle] = useState('')
   const [catFiltre, setCatFiltre] = useState('Tous')
-  const [categories, setCategories] = useState([])
+  const [articleManuel, setArticleManuel] = useState({ designation: '', unite: '', prix: '0', quantite: 1 })
+
+  // Rapport édition (tâche 8)
+  const [editRapportMode, setEditRapportMode] = useState(false)
+  const [editRapportRemarques, setEditRapportRemarques] = useState('')
+  const [editRapportDate, setEditRapportDate] = useState('')
+
   // Calendrier
   const [calMois, setCalMois] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })
   const [calEmployeFiltre, setCalEmployeFiltre] = useState('tous')
-  const [employes, setEmployes] = useState([])
   const [calRapports, setCalRapports] = useState([])
   const [calDepannages, setCalDepannages] = useState([])
   const [calJour, setCalJour] = useState(null)
-  // Employés
+
+  // Employés stats
   const [empStats, setEmpStats] = useState({})
   const [empLoading, setEmpLoading] = useState(false)
+
+  // Fiche employé (tâche 7)
   const [empDetail, setEmpDetail] = useState(null)
   const [empDetailMois, setEmpDetailMois] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })
   const [empDetailRapports, setEmpDetailRapports] = useState([])
   const [empDetailDepannages, setEmpDetailDepannages] = useState([])
-  // Section 5 — Heures
-  const [heuresCumul, setHeuresCumul] = useState([])
-  const [heuresLoading, setHeuresLoading] = useState(false)
-  const [pdfEmp, setPdfEmp] = useState('')
+  const [empAbsences, setEmpAbsences] = useState([])
+  const [ficheTab, setFicheTab] = useState('heures')
+  const [empCharteData, setEmpCharteData] = useState(null)
+  const [empCharteLoading, setEmpCharteLoading] = useState(false)
+
+  // PDF hebdomadaire (tâche 5)
   const [pdfSemaine, setPdfSemaine] = useState('')
   const [pdfAnnee, setPdfAnnee] = useState(new Date().getFullYear())
   const [pdfLoading, setPdfLoading] = useState(false)
-  // Section 7 — Chartes
-  const [chartesEmployes, setChartesEmployes] = useState([])
-  const [chartesLoading, setChartesLoading] = useState(false)
 
   useEffect(() => { chargerTout() }, [])
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // CHARGEMENT
+  // ──────────────────────────────────────────────────────────────────────────
 
   async function chargerTout() {
     const { data: rap } = await supabase.from('rapports')
       .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
       .eq('valide', false).order('created_at', { ascending: false })
-    if (rap) setRapportsEnAttente(rap)
+
+    if (rap && rap.length > 0) {
+      const { data: rapEnt } = await supabase.from('time_entries')
+        .select('reference_id, duree').eq('type', 'chantier')
+        .in('reference_id', rap.map(r => r.id))
+      const byRap = {}
+      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
+      setRapportsEnAttente(rap.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+    } else {
+      setRapportsEnAttente(rap || [])
+    }
 
     const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
     if (ch) setChantiers(ch)
@@ -107,18 +171,26 @@ export default function Admin() {
     const { data } = await supabase.from('rapports')
       .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
       .eq('sous_dossier_id', sdId).order('date_travail', { ascending: false })
-    if (data) setRapports(data)
+    if (!data) { setRapports([]); return }
+    if (data.length > 0) {
+      const { data: rapEnt } = await supabase.from('time_entries')
+        .select('reference_id, duree').eq('type', 'chantier')
+        .in('reference_id', data.map(r => r.id))
+      const byRap = {}
+      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
+      setRapports(data.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+    } else {
+      setRapports([])
+    }
   }
 
   async function chargerCalendrier(mois) {
     const m = mois || calMois
     const { debut, fin } = debutFin(m.year, m.month)
-
     const { data: raps } = await supabase.from('rapports')
-      .select('employe_id, heure_debut, heure_fin, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
+      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
       .gte('date_travail', debut).lte('date_travail', fin)
     if (raps) setCalRapports(raps)
-
     const { data: deps } = await supabase.from('depannages')
       .select('*, employe:employe_id(id, prenom)')
       .gte('date_travail', debut).lte('date_travail', fin)
@@ -128,24 +200,14 @@ export default function Admin() {
   function changerMois(delta) {
     const d = new Date(calMois.year, calMois.month + delta, 1)
     const newMois = { year: d.getFullYear(), month: d.getMonth() }
-    setCalMois(newMois)
-    setCalJour(null)
-    chargerCalendrier(newMois)
+    setCalMois(newMois); setCalJour(null); chargerCalendrier(newMois)
   }
 
   async function chargerStatsEmployes() {
     setEmpLoading(true)
-
-    const { data: listeEmp } = await supabase
-      .from('utilisateurs')
-      .select('id, prenom, initiales')
-      .eq('role', 'employe')
-      .order('prenom')
-
-    if (!listeEmp || listeEmp.length === 0) {
-      setEmpLoading(false)
-      return
-    }
+    const { data: listeEmp } = await supabase.from('utilisateurs')
+      .select('id, prenom, initiales').eq('role', 'employe').order('prenom')
+    if (!listeEmp || listeEmp.length === 0) { setEmpLoading(false); return }
     setEmployes(listeEmp)
 
     const now = new Date()
@@ -153,26 +215,21 @@ export default function Admin() {
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const { debut: debutPrev, fin: finPrev } = debutFin(prevDate.getFullYear(), prevDate.getMonth())
 
-    // 2 requêtes Supabase parallèles — filtre de date côté DB
-    const [{ data: rapsMois }, { data: rapsPrev }] = await Promise.all([
-      supabase.from('rapports')
-        .select('employe_id, heure_debut, heure_fin, sous_dossiers(chantier_id)')
-        .gte('date_travail', debutMois)
-        .lte('date_travail', finMois),
-      supabase.from('rapports')
-        .select('employe_id, heure_debut, heure_fin')
-        .gte('date_travail', debutPrev)
-        .lte('date_travail', finPrev)
+    const [{ data: entMois }, { data: entPrev }] = await Promise.all([
+      supabase.from('time_entries').select('employe_id, duree, chantier_id')
+        .gte('date_travail', debutMois).lte('date_travail', finMois),
+      supabase.from('time_entries').select('employe_id, duree')
+        .gte('date_travail', debutPrev).lte('date_travail', finPrev)
     ])
 
     const stats = {}
     for (const emp of listeEmp) {
-      const rapsEmpMois = (rapsMois || []).filter(r => String(r.employe_id) === String(emp.id))
-      const rapsEmpPrev = (rapsPrev || []).filter(r => String(r.employe_id) === String(emp.id))
+      const moisEmp = (entMois || []).filter(e => String(e.employe_id) === String(emp.id))
+      const prevEmp = (entPrev || []).filter(e => String(e.employe_id) === String(emp.id))
       stats[emp.id] = {
-        heureMois: rapsEmpMois.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0),
-        heurePrev: rapsEmpPrev.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0),
-        chantiersCount: new Set(rapsEmpMois.map(r => r.sous_dossiers?.chantier_id).filter(Boolean)).size
+        heureMois: moisEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
+        heurePrev: prevEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
+        chantiersCount: new Set(moisEmp.filter(e => e.chantier_id).map(e => e.chantier_id)).size
       }
     }
     setEmpStats(stats)
@@ -184,138 +241,265 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
 
     const { data: raps } = await supabase.from('rapports')
-      .select('*, sous_dossiers(nom, chantier_id, chantiers(nom))')
-      .eq('employe_id', empId)
-      .gte('date_travail', debut).lte('date_travail', fin)
-      .order('date_travail')
-    if (raps) setEmpDetailRapports(raps)
+      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom))')
+      .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).order('date_travail')
+
+    if (raps && raps.length > 0) {
+      const { data: rapEnt } = await supabase.from('time_entries')
+        .select('reference_id, duree').eq('type', 'chantier').eq('employe_id', empId)
+        .gte('date_travail', debut).lte('date_travail', fin)
+      const byRap = {}
+      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
+      setEmpDetailRapports(raps.map(r => ({ ...r, _duree: byRap[r.id] || 0 })))
+    } else {
+      setEmpDetailRapports(raps || [])
+    }
 
     const { data: deps } = await supabase.from('depannages')
-      .select('*')
-      .eq('employe_id', empId)
-      .gte('date_travail', debut).lte('date_travail', fin)
-      .order('date_travail')
+      .select('*').eq('employe_id', empId)
+      .gte('date_travail', debut).lte('date_travail', fin).order('date_travail')
     if (deps) setEmpDetailDepannages(deps)
+
+    // Absences
+    const { data: abs } = await supabase.from('absences')
+      .select('*').eq('employe_id', empId)
+      .order('created_at', { ascending: false }).limit(30)
+    setEmpAbsences(abs || [])
   }
 
-  async function chargerHeures() {
-    setHeuresLoading(true)
-    const { data } = await supabase
-      .from('time_entries')
-      .select('chantier_id, heures_nettes, duree, chantiers(nom)')
-      .eq('type', 'heures')
-    if (data) {
-      const cumul = {}
-      for (const e of data) {
-        const id = e.chantier_id || 'inconnu'
-        const nom = e.chantiers?.nom || 'Chantier inconnu'
-        if (!cumul[id]) cumul[id] = { nom, total: 0 }
-        cumul[id].total += Number(e.heures_nettes || e.duree || 0)
-      }
-      setHeuresCumul(Object.values(cumul).sort((a, b) => b.total - a.total))
-    }
-    setHeuresLoading(false)
+  async function chargerCharteEmploye(empId) {
+    setEmpCharteLoading(true)
+    const [{ data: charte }, { data: sig }] = await Promise.all([
+      supabase.from('chartes_acceptees').select('*').eq('employe_id', empId).maybeSingle(),
+      supabase.from('signatures').select('signature_base64, signee_le').eq('employe_id', empId).maybeSingle()
+    ])
+    setEmpCharteData({ charte, sig })
+    setEmpCharteLoading(false)
   }
 
-  async function chargerChartes() {
-    setChartesLoading(true)
-    const { data: empList } = await supabase
-      .from('utilisateurs')
-      .select('id, prenom, initiales')
-      .eq('role', 'employe')
-      .order('prenom')
-    if (empList) {
-      const { data: chartesList } = await supabase
-        .from('chartes_acceptees')
-        .select('employe_id, acceptee_le')
-        .in('employe_id', empList.map(e => e.id))
-      const map = {}
-      if (chartesList) {
-        for (const c of chartesList) map[c.employe_id] = c.acceptee_le
-      }
-      setChartesEmployes(empList.map(emp => ({
-        ...emp,
-        charteSigne: !!map[emp.id],
-        charteDate: map[emp.id] || null
-      })))
-    }
-    setChartesLoading(false)
-  }
+  // ──────────────────────────────────────────────────────────────────────────
+  // PDF HEBDOMADAIRE (tâche 5)
+  // ──────────────────────────────────────────────────────────────────────────
 
   async function genererFeuilleHebdo() {
-    if (!pdfEmp || !pdfSemaine) return
+    if (!empDetail || !pdfSemaine) return
     setPdfLoading(true)
-    const { data: entries } = await supabase
-      .from('time_entries')
-      .select('date_travail, heure_debut, heure_fin, pause_minutes, heures_nettes, duree, commentaire, chantiers(nom)')
-      .eq('employe_id', pdfEmp)
-      .eq('type', 'heures')
-      .eq('semaine', parseInt(pdfSemaine))
-      .eq('annee', parseInt(pdfAnnee))
-      .order('date_travail')
-    const { data: sigData } = await supabase
-      .from('signatures')
-      .select('signature_base64')
-      .eq('employe_id', pdfEmp)
-      .maybeSingle()
-    const emp = employes.find(e => e.id === pdfEmp)
+
+    const sem = parseInt(pdfSemaine)
+    const anneeVal = parseInt(pdfAnnee)
+    const { lundi, dimanche, lundiStr, dimancheStr } = getWeekDateRange(sem, anneeVal)
+    const empId = empDetail.id
+
+    // Rapports + time_entries pour les durées correctes
+    const [{ data: raps }, { data: deps }, { data: suppEntries }] = await Promise.all([
+      supabase.from('rapports')
+        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse))')
+        .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
+        .order('date_travail'),
+      supabase.from('depannages')
+        .select('id, date_travail, adresse, duree')
+        .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
+        .order('date_travail'),
+      supabase.from('time_entries')
+        .select('date_travail, duree, commentaire')
+        .eq('employe_id', empId).eq('type', 'heures_supp')
+        .gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
+    ])
+
+    // Merge des durées rapports via time_entries
+    const rapsAvecDuree = raps || []
+    if (rapsAvecDuree.length > 0) {
+      const { data: rapEnt } = await supabase.from('time_entries')
+        .select('reference_id, duree').eq('type', 'chantier').eq('employe_id', empId)
+        .gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
+      const byRap = {}
+      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
+      rapsAvecDuree.forEach(r => { r._duree = byRap[r.id] || 0 })
+    }
+
+    const { data: sigData } = await supabase.from('signatures')
+      .select('signature_base64').eq('employe_id', empId).maybeSingle()
+
     const { jsPDF } = await import('jspdf')
     const doc = new jsPDF({ format: 'a4' })
-    const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+
+    const lundiLabel = lundi.toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const dimancheLabel = dimanche.toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+    // En-tête
     doc.setFontSize(16); doc.setFont('helvetica', 'bold')
     doc.text('Eleco SA — Feuille hebdomadaire', 20, 20)
     doc.setFontSize(11); doc.setFont('helvetica', 'normal')
-    doc.text(`Employé : ${emp?.prenom || '—'}`, 20, 30)
-    doc.text(`Semaine ${pdfSemaine} — ${pdfAnnee}`, 20, 37)
+    doc.text(`Employé : ${empDetail.prenom || '—'}`, 20, 30)
+    doc.text(`Semaine ${sem} — du ${lundiLabel} au ${dimancheLabel}`, 20, 37)
     doc.setDrawColor(180); doc.line(20, 42, 190, 42)
+
     let y = 52
-    const totalH = (entries || []).reduce((s, e) => s + Number(e.heures_nettes || e.duree || 0), 0)
-    doc.setFontSize(9); doc.setFont('helvetica', 'bold')
-    doc.setFillColor(230, 241, 251); doc.rect(20, y - 5, 170, 8, 'F')
-    doc.text('Jour', 22, y); doc.text('Date', 52, y); doc.text('Chantier', 82, y)
-    doc.text('Horaires', 138, y); doc.text('Heures', 168, y)
-    y += 10; doc.setFont('helvetica', 'normal')
+    let totalH = 0
+
     for (let wd = 0; wd < 7; wd++) {
-      const dayEntries = (entries || []).filter(e => {
-        return ((new Date(e.date_travail + 'T12:00:00').getDay() + 6) % 7) === wd
-      })
-      if (wd % 2 === 0) {
-        doc.setFillColor(248, 248, 248)
-        doc.rect(20, y - 5, 170, Math.max(1, dayEntries.length) * 8 + 2, 'F')
-      }
-      if (dayEntries.length === 0) {
-        doc.setTextColor(180); doc.text(JOURS[wd], 22, y); doc.text('—', 52, y); doc.setTextColor(0)
+      const d = new Date(lundi)
+      d.setDate(lundi.getDate() + wd)
+      const dateStr = d.toISOString().split('T')[0]
+      const nomJour = JOURS_LONG[wd]
+      const dateLabel = d.toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit' })
+      const isWeekend = wd >= 5
+
+      const dayRaps = rapsAvecDuree.filter(r => r.date_travail === dateStr)
+      const dayDeps = (deps || []).filter(dep => dep.date_travail === dateStr)
+      const daySupp = (suppEntries || []).filter(s => s.date_travail === dateStr)
+      const isEmpty = dayRaps.length === 0 && dayDeps.length === 0 && daySupp.length === 0
+
+      // Ligne de jour
+      if (isWeekend) {
+        doc.setFillColor(245, 245, 245)
       } else {
-        for (let i = 0; i < dayEntries.length; i++) {
-          const e = dayEntries[i]
-          const dateStr = new Date(e.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')
-          const nomChantier = (e.chantiers?.nom || '—').slice(0, 22)
-          const hor = e.heure_debut && e.heure_fin
-            ? `${e.heure_debut.slice(0, 5)}–${e.heure_fin.slice(0, 5)}`
-            : '—'
-          const heures = Number(e.heures_nettes || e.duree || 0).toFixed(2) + 'h'
-          doc.setTextColor(0)
-          doc.text(JOURS[wd], 22, y + i * 8); doc.text(dateStr, 52, y + i * 8)
-          doc.text(nomChantier, 82, y + i * 8); doc.text(hor, 138, y + i * 8); doc.text(heures, 168, y + i * 8)
+        doc.setFillColor(230, 241, 251)
+      }
+      doc.rect(20, y - 5, 170, 8, 'F')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      doc.setTextColor(isWeekend ? 160 : 30)
+      doc.text(`${nomJour} ${dateLabel}`, 22, y)
+      doc.setTextColor(0)
+      y += 6
+
+      if (isEmpty) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(isWeekend ? 190 : 140)
+        doc.text('— aucune activité —', 28, y)
+        doc.setTextColor(0)
+        y += 6
+      } else {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9)
+
+        for (const r of dayRaps) {
+          const nomChantier = r.sous_dossiers?.chantiers?.nom || '—'
+          const nomSd = r.sous_dossiers?.nom || ''
+          const duree = Number(r._duree) || 0
+          totalH += duree
+          const label = `🏗  ${nomChantier}${nomSd ? ' › ' + nomSd : ''}`
+          const lines = doc.splitTextToSize(label, 130)
+          doc.text(lines, 28, y)
+          doc.text(fmtDuree(duree), 188, y, { align: 'right' })
+          y += lines.length * 5 + 2
+        }
+
+        for (const dep of dayDeps) {
+          const duree = Number(dep.duree) || 1
+          totalH += duree
+          const label = `⚡  Dépannage — ${dep.adresse}  (Bon #${dep.id})`
+          const lines = doc.splitTextToSize(label, 130)
+          doc.text(lines, 28, y)
+          doc.text(fmtDuree(duree), 188, y, { align: 'right' })
+          y += lines.length * 5 + 2
+        }
+
+        for (const s of daySupp) {
+          const duree = Number(s.duree) || 0
+          totalH += duree
+          const label = `+  H. supp. — ${s.commentaire || ''}`
+          const lines = doc.splitTextToSize(label, 130)
+          doc.text(lines, 28, y)
+          doc.text(fmtDuree(duree), 188, y, { align: 'right' })
+          y += lines.length * 5 + 2
         }
       }
-      y += Math.max(1, dayEntries.length) * 8 + 2
-      doc.setDrawColor(230); doc.line(20, y - 2, 190, y - 2)
+
+      doc.setDrawColor(220)
+      doc.line(20, y, 190, y)
+      y += 5
+
+      if (y > 260) { doc.addPage(); y = 20 }
     }
-    y += 6; doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
-    doc.text(`Total semaine ${pdfSemaine} : ${totalH.toFixed(2)}h`, 20, y)
+
+    // Total
+    y += 4
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12)
+    doc.text(`Total semaine ${sem} : ${fmtDuree(totalH)}`, 20, y)
+
+    // Signature
     if (sigData?.signature_base64) {
-      y += 16; doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120)
-      doc.text(`Signature de ${emp?.prenom}`, 20, y); doc.setTextColor(0)
-      y += 4; doc.addImage(sigData.signature_base64, 'PNG', 20, y, 80, 35)
+      y += 16
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120)
+      doc.text(`Signature de ${empDetail.prenom}`, 20, y)
+      doc.setTextColor(0); y += 4
+      doc.addImage(sigData.signature_base64, 'PNG', 20, y, 80, 35)
     }
-    doc.save(`heures_${emp?.prenom || 'employe'}_sem${pdfSemaine}_${pdfAnnee}.pdf`)
+
+    doc.save(`heures_${empDetail.prenom || 'employe'}_sem${sem}_${anneeVal}.pdf`)
     setPdfLoading(false)
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // PDF CHARTE ADMIN (tâche 6)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async function genererPDFCharteAdmin() {
+    if (!empDetail || !empCharteData?.sig?.signature_base64) return
+    const { sig, charte } = empCharteData
+    const dateISO = charte?.acceptee_le || sig?.signee_le || new Date().toISOString()
+    const dateStr = new Date(dateISO).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const { jsPDF } = await import('jspdf')
+    const doc = new jsPDF({ format: 'a4' })
+
+    doc.setFontSize(18); doc.setFont('helvetica', 'bold')
+    doc.text('ELECO SA', 20, 22)
+    doc.setFontSize(13); doc.setFont('helvetica', 'normal')
+    doc.text("Charte d'utilisation numérique — v1.0", 20, 31)
+    doc.setFontSize(10); doc.setTextColor(130)
+    doc.text(`Signé le ${dateStr} par ${empDetail.prenom || ''}`, 20, 39)
+    doc.setTextColor(0); doc.setDrawColor(180); doc.line(20, 44, 190, 44)
+
+    let y = 54
+    doc.setFontSize(10)
+    for (const clause of CLAUSES_CHARTE) {
+      doc.setFont('helvetica', 'bold')
+      const titreLines = doc.splitTextToSize(clause.titre, 170)
+      if (y + (titreLines.length + 3) * 5.5 > 270) { doc.addPage(); y = 20 }
+      doc.text(titreLines, 20, y)
+      y += titreLines.length * 5.5 + 2
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(60)
+      const texteLines = doc.splitTextToSize(clause.texte, 165)
+      if (y + texteLines.length * 5 + 8 > 270) { doc.addPage(); y = 20 }
+      doc.text(texteLines, 25, y)
+      doc.setTextColor(0)
+      y += texteLines.length * 5 + 8
+    }
+
+    if (y + 60 > 270) { doc.addPage(); y = 20 }
+    y += 4
+    doc.setDrawColor(200); doc.line(20, y, 190, y)
+    y += 8
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    doc.text('Signature électronique', 20, y)
+    y += 6
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120)
+    doc.text(`Accepté et signé numériquement le ${dateStr}`, 20, y)
+    y += 5
+    doc.text(`Employé : ${empDetail.prenom || '—'} — Eleco SA`, 20, y)
+    doc.setTextColor(0); y += 6
+    doc.addImage(sig.signature_base64, 'PNG', 20, y, 80, 36)
+    doc.save(`charte_eleco_${empDetail.prenom || 'employe'}_${dateStr.replace(/\//g, '-')}.pdf`)
+  }
+
+  async function reinitialiserCharte(empId) {
+    if (!window.confirm(`Réinitialiser la charte de ${empDetail?.prenom} ? Cette action remet le statut à "non signé".`)) return
+    await Promise.all([
+      supabase.from('chartes_acceptees').delete().eq('employe_id', empId),
+      supabase.from('signatures').delete().eq('employe_id', empId)
+    ])
+    setEmpCharteData({ charte: null, sig: null })
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ACTIONS CRUD
+  // ──────────────────────────────────────────────────────────────────────────
+
   async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
 
-  // CORBEILLE
   async function supprimerChantier(c) {
     const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
     setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
@@ -383,7 +567,7 @@ export default function Admin() {
       await supabase.from('rapport_materiaux').insert(
         newMat.map(m => ({
           rapport_id: rapportId,
-          ref_article: m.ref_article || m.id,
+          ref_article: m.ref_article || m.id || null,
           designation: m.designation || m.nom,
           unite: m.unite,
           quantite: m.quantite,
@@ -393,13 +577,38 @@ export default function Admin() {
     }
     if (sousDossierActif) chargerRapports(sousDossierActif.id)
     chargerTout()
-    setEditMateriaux(null)
-    setAjoutArticleVue(false)
+    // Recharger le rapportDetail avec les nouvelles données
+    const { data: updatedR } = await supabase.from('rapports')
+      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+      .eq('id', rapportId).single()
+    if (updatedR) {
+      const { data: rapEnt } = await supabase.from('time_entries')
+        .select('reference_id, duree').eq('type', 'chantier').eq('reference_id', rapportId)
+      const duree = rapEnt?.[0] ? Number(rapEnt[0].duree) : calcDuree(updatedR.heure_debut, updatedR.heure_fin)
+      setRapportDetail({ ...updatedR, _duree: duree })
+    }
+    setEditMateriaux(null); setAjoutArticleVue(false)
+    setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
   }
+
+  async function sauvegarderRapportDetail() {
+    if (!rapportDetail) return
+    await supabase.from('rapports').update({
+      date_travail: editRapportDate,
+      remarques: editRapportRemarques
+    }).eq('id', rapportDetail.id)
+    setRapportDetail(prev => ({ ...prev, date_travail: editRapportDate, remarques: editRapportRemarques }))
+    setEditRapportMode(false)
+    if (sousDossierActif) chargerRapports(sousDossierActif.id)
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // HELPERS
+  // ──────────────────────────────────────────────────────────────────────────
 
   function totaux(r) {
     const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-    const duree = calcDuree(r.heure_debut, r.heure_fin)
+    const duree = r._duree !== undefined ? r._duree : calcDuree(r.heure_debut, r.heure_fin)
     const mo = duree * TAUX
     const ht = mat + mo
     return { duree, mat, mo, ht, tva: ht * 0.081, ttc: ht * 1.081 }
@@ -408,11 +617,16 @@ export default function Admin() {
   const articlesFiltres = (() => {
     let l = catalogue
     if (catFiltre !== 'Tous') l = l.filter(a => a.categorie === catFiltre)
-    if (rechercheArticle) l = l.filter(a => a.nom.toLowerCase().includes(rechercheArticle.toLowerCase()) || (a.categorie || '').toLowerCase().includes(rechercheArticle.toLowerCase()))
+    if (rechercheArticle) l = l.filter(a =>
+      a.nom.toLowerCase().includes(rechercheArticle.toLowerCase()) ||
+      (a.categorie || '').toLowerCase().includes(rechercheArticle.toLowerCase())
+    )
     return l.slice(0, 100)
   })()
 
-  // ===================== VUES =====================
+  // ──────────────────────────────────────────────────────────────────────────
+  // VUES
+  // ──────────────────────────────────────────────────────────────────────────
 
   if (vueCorbeille) return (
     <div>
@@ -465,6 +679,7 @@ export default function Admin() {
     </div>
   )
 
+  // Vue ajout article (catalogue + saisie manuelle — tâche 8)
   if (ajoutArticleVue && editMateriaux) return (
     <div>
       <div className="top-bar">
@@ -474,9 +689,52 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        {/* Saisie manuelle */}
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5' }}>Saisie manuelle (hors catalogue)</div>
+          <div className="form-group">
+            <label>Désignation *</label>
+            <input value={articleManuel.designation} onChange={e => setArticleManuel(p => ({ ...p, designation: e.target.value }))} placeholder="Nom de l'article..." />
+          </div>
+          <div className="grid2">
+            <div className="form-group">
+              <label>Unité</label>
+              <input value={articleManuel.unite} onChange={e => setArticleManuel(p => ({ ...p, unite: e.target.value }))} placeholder="pce, m, kg..." />
+            </div>
+            <div className="form-group">
+              <label>Prix net (CHF)</label>
+              <input type="number" min="0" step="0.01" value={articleManuel.prix} onChange={e => setArticleManuel(p => ({ ...p, prix: e.target.value }))} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Quantité</label>
+            <input type="number" min="1" value={articleManuel.quantite} onChange={e => setArticleManuel(p => ({ ...p, quantite: parseInt(e.target.value) || 1 }))} />
+          </div>
+          <button
+            className="btn-primary"
+            disabled={!articleManuel.designation.trim()}
+            onClick={() => {
+              setEditMateriaux(prev => ({
+                ...prev,
+                mats: [...prev.mats, {
+                  ref_article: null,
+                  designation: articleManuel.designation.trim(),
+                  unite: articleManuel.unite.trim() || 'pce',
+                  quantite: articleManuel.quantite,
+                  prix_net: parseFloat(articleManuel.prix) || 0
+                }]
+              }))
+              setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
+              setAjoutArticleVue(false)
+            }}
+          >+ Ajouter cet article</button>
+        </div>
+
+        {/* Catalogue */}
+        <div style={{ fontWeight: 600, fontSize: '13px', color: '#666' }}>Ou choisir dans le catalogue :</div>
         <input type="search" placeholder="Rechercher..." value={rechercheArticle} onChange={e => setRechercheArticle(e.target.value)}
-          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', marginBottom: '8px' }} />
-        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '8px' }}>
+          style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }} />
+        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
           {categories.map(c => (
             <button key={c} onClick={() => setCatFiltre(c)} style={{
               padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
@@ -488,7 +746,7 @@ export default function Admin() {
         </div>
         <div className="card" style={{ padding: 0 }}>
           {articlesFiltres.map((a, i) => {
-            const dejaDans = editMateriaux.mats.find(m => (m.ref_article || m.id) === a.id)
+            const dejaDans = editMateriaux.mats.find(m => m.ref_article === a.id)
             return (
               <div key={a.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', gap: '8px', borderBottom: i < articlesFiltres.length - 1 ? '1px solid #eee' : 'none' }}>
                 <div style={{ flex: 1 }}>
@@ -505,8 +763,9 @@ export default function Admin() {
               </div>
             )
           })}
+          {articlesFiltres.length === 0 && <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: '13px' }}>Aucun article</div>}
         </div>
-        <button className="btn-primary" onClick={() => setAjoutArticleVue(false)}>✓ Confirmer</button>
+        <button className="btn-outline" onClick={() => setAjoutArticleVue(false)}>← Retour sans ajouter</button>
       </div>
     </div>
   )
@@ -515,7 +774,7 @@ export default function Admin() {
     <div>
       <div className="top-bar">
         <div>
-          <button onClick={() => setEditMateriaux(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <button onClick={() => { setEditMateriaux(null); setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 }) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Modifier matériaux</div>
         </div>
         <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => { setRechercheArticle(''); setCatFiltre('Tous'); setAjoutArticleVue(true) }}>+ Ajouter</button>
@@ -526,17 +785,15 @@ export default function Admin() {
           <div key={i} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500, fontSize: '13px' }}>{m.designation}</div>
-              <div style={{ fontSize: '11px', color: '#888' }}>{m.unite}</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>{m.unite} · {m.prix_net?.toFixed(2) || '0.00'} CHF</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <button onClick={() => {
-                const n = editMateriaux.mats.map((x, j) => j === i ? { ...x, quantite: Math.max(1, x.quantite - 1) } : x)
-                setEditMateriaux(prev => ({ ...prev, mats: n }))
+                setEditMateriaux(prev => ({ ...prev, mats: prev.mats.map((x, j) => j === i ? { ...x, quantite: Math.max(1, x.quantite - 1) } : x) }))
               }} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
               <span style={{ fontWeight: 600, minWidth: '20px', textAlign: 'center' }}>{m.quantite}</span>
               <button onClick={() => {
-                const n = editMateriaux.mats.map((x, j) => j === i ? { ...x, quantite: x.quantite + 1 } : x)
-                setEditMateriaux(prev => ({ ...prev, mats: n }))
+                setEditMateriaux(prev => ({ ...prev, mats: prev.mats.map((x, j) => j === i ? { ...x, quantite: x.quantite + 1 } : x) }))
               }} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
               <button onClick={() => {
                 setEditMateriaux(prev => ({ ...prev, mats: prev.mats.filter((_, j) => j !== i) }))
@@ -555,22 +812,47 @@ export default function Admin() {
       <div>
         <div className="top-bar">
           <div>
-            <button onClick={() => setRapportDetail(null)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+            <button onClick={() => { setRapportDetail(null); setEditRapportMode(false) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
             <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Rapport</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>{rapportDetail.employe?.prenom} · {new Date(rapportDetail.date_travail).toLocaleDateString('fr-CH')}</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>{rapportDetail.employe?.prenom} · {new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
           </div>
-          {!rapportDetail.valide && <span className="badge badge-amber">À valider</span>}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            {!editRapportMode && (
+              <button onClick={() => { setEditRapportMode(true); setEditRapportDate(rapportDetail.date_travail); setEditRapportRemarques(rapportDetail.remarques || '') }}
+                style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
+            )}
+            {!rapportDetail.valide && <span className="badge badge-amber">À valider</span>}
+            {rapportDetail.valide && <span className="badge badge-green">✓ Validé</span>}
+          </div>
         </div>
         <div className="page-content">
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{rapportDetail.employe?.prenom}</div></div>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(rapportDetail.date_travail).toLocaleDateString('fr-CH')}</div></div>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{t.duree}h</div></div>
-              <div><div style={{ fontSize: '11px', color: '#888' }}>Horaires</div><div style={{ fontWeight: 500 }}>{rapportDetail.heure_debut} – {rapportDetail.heure_fin}</div></div>
+          {editRapportMode ? (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>Modifier le rapport</div>
+              <div className="form-group">
+                <label>Date</label>
+                <input type="date" value={editRapportDate} onChange={e => setEditRapportDate(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Remarques</label>
+                <textarea rows={3} value={editRapportRemarques} onChange={e => setEditRapportRemarques(e.target.value)} style={{ resize: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button className="btn-outline" style={{ flex: 1 }} onClick={() => setEditRapportMode(false)}>Annuler</button>
+                <button className="btn-primary" style={{ flex: 1 }} onClick={sauvegarderRapportDetail}>✓ Sauvegarder</button>
+              </div>
             </div>
-            {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
-          </div>
+          ) : (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{rapportDetail.employe?.prenom}</div></div>
+                <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div></div>
+                <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{fmtDuree(t.duree)}</div></div>
+              </div>
+              {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
+            </div>
+          )}
+
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
@@ -584,9 +866,15 @@ export default function Admin() {
               </div>
             ))}
           </div>
+
           <div className="card">
             <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Estimation</div>
-            {[['Matériaux', `${t.mat.toFixed(2)} CHF`], [`M.O. (${t.duree}h × ${TAUX})`, `${t.mo.toFixed(2)} CHF`], ['HT', `${t.ht.toFixed(2)} CHF`], ['TVA 8.1%', `${t.tva.toFixed(2)} CHF`]].map(([l, v]) => (
+            {[
+              [`M.O. (${fmtDuree(t.duree)} × ${TAUX} CHF)`, `${t.mo.toFixed(2)} CHF`],
+              ['Matériaux', `${t.mat.toFixed(2)} CHF`],
+              ['HT', `${t.ht.toFixed(2)} CHF`],
+              ['TVA 8.1%', `${t.tva.toFixed(2)} CHF`]
+            ].map(([l, v]) => (
               <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
                 <span style={{ color: '#666' }}>{l}</span><span style={{ fontWeight: 500 }}>{v}</span>
               </div>
@@ -595,15 +883,13 @@ export default function Admin() {
               <span>TOTAL TTC</span><span>{t.ttc.toFixed(2)} CHF</span>
             </div>
           </div>
-          {!rapportDetail.valide && (
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
+            {!rapportDetail.valide && (
               <button onClick={() => valider(rapportDetail.id)} className="btn-primary" style={{ flex: 1 }}>✓ Valider</button>
-            </div>
-          )}
-          {rapportDetail.valide && (
-            <button onClick={() => setConfirm({ type: 'rapport', data: rapportDetail })} className="btn-outline" style={{ color: '#A32D2D', borderColor: '#f09595' }}>🗑️ Supprimer</button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     )
@@ -635,7 +921,7 @@ export default function Admin() {
               <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={async () => {
                 if (!nouveauSdNom.trim()) return
                 const existe = sousDossiers.find(s => s.nom.toLowerCase() === nouveauSdNom.toLowerCase())
-                if (existe) { alert(`"${nouveauSdNom}" existe déjà dans ce chantier !`); return }
+                if (existe) { alert(`"${nouveauSdNom}" existe déjà !`); return }
                 await supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom })
                 setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
               }}>OK</button>
@@ -675,8 +961,8 @@ export default function Admin() {
             return (
               <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                 <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom} · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{t.duree}h · {(r.rapport_materiaux || []).length} articles</div>
+                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{fmtDuree(t.duree)} · {(r.rapport_materiaux || []).length} articles</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '13px', fontWeight: 600 }}>{t.ttc.toFixed(0)} CHF</div>
@@ -757,10 +1043,12 @@ export default function Admin() {
             const mo = (d.duree || 1) * TAUX
             const ttc = (mat + mo) * 1.081
             return (
-              <div key={d.id} className="row-item" style={{ cursor: 'pointer' }}>
+              <div key={d.id} className="row-item">
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 500 }}>{d.adresse}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{d.employe?.prenom} · {d.duree}h · {new Date(d.date_travail).toLocaleDateString('fr-CH')}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>
+                    {d.employe?.prenom} · {fmtDuree(Number(d.duree) || 1)} · {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')} · Bon #{d.id}
+                  </div>
                 </div>
                 <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
               </div>
@@ -775,7 +1063,6 @@ export default function Admin() {
     const { year, month } = calMois
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7
-
     const rapsFiltrés = calEmployeFiltre === 'tous' ? calRapports : calRapports.filter(r => String(r.employe_id) === String(calEmployeFiltre))
     const depsFiltrés = calEmployeFiltre === 'tous' ? calDepannages : calDepannages.filter(d => String(d.employe_id) === String(calEmployeFiltre))
     const rapsJour = calJour ? rapsFiltrés.filter(r => r.date_travail === calJour) : []
@@ -791,7 +1078,7 @@ export default function Admin() {
         </div>
         <div className="page-content">
           <select value={calEmployeFiltre} onChange={e => { setCalEmployeFiltre(e.target.value); setCalJour(null) }}
-            style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e2e2', fontSize: '13px', background: 'white', color: '#1a1a1a' }}>
+            style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e2e2', fontSize: '13px', background: 'white' }}>
             <option value="tous">Tous les employés</option>
             {employes.map(e => <option key={e.id} value={e.id}>{e.prenom}</option>)}
           </select>
@@ -805,7 +1092,7 @@ export default function Admin() {
               {JOURS_FR.map((j, i) => <div key={i} style={{ textAlign: 'center', fontSize: '11px', color: '#888', fontWeight: 600, padding: '2px 0' }}>{j}</div>)}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
-              {Array.from({ length: firstWeekday }).map((_, i) => <div key={`empty-${i}`} />)}
+              {Array.from({ length: firstWeekday }).map((_, i) => <div key={`e-${i}`} />)}
               {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
                 const hasRap = rapsFiltrés.some(r => r.date_travail === dateStr)
@@ -843,7 +1130,6 @@ export default function Admin() {
                     <span className="badge badge-blue" style={{ fontSize: '10px' }}>Chantier</span>
                   </div>
                   <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{r.sous_dossiers?.chantiers?.nom}{r.sous_dossiers?.nom ? ` › ${r.sous_dossiers.nom}` : ''}</div>
-                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{calcDuree(r.heure_debut, r.heure_fin)}h</div>
                 </div>
               ))}
               {depsJour.map(d => (
@@ -854,7 +1140,7 @@ export default function Admin() {
                     <span className="badge badge-amber" style={{ fontSize: '10px' }}>Dépannage</span>
                   </div>
                   <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{d.adresse}</div>
-                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{d.duree || 1}h</div>
+                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{fmtDuree(Number(d.duree) || 1)}</div>
                 </div>
               ))}
             </div>
@@ -879,16 +1165,6 @@ export default function Admin() {
         {empLoading && (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <div style={{ fontSize: '13px', color: '#888' }}>Chargement…</div>
-            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center', gap: '6px' }}>
-              {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: 8, height: 8, borderRadius: '50%', background: '#185FA5',
-                  animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-                  opacity: 0.6
-                }} />
-              ))}
-            </div>
-            <style>{`@keyframes pulse { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }`}</style>
           </div>
         )}
         {!empLoading && employes.length === 0 && (
@@ -902,6 +1178,8 @@ export default function Admin() {
                 const moisActuel = (() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() } })()
                 setEmpDetail(emp)
                 setEmpDetailMois(moisActuel)
+                setFicheTab('heures')
+                setEmpCharteData(null)
                 chargerDetailEmploye(emp.id, moisActuel)
                 setVue('employe_detail')
               }}>
@@ -911,8 +1189,8 @@ export default function Admin() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>{emp.prenom}</div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#185FA5' }}>{s.heureMois}h ce mois</span>
-                  <span style={{ fontSize: '11px', color: '#999' }}>{s.heurePrev}h mois passé</span>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#185FA5' }}>{fmtDuree(s.heureMois)} ce mois</span>
+                  <span style={{ fontSize: '11px', color: '#999' }}>{fmtDuree(s.heurePrev)} mois passé</span>
                 </div>
                 <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
                   {s.chantiersCount} chantier{s.chantiersCount !== 1 ? 's' : ''} ce mois
@@ -926,16 +1204,19 @@ export default function Admin() {
     </div>
   )
 
+  // ─── Fiche employé (tâche 7) ──────────────────────────────────────────────
   if (vue === 'employe_detail' && empDetail) {
-    const totalRapports = empDetailRapports.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0)
-    const totalDeps = empDetailDepannages.reduce((s, d) => s + (d.duree || 1), 0)
+    const TABS = ['Heures', 'Feuille hebdo', 'Charte', 'Absences']
+
+    const totalRapports = empDetailRapports.reduce((s, r) => s + (r._duree || 0), 0)
+    const totalDeps = empDetailDepannages.reduce((s, d) => s + Number(d.duree || 1), 0)
     const totalGeneral = totalRapports + totalDeps
 
     const parChantier = {}
     for (const r of empDetailRapports) {
-      const nomChantier = r.sous_dossiers?.chantiers?.nom || 'Chantier inconnu'
-      if (!parChantier[nomChantier]) parChantier[nomChantier] = []
-      parChantier[nomChantier].push(r)
+      const nom = r.sous_dossiers?.chantiers?.nom || 'Chantier inconnu'
+      if (!parChantier[nom]) parChantier[nom] = []
+      parChantier[nom].push(r)
     }
 
     return (
@@ -944,208 +1225,213 @@ export default function Admin() {
           <div>
             <button onClick={() => setVue('employes')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
             <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{empDetail.prenom}</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>{totalGeneral}h · {MOIS_FR[empDetailMois.month]} {empDetailMois.year}</div>
           </div>
           <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#E6F1FB', color: '#185FA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
             {empDetail.initiales || empDetail.prenom?.slice(0, 2).toUpperCase()}
           </div>
         </div>
+
+        {/* Tabs */}
+        <div style={{ background: 'white', borderBottom: '1px solid #e2e2e2', padding: '8px 14px', display: 'flex', gap: '6px', overflowX: 'auto' }}>
+          {TABS.map(tab => (
+            <button key={tab} onClick={() => {
+              setFicheTab(tab)
+              if (tab === 'Charte' && !empCharteData) chargerCharteEmploye(empDetail.id)
+            }} style={{
+              padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
+              whiteSpace: 'nowrap', cursor: 'pointer', border: 'none',
+              background: ficheTab === tab ? '#185FA5' : '#f0f0f0',
+              color: ficheTab === tab ? 'white' : '#444'
+            }}>{tab}</button>
+          ))}
+        </div>
+
         <div className="page-content">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'white', borderRadius: '10px', border: '1px solid #e2e2e2', padding: '10px 14px' }}>
-            <button onClick={() => {
-              const d = new Date(empDetailMois.year, empDetailMois.month - 1, 1)
-              const m = { year: d.getFullYear(), month: d.getMonth() }
-              setEmpDetailMois(m)
-              chargerDetailEmploye(empDetail.id, m)
-            }} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>‹</button>
-            <span style={{ fontWeight: 600, fontSize: '14px' }}>{MOIS_FR[empDetailMois.month]} {empDetailMois.year}</span>
-            <button onClick={() => {
-              const d = new Date(empDetailMois.year, empDetailMois.month + 1, 1)
-              const m = { year: d.getFullYear(), month: d.getMonth() }
-              setEmpDetailMois(m)
-              chargerDetailEmploye(empDetail.id, m)
-            }} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>›</button>
-          </div>
 
-          {Object.keys(parChantier).length === 0 && empDetailDepannages.length === 0 && (
-            <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucune activité ce mois</div>
-          )}
+          {/* ── Tab Heures ─────────────────────────────────────────────────── */}
+          {ficheTab === 'Heures' && <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'white', borderRadius: '10px', border: '1px solid #e2e2e2', padding: '10px 14px' }}>
+              <button onClick={() => {
+                const d = new Date(empDetailMois.year, empDetailMois.month - 1, 1)
+                const m = { year: d.getFullYear(), month: d.getMonth() }
+                setEmpDetailMois(m); chargerDetailEmploye(empDetail.id, m)
+              }} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>‹</button>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>{MOIS_FR[empDetailMois.month]} {empDetailMois.year}</span>
+              <button onClick={() => {
+                const d = new Date(empDetailMois.year, empDetailMois.month + 1, 1)
+                const m = { year: d.getFullYear(), month: d.getMonth() }
+                setEmpDetailMois(m); chargerDetailEmploye(empDetail.id, m)
+              }} style={{ background: 'none', border: '1px solid #e2e2e2', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '16px', color: '#185FA5' }}>›</button>
+            </div>
 
-          {Object.entries(parChantier).map(([nomChantier, raps]) => {
-            const totalChantier = raps.reduce((s, r) => s + calcDuree(r.heure_debut, r.heure_fin), 0)
-            return (
-              <div key={nomChantier} className="card">
+            {Object.keys(parChantier).length === 0 && empDetailDepannages.length === 0 && (
+              <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucune activité ce mois</div>
+            )}
+
+            {Object.entries(parChantier).map(([nomChantier, raps]) => {
+              const totalChantier = raps.reduce((s, r) => s + (r._duree || 0), 0)
+              return (
+                <div key={nomChantier} className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '15px' }}>🏗️</span>
+                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{nomChantier}</span>
+                    </div>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#185FA5' }}>{fmtDuree(totalChantier)}</span>
+                  </div>
+                  {raps.map((r, i) => (
+                    <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: i === 0 ? '1px solid #eee' : '1px solid #f5f5f5' }}>
+                      <div style={{ fontSize: '12px', color: '#555' }}>
+                        {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
+                        {r.sous_dossiers?.nom && <span style={{ color: '#999', marginLeft: '6px' }}>· {r.sous_dossiers.nom}</span>}
+                      </div>
+                      <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{fmtDuree(r._duree || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+
+            {empDetailDepannages.length > 0 && (
+              <div className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '15px' }}>🏗️</span>
-                    <span style={{ fontWeight: 600, fontSize: '13px' }}>{nomChantier}</span>
+                    <span style={{ fontSize: '15px' }}>⚡</span>
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>Dépannages</span>
                   </div>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#185FA5' }}>{totalChantier}h</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#d68910' }}>{fmtDuree(totalDeps)}</span>
                 </div>
-                {raps.map((r, i) => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: i === 0 ? '1px solid #eee' : '1px solid #f5f5f5' }}>
+                {empDetailDepannages.map((d, i) => (
+                  <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: i === 0 ? '1px solid #eee' : '1px solid #f5f5f5' }}>
                     <div style={{ fontSize: '12px', color: '#555' }}>
-                      {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
-                      {r.sous_dossiers?.nom && <span style={{ color: '#999', marginLeft: '6px' }}>· {r.sous_dossiers.nom}</span>}
+                      {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      {d.adresse && <span style={{ color: '#999', marginLeft: '6px' }}>· {d.adresse}</span>}
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{calcDuree(r.heure_debut, r.heure_fin)}h</span>
+                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{fmtDuree(Number(d.duree) || 1)}</span>
                   </div>
                 ))}
               </div>
-            )
-          })}
+            )}
 
-          {empDetailDepannages.length > 0 && (
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '15px' }}>⚡</span>
-                  <span style={{ fontWeight: 600, fontSize: '13px' }}>Dépannages</span>
-                </div>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#d68910' }}>{totalDeps}h</span>
+            {totalGeneral > 0 && (
+              <div style={{ background: '#E6F1FB', borderRadius: '10px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Total {MOIS_FR[empDetailMois.month]}</span>
+                <span style={{ fontWeight: 700, fontSize: '18px', color: '#185FA5' }}>{fmtDuree(totalGeneral)}</span>
               </div>
-              {empDetailDepannages.map((d, i) => (
-                <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: i === 0 ? '1px solid #eee' : '1px solid #f5f5f5' }}>
-                  <div style={{ fontSize: '12px', color: '#555' }}>
-                    {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    {d.adresse && <span style={{ color: '#999', marginLeft: '6px' }}>· {d.adresse}</span>}
+            )}
+          </>}
+
+          {/* ── Tab Feuille hebdo (tâche 5) ─────────────────────────────── */}
+          {ficheTab === 'Feuille hebdo' && (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>Feuille hebdomadaire PDF</div>
+              <div className="grid2">
+                <div className="form-group">
+                  <label>Semaine (1–53)</label>
+                  <input type="number" min="1" max="53" value={pdfSemaine}
+                    onChange={e => setPdfSemaine(e.target.value)} placeholder="ex: 15" />
+                </div>
+                <div className="form-group">
+                  <label>Année</label>
+                  <input type="number" min="2024" max="2099" value={pdfAnnee}
+                    onChange={e => setPdfAnnee(Number(e.target.value))} />
+                </div>
+              </div>
+              <button className="btn-primary" disabled={!pdfSemaine || pdfLoading} onClick={genererFeuilleHebdo}>
+                {pdfLoading ? 'Génération...' : '⬇ Télécharger PDF'}
+              </button>
+              <div style={{ fontSize: '11px', color: '#888' }}>
+                Le PDF inclut chantiers, dépannages et heures supplémentaires de la semaine, détaillés par jour.
+              </div>
+            </div>
+          )}
+
+          {/* ── Tab Charte (tâche 6) ────────────────────────────────────── */}
+          {ficheTab === 'Charte' && (
+            empCharteLoading ? (
+              <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '30px 0' }}>Chargement…</div>
+            ) : (
+              <>
+                <div className="card">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ width: 48, height: 48, borderRadius: '50%', background: empCharteData?.charte ? '#EAF3DE' : '#FCEBEB', color: empCharteData?.charte ? '#3B6D11' : '#A32D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0 }}>
+                      {empCharteData?.charte ? '✓' : '!'}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                        {empCharteData?.charte ? 'Charte signée' : 'Charte non signée'}
+                      </div>
+                      {empCharteData?.charte && (
+                        <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                          Signée le {new Date(empCharteData.charte.acceptee_le).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                        </div>
+                      )}
+                      {!empCharteData?.charte && (
+                        <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>En attente de signature</div>
+                      )}
+                    </div>
                   </div>
-                  <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{d.duree || 1}h</span>
+                </div>
+
+                {empCharteData?.charte && empCharteData?.sig?.signature_base64 && (
+                  <button className="btn-primary" onClick={genererPDFCharteAdmin}>
+                    📄 Télécharger le PDF signé
+                  </button>
+                )}
+
+                {empCharteData?.charte && (
+                  <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#A32D2D' }}>Actions admin</div>
+                    <div style={{ fontSize: '12px', color: '#888' }}>
+                      La réinitialisation supprime la charte et la signature. L'employé devra re-signer lors de sa prochaine connexion.
+                    </div>
+                    <button
+                      onClick={() => reinitialiserCharte(empDetail.id)}
+                      style={{ background: 'white', color: '#A32D2D', border: '1px solid #f09595', borderRadius: '6px', padding: '10px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                    >
+                      🔄 Réinitialiser — remettre à "non signé"
+                    </button>
+                  </div>
+                )}
+
+                {!empCharteData?.charte && (
+                  <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>
+                    Aucune action disponible tant que la charte n'est pas signée.
+                  </div>
+                )}
+              </>
+            )
+          )}
+
+          {/* ── Tab Absences ─────────────────────────────────────────────── */}
+          {ficheTab === 'Absences' && (
+            <div className="card">
+              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Absences & vacances</div>
+              {empAbsences.length === 0 && (
+                <div style={{ fontSize: '13px', color: '#888' }}>Aucune absence enregistrée</div>
+              )}
+              {empAbsences.map((a, i) => (
+                <div key={a.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < empAbsences.length - 1 ? '1px solid #eee' : 'none' }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{a.type || 'Absence'}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>
+                      {a.date_debut ? new Date(a.date_debut + 'T12:00:00').toLocaleDateString('fr-CH') : '—'}
+                      {a.date_fin ? ` → ${new Date(a.date_fin + 'T12:00:00').toLocaleDateString('fr-CH')}` : ''}
+                    </div>
+                    {a.commentaire && <div style={{ fontSize: '11px', color: '#999', fontStyle: 'italic' }}>{a.commentaire}</div>}
+                  </div>
+                  {a.statut && <span className={`badge ${a.statut === 'approuve' ? 'badge-green' : a.statut === 'refuse' ? 'badge-red' : 'badge-amber'}`}>{a.statut}</span>}
                 </div>
               ))}
             </div>
           )}
 
-          {totalGeneral > 0 && (
-            <div style={{ background: '#E6F1FB', borderRadius: '10px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Total {MOIS_FR[empDetailMois.month]}</span>
-              <span style={{ fontWeight: 700, fontSize: '18px', color: '#185FA5' }}>{totalGeneral}h</span>
-            </div>
-          )}
         </div>
       </div>
     )
   }
 
-  // ===================== HEURES =====================
-  if (vue === 'heures') return (
-    <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Heures — Cumul par chantier</div>
-        </div>
-      </div>
-      <div className="page-content">
-        {heuresLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '30px 0' }}>Chargement…</div>}
-        {!heuresLoading && heuresCumul.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>
-            Aucune saisie d'heures pour l'instant.
-          </div>
-        )}
-        {!heuresLoading && heuresCumul.length > 0 && (
-          <div className="card">
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Total heures par chantier</div>
-            {heuresCumul.map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < heuresCumul.length - 1 ? '1px solid #eee' : 'none' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>🏗️</div>
-                  <span style={{ fontSize: '13px', fontWeight: 500 }}>{c.nom}</span>
-                </div>
-                <span style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>{c.total.toFixed(2)}h</span>
-              </div>
-            ))}
-            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '2px solid #185FA5', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5' }}>TOTAL GÉNÉRAL</span>
-              <span style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{heuresCumul.reduce((s, c) => s + c.total, 0).toFixed(2)}h</span>
-            </div>
-          </div>
-        )}
-
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ fontWeight: 600, fontSize: '14px' }}>Feuille hebdomadaire PDF</div>
-          <div className="form-group">
-            <label>Employé</label>
-            <select value={pdfEmp} onChange={e => setPdfEmp(e.target.value)}
-              style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e2e2', fontSize: '14px', background: 'white' }}>
-              <option value="">Sélectionner un employé...</option>
-              {employes.map(e => <option key={e.id} value={e.id}>{e.prenom}</option>)}
-            </select>
-          </div>
-          <div className="grid2">
-            <div className="form-group">
-              <label>Semaine (1–53)</label>
-              <input
-                type="number" min="1" max="53" value={pdfSemaine}
-                onChange={e => setPdfSemaine(e.target.value)}
-                placeholder="ex: 15"
-              />
-            </div>
-            <div className="form-group">
-              <label>Année</label>
-              <input
-                type="number" min="2024" max="2099" value={pdfAnnee}
-                onChange={e => setPdfAnnee(Number(e.target.value))}
-              />
-            </div>
-          </div>
-          <button
-            className="btn-primary"
-            disabled={!pdfEmp || !pdfSemaine || pdfLoading}
-            onClick={genererFeuilleHebdo}
-          >
-            {pdfLoading ? 'Génération...' : '⬇ Télécharger PDF'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-
-  // ===================== CHARTES =====================
-  if (vue === 'chartes') return (
-    <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chartes numériques</div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <span className="badge badge-green">{chartesEmployes.filter(e => e.charteSigne).length} signées</span>
-          <span className="badge badge-red">{chartesEmployes.filter(e => !e.charteSigne).length} en attente</span>
-        </div>
-      </div>
-      <div className="page-content">
-        {chartesLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '30px 0' }}>Chargement…</div>}
-        {!chartesLoading && chartesEmployes.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Aucun employé trouvé.</div>
-        )}
-        {!chartesLoading && chartesEmployes.length > 0 && (
-          <div className="card">
-            {chartesEmployes.map((emp, i) => (
-              <div key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: i < chartesEmployes.length - 1 ? '1px solid #eee' : 'none' }}>
-                <div style={{ width: 40, height: 40, borderRadius: '50%', background: emp.charteSigne ? '#EAF3DE' : '#FCEBEB', color: emp.charteSigne ? '#3B6D11' : '#A32D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px', flexShrink: 0 }}>
-                  {emp.initiales || emp.prenom?.slice(0, 2).toUpperCase()}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{emp.prenom}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>
-                    {emp.charteSigne
-                      ? `Signé le ${new Date(emp.charteDate).toLocaleDateString('fr-CH')}`
-                      : 'Non signé — en attente'}
-                  </div>
-                </div>
-                <span className={`badge ${emp.charteSigne ? 'badge-green' : 'badge-red'}`}>
-                  {emp.charteSigne ? '✓ Signé' : '⏳ En attente'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-
-  // ===================== ACCUEIL =====================
+  // ─── Accueil — 4 entrées (tâche 7) ───────────────────────────────────────
   return (
     <div>
       <div className="top-bar">
@@ -1176,7 +1462,7 @@ export default function Admin() {
                 <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                   <div>
                     <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {t.duree}h · {new Date(r.date_travail).toLocaleDateString('fr-CH')}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
                   </div>
                   <span style={{ color: '#185FA5' }}>›</span>
                 </div>
@@ -1184,6 +1470,7 @@ export default function Admin() {
             })}
           </div>
         )}
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <button onClick={() => setVue('chantiers')} style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>🏗️</span>
@@ -1199,24 +1486,13 @@ export default function Admin() {
             style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>📅</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Calendrier</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>Activité mensuelle</span>
           </button>
           <button onClick={() => { setVue('employes'); chargerStatsEmployes() }}
             style={{ background: '#F3EEFB', border: '1px solid #7D3C98', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>👷</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#7D3C98' }}>Employés</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{employes.length} actifs</span>
-          </button>
-          <button onClick={() => { setVue('heures'); chargerHeures() }}
-            style={{ background: '#EBF5FB', border: '1px solid #2E86C1', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>⏱️</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#2E86C1' }}>Heures</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>Cumul & PDF hebdo</span>
-          </button>
-          <button onClick={() => { setVue('chartes'); chargerChartes() }}
-            style={{ background: '#FEF5E4', border: '1px solid #E67E22', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>📋</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#CA6F1E' }}>Chartes</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>Statuts de signature</span>
           </button>
         </div>
       </div>

@@ -3,6 +3,24 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { loadCurrentProfile } from '../lib/auth'
 
+function authErrorMessage(error) {
+  if (!error) return 'Connexion impossible.'
+
+  if (error.code === 'NO_LINKED_PROFILE') {
+    return 'Connexion refusee : aucun profil Eleco n est lie a ce compte Supabase.'
+  }
+
+  if (error.code === 'PROFILE_LINK_FAILED') {
+    return 'Connexion refusee : le profil Eleco existe peut-etre, mais il n a pas pu etre lie a ce compte Supabase.'
+  }
+
+  if (error.code === 'PROFILE_NOT_FOUND') {
+    return 'Connexion refusee : profil applicatif introuvable ou inactif.'
+  }
+
+  return error.message || 'Connexion refusee : profil applicatif indisponible.'
+}
+
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -22,18 +40,26 @@ export default function Login() {
       })
 
       if (authError) {
+        console.error('[auth] Echec signInWithPassword:', authError)
         setErreur('Email ou mot de passe incorrect.')
         setLoading(false)
         return
       }
 
-      const { profile, error: profileError } = await loadCurrentProfile()
+      const { user, profile, error: profileError } = await loadCurrentProfile()
       if (profileError || !profile) {
         await supabase.auth.signOut()
-        setErreur('Utilisateur non trouvé ou inactif.')
+        console.error('[auth] Profil refuse:', profileError)
+        setErreur(authErrorMessage(profileError))
         setLoading(false)
         return
       }
+
+      console.info('[auth] Login valide:', {
+        supabase_user_id: user.id,
+        utilisateur_id: profile.id,
+        role: profile.role
+      })
 
       navigate(profile.role === 'admin' ? '/admin' : '/employe', { replace: true })
     } catch (err) {

@@ -3,10 +3,11 @@
 
 ---
 
-## STATUT SÉCURITÉ / AUTH / RLS — OK PRÉ-PRODUCTION ⚠️
+## STATUT SÉCURITÉ / AUTH / RLS — OK PRÉ-PRODUCTION ✅ (audit 2026-04-15)
 
 > **Auth Supabase réelle implémentée** (signInWithPassword, session JWT, PrivateRoute vérifié).
-> **Migration RLS prête** : `supabase/migrations/auth_rls_security.sql` à exécuter dans Supabase SQL Editor.
+> **RLS audité** : architecture correcte, politiques SECURITY DEFINER sur 12 tables, `USING(true)` supprimé.
+> **Conditions restantes avant production réelle :**
 >
 > **Conditions pour passer en production :**
 > 1. Exécuter `auth_rls_security.sql` EN DERNIER (après `sections_5_6_7.sql`)

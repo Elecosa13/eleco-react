@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { loadCurrentProfile, getCachedProfile } from './lib/auth'
+import { loadCurrentProfile, getCachedProfile, signOut } from './lib/auth'
 import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import Employe from './pages/Employe'
@@ -13,15 +13,17 @@ import Charte from './pages/Charte'
 function PrivateRoute({ children, requiredRole }) {
   const [status, setStatus] = useState('loading')
   const [profile, setProfile] = useState(null)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     let mounted = true
-    loadCurrentProfile().then(({ profile: loaded }) => {
+    loadCurrentProfile().then(({ profile: loaded, error: profileError }) => {
       if (!mounted) return
       if (loaded) {
         setProfile(loaded)
         setStatus('ok')
       } else {
+        setError(profileError)
         setStatus('denied')
       }
     })
@@ -29,7 +31,21 @@ function PrivateRoute({ children, requiredRole }) {
   }, [])
 
   if (status === 'loading') return null
-  if (status === 'denied' || !profile) return <Navigate to="/login" replace />
+  if (status === 'denied' || !profile) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: '#f5f5f5' }}>
+        <div style={{ background: 'white', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '20px', maxWidth: '360px', width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ fontWeight: 700, fontSize: '16px' }}>Acces bloque</div>
+          <div style={{ fontSize: '13px', color: '#555' }}>
+            {error?.message || 'Aucun profil Eleco lie a cette session Supabase.'}
+          </div>
+          <button className="btn-primary" onClick={async () => { await signOut(); window.location.href = '/login' }}>
+            Retour a la connexion
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   if (requiredRole && profile.role !== requiredRole) {
     return <Navigate to={profile.role === 'admin' ? '/admin' : '/employe'} replace />

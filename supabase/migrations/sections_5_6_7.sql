@@ -103,10 +103,27 @@ CREATE TABLE IF NOT EXISTS signatures (
 
 ALTER TABLE signatures ENABLE ROW LEVEL SECURITY;
 
--- Employé : lire et gérer sa propre signature
+-- Employé : lire et gérer uniquement sa propre signature
+DROP POLICY IF EXISTS "Employe gere sa signature" ON signatures;
+
 CREATE POLICY "Employe gere sa signature"
   ON signatures FOR ALL TO authenticated
-  USING (true) WITH CHECK (true);
+  USING (
+    employe_id = (SELECT id FROM utilisateurs WHERE auth_user_id = auth.uid() LIMIT 1)
+    OR EXISTS (
+      SELECT 1 FROM utilisateurs
+      WHERE auth_user_id = auth.uid()
+        AND role = 'admin'
+    )
+  )
+  WITH CHECK (
+    employe_id = (SELECT id FROM utilisateurs WHERE auth_user_id = auth.uid() LIMIT 1)
+    OR EXISTS (
+      SELECT 1 FROM utilisateurs
+      WHERE auth_user_id = auth.uid()
+        AND role = 'admin'
+    )
+  );
 
 -- -------------------------------------------------------
 -- SECTION 7 — Charte numérique employé
@@ -124,10 +141,27 @@ CREATE TABLE IF NOT EXISTS chartes_acceptees (
 
 ALTER TABLE chartes_acceptees ENABLE ROW LEVEL SECURITY;
 
--- Accès ouvert aux utilisateurs authentifiés (policies fines = Phase 1)
+-- Employé : lire et gérer uniquement sa propre charte
+DROP POLICY IF EXISTS "Employe gere sa charte" ON chartes_acceptees;
+
 CREATE POLICY "Employe gere sa charte"
   ON chartes_acceptees FOR ALL TO authenticated
-  USING (true) WITH CHECK (true);
+  USING (
+    employe_id = (SELECT id FROM utilisateurs WHERE auth_user_id = auth.uid() LIMIT 1)
+    OR EXISTS (
+      SELECT 1 FROM utilisateurs
+      WHERE auth_user_id = auth.uid()
+        AND role = 'admin'
+    )
+  )
+  WITH CHECK (
+    employe_id = (SELECT id FROM utilisateurs WHERE auth_user_id = auth.uid() LIMIT 1)
+    OR EXISTS (
+      SELECT 1 FROM utilisateurs
+      WHERE auth_user_id = auth.uid()
+        AND role = 'admin'
+    )
+  );
 
 -- -------------------------------------------
 ------------

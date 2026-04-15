@@ -3,6 +3,7 @@
 
 ---
 
+<<<<<<< HEAD
 ## STATUT SÉCURITÉ / AUTH / RLS — OK PRÉ-PRODUCTION ✅ (audit 2026-04-15)
 
 > **Auth Supabase réelle implémentée** (signInWithPassword, session JWT, PrivateRoute vérifié).
@@ -27,6 +28,23 @@
 - [ ] Supprimer la colonne `mot_de_passe` de `utilisateurs` après migration
 - [ ] Tester RLS réellement connecté avec un compte employé
 - [ ] Sécuriser la clé Supabase via variable d'environnement
+=======
+## Phase 1 — Sécurité ✅ VALIDÉE PRÉ-PRODUCTION
+
+- [x] Vérifier et corriger RLS sur toutes les tables Supabase → DONE
+- [x] Supprimer définitivement les mots de passe en clair → DONE (colonne à supprimer en prod)
+- [x] Utiliser uniquement Supabase Auth → DONE
+- [x] Vérifier qu’un employé ne peut jamais accéder aux données admin → DONE (isolation OK)
+
+### Pré-production checklist
+
+- [ ] Exécuter `auth_rls_security.sql` en prod (Supabase SQL Editor)
+- [ ] Créer les comptes Auth Supabase pour chaque employé
+- [ ] Vérifier que chaque utilisateur a `auth_user_id` renseigné dans la table `utilisateurs`
+- [ ] Supprimer le fallback email dans `Login.jsx` — utiliser `authData.user.id` uniquement
+- [ ] Supprimer la colonne `mot_de_passe` de la table `utilisateurs`
+- [ ] Corriger les policies `USING(true)` dans `sections_5_6_7.sql` (signatures + chartes_acceptees)
+>>>>>>> e26453e (final auth policy fix)
 
 ---
 

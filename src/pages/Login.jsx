@@ -46,24 +46,11 @@ export default function Login() {
         return
       }
 
-<<<<<<< HEAD
       const { user, profile, error: profileError } = await loadCurrentProfile()
       if (profileError || !profile) {
         await supabase.auth.signOut()
         console.error('[auth] Profil refuse:', profileError)
         setErreur(authErrorMessage(profileError))
-=======
-      // Récupérer les données utilisateur via auth_user_id (jamais par email)
-      const { data: userData, error: userError } = await supabase
-        .from('utilisateurs')
-        .select('*')
-        .eq('auth_user_id', authData.user.id)
-        .eq('actif', true)
-        .single()
-
-      if (userError || !userData) {
-        setErreur('Utilisateur non trouvé ou inactif.')
->>>>>>> e26453e (final auth policy fix)
         setLoading(false)
         return
       }

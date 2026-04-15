@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
-const QUOTA_VACANCES = 20 // jours ouvrables par an (par défaut)
+const QUOTA_VACANCES = 20
+const CREDIT_JOUR = 8
 
 function countJoursOuvrables(dateDebut, dateFin) {
   if (!dateDebut || !dateFin) return 0
@@ -19,9 +20,25 @@ function countJoursOuvrables(dateDebut, dateFin) {
   return count
 }
 
+function datesSeChevauchent(debutA, finA, debutB, finB) {
+  return debutA <= finB && finA >= debutB
+}
+
+function getISOWeek(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00')
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
+  const week1 = new Date(d.getFullYear(), 0, 4)
+  return 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+}
+
+function fmtDate(dateStr, opts) {
+  return new Date(dateStr + 'T12:00:00').toLocaleDateString('fr-CH', opts)
+}
+
 export default function Employe() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+
   const [chantiers, setChantiers] = useState([])
   const [vue, setVue] = useState('accueil')
   const [creditUtilise, setCreditUtilise] = useState(0)
@@ -32,7 +49,6 @@ export default function Employe() {
   const [confirmDoublon, setConfirmDoublon] = useState(null)
   const [depannagesRecents, setDepannagesRecents] = useState([])
 
-  // Heures supplémentaires
   const [modalSupp, setModalSupp] = useState(false)
   const [suppHeures, setSuppHeures] = useState(1)
   const [suppJustification, setSuppJustification] = useState('')
@@ -40,10 +56,14 @@ export default function Employe() {
   const [suppDepannageId, setSuppDepannageId] = useState('')
   const [suppEnvoi, setSuppEnvoi] = useState(false)
   const [suppSucces, setSuppSucces] = useState(false)
+  const [suppHistorique, setSuppHistorique] = useState([])
 
-  // Vacances
   const [vacances, setVacances] = useState([])
+  const [toutesVacances, setToutesVacances] = useState([])
   const [soldeVacances, setSoldeVacances] = useState({ pris: 0, attente: 0 })
+  const [quotaVacances, setQuotaVacances] = useState(QUOTA_VACANCES)
+  const [periodesAdmin, setPeriodesAdmin] = useState([])
+  const [vacErreur, setVacErreur] = useState('')
   const [modalVacances, setModalVacances] = useState(false)
   const [vacDateDebut, setVacDateDebut] = useState('')
   const [vacDateFin, setVacDateFin] = useState('')
@@ -51,41 +71,72 @@ export default function Employe() {
   const [vacEnvoi, setVacEnvoi] = useState(false)
   const [vacSucces, setVacSucces] = useState(false)
 
-  const CREDIT_JOUR = 8
-
   useEffect(() => { charger() }, [])
 
   async function charger() {
-    const { data } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
-    if (data) setChantiers(data)
+    const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+    if (ch) setChantiers(ch)
 
-    const aujourd_hui = new Date().toISOString().split('T')[0]
+    const aujourdHui = new Date().toISOString().split('T')[0]
     const { data: entries } = await supabase
-      .from('time_entries').select('duree')
-      .eq('employe_id', user.id).eq('date_travail', aujourd_hui)
+      .from('time_entries')
+      .select('duree')
+      .eq('employe_id', user.id)
+      .eq('date_travail', aujourdHui)
     if (entries) setCreditUtilise(entries.reduce((s, e) => s + Number(e.duree), 0))
 
     const { data: deps } = await supabase
-      .from('depannages').select('id, adresse, date_travail')
+      .from('depannages')
+      .select('id, adresse, date_travail')
       .eq('employe_id', user.id)
-      .order('date_travail', { ascending: false }).limit(10)
+      .order('date_travail', { ascending: false })
+      .limit(10)
     if (deps) setDepannagesRecents(deps)
 
-    // Charger vacances
+    const { data: supp } = await supabase
+      .from('time_entries')
+      .select('id, date_travail, duree, commentaire, chantiers(nom)')
+      .eq('employe_id', user.id)
+      .eq('type', 'heures_supp')
+      .order('date_travail', { ascending: false })
+      .limit(8)
+    if (supp) setSuppHistorique(supp)
+
     const annee = new Date().getFullYear()
+    const { data: profil } = await supabase
+      .from('utilisateurs')
+      .select('vacances_quota_annuel')
+      .eq('id', user.id)
+      .maybeSingle()
+    const quota = profil?.vacances_quota_annuel || QUOTA_VACANCES
+    setQuotaVacances(quota)
+
+    const { data: periodes } = await supabase.from('vacances_blocages')
+      .select('*')
+      .eq('actif', true)
+      .order('date_debut', { ascending: true })
+    if (periodes) setPeriodesAdmin(periodes)
+
     const { data: vac } = await supabase.from('vacances')
-      .select('*').eq('employe_id', user.id)
+      .select('*')
+      .eq('employe_id', user.id)
       .order('created_at', { ascending: false })
+
     if (vac) {
       setVacances(vac)
       const pris = vac
         .filter(v => v.statut === 'accepte' && new Date(v.date_debut + 'T12:00:00').getFullYear() === annee)
-        .reduce((s, v) => s + countJoursOuvrables(v.date_debut, v.date_fin), 0)
+        .reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
       const attente = vac
         .filter(v => v.statut === 'en_attente' && new Date(v.date_debut + 'T12:00:00').getFullYear() === annee)
-        .reduce((s, v) => s + countJoursOuvrables(v.date_debut, v.date_fin), 0)
+        .reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
       setSoldeVacances({ pris, attente })
     }
+
+    const { data: vacGlobales } = await supabase.from('vacances')
+      .select('id, employe_id, date_debut, date_fin, statut, employe:employe_id(prenom)')
+      .in('statut', ['en_attente', 'accepte'])
+    if (vacGlobales) setToutesVacances(vacGlobales)
   }
 
   async function creerChantier(forcer = false) {
@@ -95,19 +146,27 @@ export default function Employe() {
       if (existe) { setConfirmDoublon(existe); return }
     }
     await supabase.from('chantiers').insert({ nom: nouveauNom, adresse: nouvelleAdresse })
-    setNouveauNom(''); setNouvelleAdresse(''); setAjoutChantier(false); setConfirmDoublon(null); charger()
+    setNouveauNom('')
+    setNouvelleAdresse('')
+    setAjoutChantier(false)
+    setConfirmDoublon(null)
+    charger()
   }
 
   async function soumettreHeuresSupp(e) {
     e.preventDefault()
     if (!suppJustification.trim() || Number(suppHeures) <= 0) return
     setSuppEnvoi(true)
-    const aujourd_hui = new Date().toISOString().split('T')[0]
+    const aujourdHui = new Date().toISOString().split('T')[0]
+    const annee = new Date(aujourdHui + 'T12:00:00').getFullYear()
     await supabase.from('time_entries').insert({
       employe_id: user.id,
-      date_travail: aujourd_hui,
+      date_travail: aujourdHui,
       type: 'heures_supp',
       duree: Number(suppHeures),
+      heures_nettes: Number(suppHeures),
+      semaine: getISOWeek(aujourdHui),
+      annee,
       commentaire: suppJustification.trim(),
       chantier_id: suppChantierId || null,
       reference_id: suppDepannageId || null
@@ -125,16 +184,72 @@ export default function Employe() {
     }, 1500)
   }
 
+  const joursVacancesSelectionnes = useMemo(
+    () => countJoursOuvrables(vacDateDebut, vacDateFin),
+    [vacDateDebut, vacDateFin]
+  )
+
+  const periodeSpeciale = useMemo(() => {
+    if (!vacDateDebut || !vacDateFin) return null
+    return periodesAdmin.find(p =>
+      (p.type || 'blocage') === 'fermeture_collective' &&
+      datesSeChevauchent(vacDateDebut, vacDateFin, p.date_debut, p.date_fin)
+    )
+  }, [periodesAdmin, vacDateDebut, vacDateFin])
+
+  const alerteCouverture = useMemo(() => {
+    if (!vacDateDebut || !vacDateFin || periodeSpeciale) return ''
+    const autres = toutesVacances.filter(v =>
+      String(v.employe_id) !== String(user.id) &&
+      datesSeChevauchent(vacDateDebut, vacDateFin, v.date_debut, v.date_fin)
+    )
+    if (autres.length < 2) return ''
+    const noms = autres.map(v => v.employe?.prenom).filter(Boolean)
+    return `Attention effectif réduit : ${autres.length} autre(s) absence(s) sur cette période${noms.length ? ` (${noms.join(', ')})` : ''}.`
+  }, [toutesVacances, user.id, vacDateDebut, vacDateFin, periodeSpeciale])
+
   async function soumettreVacances(e) {
     e.preventDefault()
     if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) return
+
+    const blocage = periodesAdmin.find(p =>
+      (p.type || 'blocage') === 'blocage' &&
+      datesSeChevauchent(vacDateDebut, vacDateFin, p.date_debut, p.date_fin)
+    )
+    if (blocage) {
+      setVacErreur(`Période bloquée : ${blocage.motif}`)
+      return
+    }
+
+    if (joursVacancesSelectionnes <= 0) {
+      setVacErreur('Sélectionne au moins un jour ouvrable.')
+      return
+    }
+
+    const restant = quotaVacances - soldeVacances.pris
+    if (joursVacancesSelectionnes > restant) {
+      setVacErreur(`Quota dépassé : il reste ${Math.max(0, restant)} jour(s).`)
+      return
+    }
+
+    const doublonPerso = vacances.find(v =>
+      ['en_attente', 'accepte'].includes(v.statut) &&
+      datesSeChevauchent(vacDateDebut, vacDateFin, v.date_debut, v.date_fin)
+    )
+    if (doublonPerso) {
+      setVacErreur('Tu as déjà une demande en attente ou acceptée sur cette période.')
+      return
+    }
+
+    setVacErreur('')
     setVacEnvoi(true)
     await supabase.from('vacances').insert({
       employe_id: user.id,
       date_debut: vacDateDebut,
       date_fin: vacDateFin,
       commentaire: vacCommentaire.trim() || null,
-      statut: 'en_attente'
+      statut: 'en_attente',
+      jours_ouvrables: joursVacancesSelectionnes
     })
     setVacEnvoi(false)
     setVacSucces(true)
@@ -144,6 +259,7 @@ export default function Employe() {
       setVacDateDebut('')
       setVacDateFin('')
       setVacCommentaire('')
+      setVacErreur('')
       charger()
     }, 1500)
   }
@@ -157,7 +273,6 @@ export default function Employe() {
   const creditRestant = CREDIT_JOUR - creditUtilise
   const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
   const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
-
   const chantiersFiltres = chantiers.filter(c =>
     c.nom.toLowerCase().includes(recherche.toLowerCase()) ||
     (c.adresse || '').toLowerCase().includes(recherche.toLowerCase())
@@ -167,7 +282,6 @@ export default function Employe() {
   const statutColor = { en_attente: '#BA7517', accepte: '#3B6D11', refuse: '#A32D2D' }
   const statutBg = { en_attente: '#FAEEDA', accepte: '#EAF3DE', refuse: '#FCEBEB' }
 
-  // ─── Modal heures supplémentaires ─────────────────────────────────────────
   if (modalSupp) {
     if (suppSucces) return (
       <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
@@ -180,7 +294,7 @@ export default function Employe() {
         <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <span style={{ fontWeight: 700, fontSize: '16px' }}>Heures supplémentaires</span>
-            <button onClick={() => setModalSupp(false)} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>✕</button>
+            <button onClick={() => setModalSupp(false)} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
           </div>
           <form onSubmit={soumettreHeuresSupp} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="form-group">
@@ -204,7 +318,7 @@ export default function Employe() {
                 <select value={suppDepannageId} onChange={e => { setSuppDepannageId(e.target.value); if (e.target.value) setSuppChantierId('') }}>
                   <option value="">Aucun</option>
                   {depannagesRecents.map(d => (
-                    <option key={d.id} value={d.id}>{d.adresse} · {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</option>
+                    <option key={d.id} value={d.id}>{d.adresse} · {fmtDate(d.date_travail)}</option>
                   ))}
                 </select>
               </div>
@@ -221,7 +335,6 @@ export default function Employe() {
     )
   }
 
-  // ─── Modal demande de vacances ─────────────────────────────────────────────
   if (modalVacances) {
     if (vacSucces) return (
       <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
@@ -230,41 +343,64 @@ export default function Employe() {
         <div style={{ fontSize: '13px', color: '#888' }}>En attente de validation par l'administration.</div>
       </div>
     )
-    const joursSelectionnes = countJoursOuvrables(vacDateDebut, vacDateFin)
-    const restant = QUOTA_VACANCES - soldeVacances.pris
+    const restant = quotaVacances - soldeVacances.pris
+    const blocages = periodesAdmin.filter(p => (p.type || 'blocage') === 'blocage')
+    const fermetures = periodesAdmin.filter(p => (p.type || 'blocage') === 'fermeture_collective')
+
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
         <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <span style={{ fontWeight: 700, fontSize: '16px' }}>Demande de vacances</span>
-            <button onClick={() => setModalVacances(false)} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>✕</button>
+            <button onClick={() => { setModalVacances(false); setVacErreur('') }} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
           </div>
           <form onSubmit={soumettreVacances} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="grid2">
               <div className="form-group">
                 <label>Date de début *</label>
-                <input type="date" value={vacDateDebut} onChange={e => setVacDateDebut(e.target.value)} required />
+                <input type="date" value={vacDateDebut} onChange={e => { setVacDateDebut(e.target.value); setVacErreur('') }} required />
               </div>
               <div className="form-group">
                 <label>Date de fin *</label>
-                <input type="date" value={vacDateFin} min={vacDateDebut} onChange={e => setVacDateFin(e.target.value)} required />
+                <input type="date" value={vacDateFin} min={vacDateDebut} onChange={e => { setVacDateFin(e.target.value); setVacErreur('') }} required />
               </div>
             </div>
-            {joursSelectionnes > 0 && (
+            {joursVacancesSelectionnes > 0 && (
               <div style={{
-                background: joursSelectionnes > restant ? '#FCEBEB' : '#E6F1FB',
-                border: `1px solid ${joursSelectionnes > restant ? '#f09595' : '#185FA5'}`,
+                background: joursVacancesSelectionnes > restant ? '#FCEBEB' : '#E6F1FB',
+                border: `1px solid ${joursVacancesSelectionnes > restant ? '#f09595' : '#185FA5'}`,
                 borderRadius: '8px', padding: '10px 14px', fontSize: '12px',
-                color: joursSelectionnes > restant ? '#A32D2D' : '#185FA5'
+                color: joursVacancesSelectionnes > restant ? '#A32D2D' : '#185FA5'
               }}>
-                {joursSelectionnes} j. ouvrables sélectionnés · {restant} j. restants au quota
-                {joursSelectionnes > restant && ' — Dépassement de quota !'}
+                {joursVacancesSelectionnes} j. ouvrables sélectionnés · {Math.max(0, restant)} j. restants au quota
+                {joursVacancesSelectionnes > restant && ' · quota dépassé'}
+              </div>
+            )}
+            {periodeSpeciale && (
+              <div style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#3B6D11' }}>
+                Fermeture collective : {periodeSpeciale.motif}
+              </div>
+            )}
+            {!periodeSpeciale && alerteCouverture && (
+              <div style={{ background: '#FAEEDA', border: '1px solid #f39c12', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
+                {alerteCouverture}
               </div>
             )}
             <div className="form-group">
               <label>Commentaire (optionnel)</label>
               <textarea rows={2} value={vacCommentaire} onChange={e => setVacCommentaire(e.target.value)} placeholder="Informations complémentaires..." style={{ resize: 'none' }} />
             </div>
+            {vacErreur && (
+              <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+                {vacErreur}
+              </div>
+            )}
+            {(blocages.length > 0 || fermetures.length > 0) && (
+              <div style={{ background: '#f8f8f8', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '10px 14px', fontSize: '11px', color: '#666' }}>
+                {blocages.length > 0 && <div>Blocages : {blocages.slice(0, 3).map(b => `${fmtDate(b.date_debut)} - ${fmtDate(b.date_fin)}`).join(', ')}</div>}
+                {fermetures.length > 0 && <div>Fermetures collectives : {fermetures.slice(0, 3).map(b => `${fmtDate(b.date_debut)} - ${fmtDate(b.date_fin)}`).join(', ')}</div>}
+              </div>
+            )}
             <button type="submit" className="btn-primary" disabled={vacEnvoi || !vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut}>
               {vacEnvoi ? 'Envoi...' : '✓ Envoyer la demande'}
             </button>
@@ -274,7 +410,6 @@ export default function Employe() {
     )
   }
 
-  // ─── Confirmation doublon ──────────────────────────────────────────────────
   if (confirmDoublon) return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
       <div style={{ fontSize: '40px' }}>⚠️</div>
@@ -287,7 +422,6 @@ export default function Employe() {
     </div>
   )
 
-  // ─── Vue principale ────────────────────────────────────────────────────────
   return (
     <div>
       <div className="top-bar">
@@ -307,7 +441,6 @@ export default function Employe() {
 
       <div className="page-content">
         {vue === 'accueil' && <>
-          {/* Barre crédit heures */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Crédit heures aujourd'hui</span>
@@ -328,9 +461,23 @@ export default function Employe() {
             <div style={{ fontSize: '12px', color: '#888' }}>
               {creditRestant > 0 ? `Il reste ${creditRestant.toFixed(1)}h à saisir` : '✅ Journée complète'}
             </div>
+            {suppHistorique.length > 0 && (
+              <div style={{ borderTop: '1px solid #eee', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Historique heures supp.</div>
+                {suppHistorique.slice(0, 3).map(s => (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '11px', color: '#666' }}>
+                    <span>
+                      {fmtDate(s.date_travail)}
+                      {s.chantiers?.nom ? ` · ${s.chantiers.nom}` : ''}
+                      {s.commentaire ? ` · ${s.commentaire}` : ''}
+                    </span>
+                    <strong style={{ color: '#185FA5', flexShrink: 0 }}>{Number(s.duree || 0).toFixed(1)}h</strong>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Modules principaux */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <button onClick={() => setVue('chantiers')} style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>🏗️</span>
@@ -344,7 +491,6 @@ export default function Employe() {
             </button>
           </div>
 
-          {/* Vacances */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>🏖️ Vacances {new Date().getFullYear()}</span>
@@ -360,11 +506,11 @@ export default function Employe() {
                 <div style={{ fontSize: '10px', color: '#BA7517', marginTop: '2px' }}>En attente</div>
               </div>
               <div style={{ background: '#E6F1FB', borderRadius: '8px', padding: '8px 4px' }}>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: '#185FA5' }}>{Math.max(0, QUOTA_VACANCES - soldeVacances.pris)}</div>
+                <div style={{ fontSize: '20px', fontWeight: 700, color: '#185FA5' }}>{Math.max(0, quotaVacances - soldeVacances.pris)}</div>
                 <div style={{ fontSize: '10px', color: '#185FA5', marginTop: '2px' }}>Restants</div>
               </div>
             </div>
-            <div style={{ fontSize: '11px', color: '#aaa', textAlign: 'right' }}>Quota annuel : {QUOTA_VACANCES} j. ouvrables</div>
+            <div style={{ fontSize: '11px', color: '#aaa', textAlign: 'right' }}>Quota annuel : {quotaVacances} j. ouvrables</div>
             {vacances.length === 0 && (
               <div style={{ fontSize: '12px', color: '#bbb', textAlign: 'center', padding: '4px 0' }}>Aucune demande</div>
             )}
@@ -372,8 +518,8 @@ export default function Employe() {
               <div key={v.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: i === 0 ? '1px solid #eee' : 'none', paddingBottom: '4px' }}>
                 <div>
                   <div style={{ fontSize: '12px', fontWeight: 500 }}>
-                    {new Date(v.date_debut + 'T12:00:00').toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit' })}
-                    {v.date_fin !== v.date_debut && ` → ${new Date(v.date_fin + 'T12:00:00').toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit' })}`}
+                    {fmtDate(v.date_debut, { day: '2-digit', month: '2-digit' })}
+                    {v.date_fin !== v.date_debut && ` → ${fmtDate(v.date_fin, { day: '2-digit', month: '2-digit' })}`}
                     <span style={{ color: '#aaa', marginLeft: '4px', fontWeight: 400, fontSize: '11px' }}>({countJoursOuvrables(v.date_debut, v.date_fin)} j.)</span>
                   </div>
                   {v.commentaire && <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic', marginTop: '1px' }}>{v.commentaire}</div>}

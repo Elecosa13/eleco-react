@@ -19,6 +19,7 @@ export default function Rapport() {
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
   const [favoris, setFavoris] = useState(JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]'))
+  const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1, pu: '0' })
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -65,7 +66,21 @@ export default function Rapport() {
   function ajouter(a) {
     const e = materiaux.find(m => m.id === a.id)
     if (e) setMateriaux(materiaux.map(m => m.id === a.id ? { ...m, qte: m.qte + 1 } : m))
-    else setMateriaux([...materiaux, { id: a.id, nom: a.nom, unite: a.unite, qte: 1, pu: a.prix_net }])
+    else setMateriaux([...materiaux, { id: a.id, catalogueId: a.id, nom: a.nom, unite: a.unite, qte: 1, pu: a.prix_net }])
+  }
+
+  function ajouterManuel() {
+    if (!articleManuel.nom.trim()) return
+    setMateriaux([...materiaux, {
+      id: `manuel-${Date.now()}`,
+      catalogueId: null,
+      manuel: true,
+      nom: articleManuel.nom.trim(),
+      unite: articleManuel.unite.trim() || 'pce',
+      qte: Math.max(1, Number(articleManuel.qte) || 1),
+      pu: Math.max(0, Number(articleManuel.pu) || 0)
+    }])
+    setArticleManuel({ nom: '', unite: 'pce', qte: 1, pu: '0' })
   }
 
   function modQte(mId, d) {
@@ -104,7 +119,7 @@ export default function Rapport() {
         await supabase.from('rapport_materiaux').insert(
           materiaux.map(m => ({
             rapport_id: r.id,
-            ref_article: m.id,
+            ref_article: m.catalogueId || null,
             designation: m.nom,
             unite: m.unite,
             quantite: m.qte,
@@ -136,6 +151,28 @@ export default function Rapport() {
         {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((s, m) => s + m.qte, 0)}</span>}
       </div>
       <div className="page-content">
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5' }}>Article manuel</div>
+          <div className="form-group">
+            <label>Désignation *</label>
+            <input value={articleManuel.nom} onChange={e => setArticleManuel(p => ({ ...p, nom: e.target.value }))} placeholder="Ex: disjoncteur spécifique" />
+          </div>
+          <div className="grid2">
+            <div className="form-group">
+              <label>Unité</label>
+              <input value={articleManuel.unite} onChange={e => setArticleManuel(p => ({ ...p, unite: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Quantité</label>
+              <input type="number" min="1" value={articleManuel.qte} onChange={e => setArticleManuel(p => ({ ...p, qte: e.target.value }))} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Prix net (CHF)</label>
+            <input type="number" min="0" step="0.01" value={articleManuel.pu} onChange={e => setArticleManuel(p => ({ ...p, pu: e.target.value }))} />
+          </div>
+          <button type="button" className="btn-primary" disabled={!articleManuel.nom.trim()} onClick={ajouterManuel}>+ Ajouter l'article manuel</button>
+        </div>
         <input type="search" placeholder="Rechercher..." value={recherche} onChange={e => setRecherche(e.target.value)} />
         <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
           {categories.map(c => (

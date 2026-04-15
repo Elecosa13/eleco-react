@@ -18,6 +18,76 @@ ALTER TABLE time_entries
   ADD COLUMN IF NOT EXISTS commentaire  text,
   ADD COLUMN IF NOT EXISTS chantier_id  uuid REFERENCES chantiers(id) ON DELETE SET NULL;
 
+-- Heures supplementaires : stockees dans time_entries avec type = 'heures_supp'.
+-- commentaire est obligatoire cote UI pour justifier la saisie.
+
+-- -------------------------------------------------------
+-- SECTION 5B - Vacances
+-- -------------------------------------------------------
+
+ALTER TABLE utilisateurs
+  ADD COLUMN IF NOT EXISTS vacances_quota_annuel int DEFAULT 20;
+
+CREATE TABLE IF NOT EXISTS vacances (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employe_id      uuid REFERENCES utilisateurs(id) ON DELETE CASCADE,
+  date_debut      date NOT NULL,
+  date_fin        date NOT NULL,
+  commentaire     text,
+  statut          text NOT NULL DEFAULT 'en_attente' CHECK (statut IN ('en_attente', 'accepte', 'refuse')),
+  jours_ouvrables int NOT NULL DEFAULT 0,
+  decision_note   text,
+  decide_par      uuid REFERENCES utilisateurs(id) ON DELETE SET NULL,
+  decide_le       timestamptz,
+  created_at      timestamptz DEFAULT now(),
+  CHECK (date_fin >= date_debut)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vacances_employe_dates ON vacances(employe_id, date_debut, date_fin);
+CREATE INDEX IF NOT EXISTS idx_vacances_statut ON vacances(statut);
+
+ALTER TABLE vacances ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Utilisateurs gerent les vacances"
+  ON vacances FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+
+CREATE TABLE IF NOT EXISTS vacances_blocages (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  date_debut  date NOT NULL,
+  date_fin    date NOT NULL,
+  type        text NOT NULL DEFAULT 'blocage',
+  motif       text NOT NULL,
+  actif       boolean NOT NULL DEFAULT true,
+  created_by  uuid REFERENCES utilisateurs(id) ON DELETE SET NULL,
+  created_at  timestamptz DEFAULT now(),
+  CHECK (date_fin >= date_debut)
+);
+
+ALTER TABLE vacances_blocages
+  ADD COLUMN IF NOT EXISTS type text NOT NULL DEFAULT 'blocage';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'vacances_blocages_type_check'
+  ) THEN
+    ALTER TABLE vacances_blocages
+      ADD CONSTRAINT vacances_blocages_type_check
+      CHECK (type IN ('blocage', 'fermeture_collective'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_vacances_blocages_dates ON vacances_blocages(date_debut, date_fin);
+
+ALTER TABLE vacances_blocages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Utilisateurs consultent les blocages vacances"
+  ON vacances_blocages FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+
 -- -------------------------------------------------------
 -- SECTION 6 — Signature numérique
 -- -------------------------------------------------------

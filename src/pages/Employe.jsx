@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { signOut } from '../lib/auth'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
@@ -59,7 +60,7 @@ export default function Employe() {
   const [suppHistorique, setSuppHistorique] = useState([])
 
   const [vacances, setVacances] = useState([])
-  const [toutesVacances, setToutesVacances] = useState([])
+  const [couvertureInfo, setCouvertureInfo] = useState({ count: 0, noms: null })
   const [soldeVacances, setSoldeVacances] = useState({ pris: 0, attente: 0 })
   const [quotaVacances, setQuotaVacances] = useState(QUOTA_VACANCES)
   const [periodesAdmin, setPeriodesAdmin] = useState([])
@@ -72,6 +73,15 @@ export default function Employe() {
   const [vacSucces, setVacSucces] = useState(false)
 
   useEffect(() => { charger() }, [])
+
+  useEffect(() => {
+    if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) {
+      setCouvertureInfo({ count: 0, noms: null })
+      return
+    }
+    supabase.rpc('get_couverture_vacances', { p_debut: vacDateDebut, p_fin: vacDateFin })
+      .then(({ data }) => { if (data) setCouvertureInfo(data) })
+  }, [vacDateDebut, vacDateFin])
 
   async function charger() {
     const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
@@ -133,10 +143,6 @@ export default function Employe() {
       setSoldeVacances({ pris, attente })
     }
 
-    const { data: vacGlobales } = await supabase.from('vacances')
-      .select('id, employe_id, date_debut, date_fin, statut, employe:employe_id(prenom)')
-      .in('statut', ['en_attente', 'accepte'])
-    if (vacGlobales) setToutesVacances(vacGlobales)
   }
 
   async function creerChantier(forcer = false) {
@@ -198,15 +204,11 @@ export default function Employe() {
   }, [periodesAdmin, vacDateDebut, vacDateFin])
 
   const alerteCouverture = useMemo(() => {
-    if (!vacDateDebut || !vacDateFin || periodeSpeciale) return ''
-    const autres = toutesVacances.filter(v =>
-      String(v.employe_id) !== String(user.id) &&
-      datesSeChevauchent(vacDateDebut, vacDateFin, v.date_debut, v.date_fin)
-    )
-    if (autres.length < 2) return ''
-    const noms = autres.map(v => v.employe?.prenom).filter(Boolean)
-    return `Attention effectif réduit : ${autres.length} autre(s) absence(s) sur cette période${noms.length ? ` (${noms.join(', ')})` : ''}.`
-  }, [toutesVacances, user.id, vacDateDebut, vacDateFin, periodeSpeciale])
+    if (!couvertureInfo || couvertureInfo.count < 2 || periodeSpeciale) return ''
+    const noms = (couvertureInfo.noms || []).filter(Boolean)
+    const periode = noms.length ? ' (' + noms.join(', ') + ')' : ''
+    return 'Attention effectif reduit : ' + couvertureInfo.count + ' autre(s) absence(s) sur cette periode' + periode + '.'
+  }, [couvertureInfo, periodeSpeciale])
 
   async function soumettreVacances(e) {
     e.preventDefault()
@@ -265,8 +267,7 @@ export default function Employe() {
   }
 
   async function deconnecter() {
-    await supabase.auth.signOut()
-    localStorage.removeItem('eleco_user')
+    await signOut()
     navigate('/login')
   }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { loadCurrentProfile, getCachedProfile } from './lib/auth'
 import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import Employe from './pages/Employe'
@@ -11,24 +12,27 @@ import Charte from './pages/Charte'
 
 function PrivateRoute({ children, requiredRole }) {
   const [status, setStatus] = useState('loading')
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const [profile, setProfile] = useState(null)
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session && user) {
+    let mounted = true
+    loadCurrentProfile().then(({ profile: loaded }) => {
+      if (!mounted) return
+      if (loaded) {
+        setProfile(loaded)
         setStatus('ok')
       } else {
-        if (!session) localStorage.removeItem('eleco_user')
         setStatus('denied')
       }
     })
+    return () => { mounted = false }
   }, [])
 
   if (status === 'loading') return null
-  if (status === 'denied' || !user) return <Navigate to="/login" replace />
+  if (status === 'denied' || !profile) return <Navigate to="/login" replace />
 
-  if (requiredRole && user.role !== requiredRole) {
-    return <Navigate to={user.role === 'admin' ? '/admin' : '/employe'} replace />
+  if (requiredRole && profile.role !== requiredRole) {
+    return <Navigate to={profile.role === 'admin' ? '/admin' : '/employe'} replace />
   }
 
   return children
@@ -37,17 +41,16 @@ function PrivateRoute({ children, requiredRole }) {
 // Guard charte : vérifie si l'employé a signé la charte
 function CharteGuard({ children }) {
   const [status, setStatus] = useState('loading')
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
 
   useEffect(() => {
-    if (!user) { setStatus('ok'); return }
-    supabase.from('chartes_acceptees')
-      .select('id')
-      .eq('employe_id', user.id)
-      .limit(1)
-      .then(({ data }) => {
-        setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
-      })
+    loadCurrentProfile().then(async ({ profile }) => {
+      if (!profile) { setStatus('charte_requise'); return }
+      const { data } = await supabase.from('chartes_acceptees')
+        .select('id')
+        .eq('employe_id', profile.id)
+        .limit(1)
+      setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
+    })
   }, [])
 
   if (status === 'loading') return null
@@ -56,7 +59,7 @@ function CharteGuard({ children }) {
 }
 
 function NotFound() {
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const user = getCachedProfile()
   if (user?.role === 'admin') return <Navigate to="/admin" replace />
   if (user?.role === 'employe') return <Navigate to="/employe" replace />
   return <Navigate to="/login" replace />

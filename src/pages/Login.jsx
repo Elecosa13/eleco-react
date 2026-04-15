@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { loadCurrentProfile } from '../lib/auth'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -15,8 +16,7 @@ export default function Login() {
     setErreur('')
 
     try {
-      // Authentifier avec Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: mdp
       })
@@ -27,30 +27,15 @@ export default function Login() {
         return
       }
 
-      // Récupérer les données utilisateur depuis la table utilisateurs
-      const { data: userData, error: userError } = await supabase
-        .from('utilisateurs')
-        .select('*')
-        .eq('email', email.toLowerCase().trim())
-        .eq('actif', true)
-        .single()
-
-      if (userError || !userData) {
+      const { profile, error: profileError } = await loadCurrentProfile()
+      if (profileError || !profile) {
+        await supabase.auth.signOut()
         setErreur('Utilisateur non trouvé ou inactif.')
         setLoading(false)
         return
       }
 
-      // Sauvegarder les données utilisateur
-      localStorage.setItem('eleco_user', JSON.stringify({
-        id: userData.id,
-        prenom: userData.prenom,
-        role: userData.role,
-        initiales: userData.initiales,
-        email: userData.email
-      }))
-
-      navigate(userData.role === 'admin' ? '/admin' : '/employe')
+      navigate(profile.role === 'admin' ? '/admin' : '/employe', { replace: true })
     } catch (err) {
       setErreur('Une erreur est survenue lors de la connexion.')
       console.error('Erreur de login:', err)

@@ -3,29 +3,56 @@
 
 ---
 
-## STATUT SÉCURITÉ / AUTH / RLS — PRIORITAIRE CRITIQUE
+## STATUT SÉCURITÉ / AUTH / RLS — OK PRÉ-PRODUCTION ⚠️
 
-> **RLS Supabase non fonctionnel.** L'app utilise une auth custom (localStorage) sans session Supabase Auth. Toutes les RLS basées sur `auth.uid()` sont inactives. La seule protection est le filtre `employe_id` côté client, contournable par modification du localStorage.
+> **Auth Supabase réelle implémentée** (signInWithPassword, session JWT, PrivateRoute vérifié).
+> **Migration RLS prête** : `supabase/migrations/auth_rls_security.sql` à exécuter dans Supabase SQL Editor.
 >
-> **À traiter avant toute mise en production réelle.** Les phases 1 et 2 ci-dessous doivent être prioritaires.
+> **Conditions pour passer en production :**
+> 1. Exécuter `auth_rls_security.sql` EN DERNIER (après `sections_5_6_7.sql`)
+> 2. Créer tous les comptes dans Supabase Auth avec le même email que dans `utilisateurs`
+> 3. Vérifier que `auth_user_id` est bien renseigné sur tous les profils
+> 4. Supprimer la colonne `mot_de_passe` de la table `utilisateurs` (données sensibles résiduelles)
 
 ---
 
-## Phase 1 — Sécurité (PRIORITÉ ABSOLUE)
+## Phase 1 — Sécurité
 
-- [ ] Migrer vers Supabase Auth (remplacer login custom)
-- [ ] Supprimer les mots de passe en clair dans la table `utilisateurs`
-- [ ] Activer et tester RLS sur toutes les tables
-- [ ] Vérifier qu'un employé ne peut jamais accéder aux données admin côté serveur
-- [ ] Sécuriser la clé Supabase via variable d'environnement (ne pas committer)
+- [x] Migrer vers Supabase Auth (signInWithPassword + session JWT)
+- [x] RLS activé sur toutes les tables — migration prête
+- [x] Politiques RLS séparées employé / admin avec SECURITY DEFINER
+- [ ] Appliquer la migration `auth_rls_security.sql` en production (EN DERNIER)
+- [ ] Créer les comptes Supabase Auth pour chaque employé
+- [ ] Supprimer la colonne `mot_de_passe` de `utilisateurs` après migration
+- [ ] Tester RLS réellement connecté avec un compte employé
+- [ ] Sécuriser la clé Supabase via variable d'environnement
 
 ---
 
 ## Phase 2 — Auth & rôles
 
-- [ ] Redirection automatique selon rôle après login
-- [ ] Guards propres sur toutes les routes
-- [ ] Blocage total accès admin côté employé
+- [x] Redirection automatique selon rôle après login
+- [x] Guards propres sur toutes les routes (PrivateRoute + CharteGuard)
+- [x] Blocage total accès admin côté employé
+- [ ] Valider en test réel avec comptes Supabase Auth
+
+---
+
+## Prochain grand chantier prioritaire — Catalogue matériaux (Phase 13)
+
+> **Refonte complète à faire avec le patron.** Le catalogue actuel est basé sur des données incomplètes.
+> Prévoir une journée dédiée avant de coder quoi que ce soit.
+>
+> **À préparer :**
+> - Récupérer la liste de prix Feller (remplace Legrand)
+> - Définir la structure : ref_article, désignation, unité, prix fournisseur, prix perso optionnel
+> - Décider qui peut modifier les prix (admin uniquement)
+> - Valider le format avec le patron avant import
+>
+> **Ensuite :**
+> - Importer le catalogue Feller en base
+> - Gestion favoris par employé (localStorage actuel → Supabase)
+> - Champ "article manquant" pour saisie libre par l'employé
 
 ---
 

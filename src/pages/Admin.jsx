@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { signOut, getCachedProfile } from '../lib/auth'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -601,7 +602,7 @@ export default function Admin() {
   // ACTIONS CRUD
   // ──────────────────────────────────────────────────────────────────────────
 
-  async function deconnecter() { await supabase.auth.signOut(); localStorage.removeItem('eleco_user'); navigate('/login') }
+  async function deconnecter() { await signOut(); navigate('/login') }
 
   async function supprimerChantier(c) {
     const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
@@ -682,7 +683,7 @@ export default function Admin() {
         }))
       )
       if (insertError) {
-        alert('Erreur lors de l'enregistrement des matériaux. Les données précédentes ont été supprimées — veuillez ressaisir.')
+        alert("Erreur lors de l'enregistrement des mat�riaux. Les donn�es pr�c�dentes ont �t� supprim�es, veuillez ressaisir.")
         chargerTout()
         return
       }

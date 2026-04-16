@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
@@ -75,10 +75,11 @@ function datesSeChevauchent(debutA, finA, debutB, finB) {
 
 export default function Admin() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { profile: user, signOut } = useAuth()
 
   // Navigation
-  const [vue, setVue] = useState('accueil')
+  const [vue, setVue] = useState(location.state?.vue === 'depannages' ? 'depannages' : 'accueil')
 
   // Données globales
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
@@ -1251,7 +1252,16 @@ export default function Admin() {
                     {d.employe?.prenom} · {fmtDuree(Number(d.duree) || 1)} · {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')} · Bon #{d.id}
                   </div>
                 </div>
-                <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/depannage/${d.id}`)}
+                    style={{ background: 'white', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                  >
+                    Voir
+                  </button>
+                </div>
               </div>
             )
           })}

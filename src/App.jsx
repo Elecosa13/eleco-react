@@ -8,6 +8,7 @@ import Chantier from './pages/Chantier'
 import Rapport from './pages/Rapport'
 import Admin from './pages/Admin'
 import Depannage from './pages/Depannage'
+import DepannageDetail from './pages/DepannageDetail'
 import Charte from './pages/Charte'
 
 function PrivateRoute({ children, requiredRole }) {
@@ -112,6 +113,7 @@ export default function App() {
 
       {/* Routes admin */}
       <Route path="/admin" element={<PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>} />
+      <Route path="/admin/depannage/:id" element={<PrivateRoute requiredRole="admin"><DepannageDetail /></PrivateRoute>} />
 
       {/* Toute URL inconnue → redirection intelligente */}
       <Route path="*" element={<NotFound />} />

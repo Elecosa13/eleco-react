@@ -53,11 +53,7 @@ export default function Login() {
         return
       }
 
-<<<<<<< HEAD
-      const { user, profile, error: profileError } = await loadCurrentProfile()
-=======
       const { user, profile, error: profileError } = await revalidate()
->>>>>>> c094c35 (depannage regies + admin search + robustness fixes)
       if (profileError || !profile) {
         await supabase.auth.signOut()
         console.error('[auth] Profil refuse:', profileError)

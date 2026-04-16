@@ -193,6 +193,13 @@ export default function Admin() {
     if (data) setDepannages(data)
   }
 
+  function resetDepannagesFilters() {
+    setSearch('')
+    setRegieFilter('')
+    setDateFilter('')
+    chargerDepannages('', '', '')
+  }
+
   async function chargerTout() {
     const { data: rap } = await supabase.from('rapports')
       .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
@@ -1222,6 +1229,13 @@ export default function Admin() {
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
         />
+        <button
+          type="button"
+          onClick={resetDepannagesFilters}
+          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', background: 'white', fontSize: '13px', cursor: 'pointer' }}
+        >
+          Réinitialiser les filtres
+        </button>
         <div className="card">
           {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
           {depannages.map(d => {

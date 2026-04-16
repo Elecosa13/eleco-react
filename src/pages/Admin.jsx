@@ -85,9 +85,12 @@ export default function Admin() {
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
   const [chantiers, setChantiers] = useState([])
   const [depannages, setDepannages] = useState([])
+  const [depannagesLoading, setDepannagesLoading] = useState(false)
+  const [depannagesError, setDepannagesError] = useState('')
   const [search, setSearch] = useState('')
   const [regies, setRegies] = useState([])
   const [regieFilter, setRegieFilter] = useState('')
+  const [regieFilterAvailable, setRegieFilterAvailable] = useState(true)
   const [dateFilter, setDateFilter] = useState('')
   const [employes, setEmployes] = useState([])
   const [catalogue, setCatalogue] = useState([])
@@ -171,10 +174,20 @@ export default function Admin() {
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
 
-  async function chargerDepannages(searchValue = search, regieValue = regieFilter, dateValue = dateFilter) {
-    const term = searchValue.trim()
+  async function chargerDepannages(searchValue = search, regieValue = regieFilter, dateValue = dateFilter, regiesValue = regies, regieFilterAvailableValue = regieFilterAvailable) {
+    const term = (searchValue || '').trim()
+    setDepannagesLoading(true)
+    setDepannagesError('')
+
+    if (regieValue && !regieFilterAvailableValue) {
+      setDepannages([])
+      setDepannagesError("Le filtre régie est indisponible sur la base actuelle. Réinitialise les filtres pour afficher les dépannages.")
+      setDepannagesLoading(false)
+      return
+    }
+
     let query = supabase.from('depannages')
-      .select('*, employe:employe_id(prenom), regie:regies(nom), rapport_materiaux(*)')
+      .select('*, employe:employe_id(prenom)')
 
     if (term) {
       query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
@@ -190,8 +203,48 @@ export default function Admin() {
 
     query = query.order('created_at', { ascending: false })
 
-    const { data } = await query
-    if (data) setDepannages(data)
+    try {
+      const { data, error } = await query
+      if (error) throw error
+
+      const regiesById = {}
+      for (const regie of regiesValue || []) regiesById[String(regie.id)] = regie
+
+      let materiauxByDepannage = {}
+      const ids = (data || []).map(d => d.id).filter(Boolean)
+      if (ids.length > 0) {
+        const { data: mats, error: matsError } = await supabase
+          .from('rapport_materiaux')
+          .select('*')
+          .in('rapport_id', ids)
+
+        if (matsError) {
+          console.error('Erreur chargement materiaux depannages', matsError)
+        } else {
+          for (const mat of mats || []) {
+            const key = String(mat.rapport_id)
+            if (!materiauxByDepannage[key]) materiauxByDepannage[key] = []
+            materiauxByDepannage[key].push(mat)
+          }
+        }
+      }
+
+      setDepannages((data || []).map(depannage => ({
+        ...depannage,
+        regie: depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null,
+        rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
+      })))
+    } catch (error) {
+      console.error('Erreur chargement depannages admin', error)
+      setDepannages([])
+      if (error?.code === '42703' && error?.message?.includes('regie_id')) {
+        setDepannagesError("Le filtre régie est indisponible sur la base actuelle. Réinitialise les filtres pour afficher les dépannages.")
+      } else {
+        setDepannagesError("Impossible de charger les dépannages. Réessaie dans un instant.")
+      }
+    } finally {
+      setDepannagesLoading(false)
+    }
   }
 
   function resetDepannagesFilters() {
@@ -223,7 +276,18 @@ export default function Admin() {
     const { data: regs } = await supabase.from('regies').select('id, nom').eq('actif', true).order('nom')
     if (regs) setRegies(regs)
 
-    await chargerDepannages()
+    let regieFiltreOk = regieFilterAvailable
+    const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
+    if (regieColumnError?.code === '42703') {
+      regieFiltreOk = false
+      setRegieFilterAvailable(false)
+      setRegieFilter('')
+    } else if (!regieColumnError) {
+      regieFiltreOk = true
+      setRegieFilterAvailable(true)
+    }
+
+    await chargerDepannages(search, regieFiltreOk ? regieFilter : '', dateFilter, regs || regies, regieFiltreOk)
 
     const { data: cat } = await supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
     if (cat) {
@@ -1208,14 +1272,15 @@ export default function Admin() {
         />
         <select
           value={regieFilter}
+          disabled={!regieFilterAvailable}
           onChange={e => {
             const value = e.target.value
             setRegieFilter(value)
-            chargerDepannages(search, value, dateFilter)
+            chargerDepannages(search, value, dateFilter, regies, regieFilterAvailable)
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', background: 'white' }}
         >
-          <option value="">Toutes les régies</option>
+          <option value="">{regieFilterAvailable ? 'Toutes les régies' : 'Filtre régie indisponible'}</option>
           {regies.map(r => (
             <option key={r.id} value={r.id}>{r.nom || 'Non assignée'}</option>
           ))}
@@ -1238,7 +1303,9 @@ export default function Admin() {
           Réinitialiser les filtres
         </button>
         <div className="card">
-          {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
+          {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
+          {!depannagesLoading && depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
+          {!depannagesLoading && !depannagesError && depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage trouvé</div>}
           {depannages.map(d => {
             const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
             const mo = (d.duree || 1) * TAUX

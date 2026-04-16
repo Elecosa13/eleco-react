@@ -821,52 +821,46 @@ export default function Admin() {
   }
 
   async function sauvegarderMateriaux(rapportId, newMat) {
-    let deleteError = null
     try {
-      await supabaseSafe(supabase.from('rapport_materiaux').delete().eq('rapport_id', rapportId))
-    } catch (error) {
-      deleteError = error
-    }
-    if (deleteError) {
-      alert('Erreur lors de la suppression des matériaux. Veuillez réessayer.')
-      return
-    }
-    if (newMat.length > 0) {
-      let insertError = null
-      try {
-        await supabaseSafe(supabase.from('rapport_materiaux').insert(
+      const anciensIds = (rapportDetail?.rapport_materiaux || []).map(m => m.id).filter(Boolean)
+      const idsConserves = newMat.map(m => m.id).filter(Boolean)
+      const idsSupprimes = anciensIds.filter(id => !idsConserves.includes(id))
+
+      if (newMat.length > 0) {
+        await supabaseSafe(supabase.from('rapport_materiaux').upsert(
           newMat.map(m => ({
+            ...(m.id ? { id: m.id } : {}),
             rapport_id: rapportId,
-            ref_article: m.ref_article || m.id || null,
+            ref_article: m.ref_article || null,
             designation: m.designation || m.nom,
             unite: m.unite,
             quantite: m.quantite,
             prix_net: m.prix_net || m.pu || 0
           }))
         ))
-      } catch (error) {
-        insertError = error
       }
-      if (insertError) {
-        alert("Erreur lors de l'enregistrement des mat�riaux. Les donn�es pr�c�dentes ont �t� supprim�es, veuillez ressaisir.")
-        chargerTout()
-        return
+
+      if (idsSupprimes.length > 0) {
+        await supabaseSafe(supabase.from('rapport_materiaux').delete().in('id', idsSupprimes))
       }
+
+      if (sousDossierActif) chargerRapports(sousDossierActif.id)
+      chargerTout()
+      // Recharger le rapportDetail avec les nouvelles données
+      const { data: updatedR } = await supabase.from('rapports')
+        .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+        .eq('id', rapportId).single()
+      if (updatedR) {
+        const { data: rapEnt } = await supabase.from('time_entries')
+          .select('reference_id, duree').eq('type', 'chantier').eq('reference_id', rapportId)
+        const duree = rapEnt?.[0] ? Number(rapEnt[0].duree) : calcDuree(updatedR.heure_debut, updatedR.heure_fin)
+        setRapportDetail({ ...updatedR, _duree: duree })
+      }
+      setEditMateriaux(null); setAjoutArticleVue(false)
+      setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
+    } catch (error) {
+      alert("Erreur lors de l'enregistrement des matériaux. Veuillez réessayer.")
     }
-    if (sousDossierActif) chargerRapports(sousDossierActif.id)
-    chargerTout()
-    // Recharger le rapportDetail avec les nouvelles données
-    const { data: updatedR } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
-      .eq('id', rapportId).single()
-    if (updatedR) {
-      const { data: rapEnt } = await supabase.from('time_entries')
-        .select('reference_id, duree').eq('type', 'chantier').eq('reference_id', rapportId)
-      const duree = rapEnt?.[0] ? Number(rapEnt[0].duree) : calcDuree(updatedR.heure_debut, updatedR.heure_fin)
-      setRapportDetail({ ...updatedR, _duree: duree })
-    }
-    setEditMateriaux(null); setAjoutArticleVue(false)
-    setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
   }
 
   async function sauvegarderRapportDetail() {

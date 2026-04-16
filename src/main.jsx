@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App'
 import { APP_VERSION } from './generated/version'
+import { AuthProvider } from './context/AuthContext'
 import './index.css'
 
 console.log('VERSION (build)', APP_VERSION)
@@ -41,7 +42,9 @@ setInterval(checkVersion, 30000)
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>
 )

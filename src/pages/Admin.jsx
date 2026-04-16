@@ -88,6 +88,7 @@ export default function Admin() {
   const [depannages, setDepannages] = useState([])
   const [depannagesLoading, setDepannagesLoading] = useState(false)
   const [depannagesError, setDepannagesError] = useState('')
+  const [adminError, setAdminError] = useState('')
   const [search, setSearch] = useState('')
   const [regies, setRegies] = useState([])
   const [regieFilter, setRegieFilter] = useState('')
@@ -102,6 +103,7 @@ export default function Admin() {
   const [blocagesVacances, setBlocagesVacances] = useState([])
   const [vacancesStats, setVacancesStats] = useState({})
   const [vacancesLoading, setVacancesLoading] = useState(false)
+  const [vacancesError, setVacancesError] = useState('')
   const [blocageForm, setBlocageForm] = useState({ date_debut: '', date_fin: '', type: 'blocage', motif: '' })
 
   // Chantiers
@@ -256,87 +258,100 @@ export default function Admin() {
   }
 
   async function chargerTout() {
-    const { data: rap } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
-      .eq('valide', false).order('created_at', { ascending: false })
+    setAdminError('')
+    try {
+      const rap = await supabaseSafe(supabase.from('rapports')
+        .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
+        .eq('valide', false).order('created_at', { ascending: false }))
 
-    if (rap && rap.length > 0) {
-      const { data: rapEnt } = await supabase.from('time_entries')
-        .select('reference_id, duree').eq('type', 'chantier')
-        .in('reference_id', rap.map(r => r.id))
-      const byRap = {}
-      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-      setRapportsEnAttente(rap.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
-    } else {
-      setRapportsEnAttente(rap || [])
+      if (rap && rap.length > 0) {
+        const rapEnt = await supabaseSafe(supabase.from('time_entries')
+          .select('reference_id, duree').eq('type', 'chantier')
+          .in('reference_id', rap.map(r => r.id)))
+        const byRap = {}
+        for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
+        setRapportsEnAttente(rap.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+      } else {
+        setRapportsEnAttente(rap || [])
+      }
+
+      const ch = await supabaseSafe(supabase.from('chantiers').select('*').eq('actif', true).order('nom'))
+      setChantiers(ch || [])
+
+      const regs = await supabaseSafe(supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
+      setRegies(regs || [])
+
+      let regieFiltreOk = regieFilterAvailable
+      const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
+      if (regieColumnError?.code === '42703') {
+        regieFiltreOk = false
+        setRegieFilterAvailable(false)
+        setRegieFilter('')
+      } else if (regieColumnError) {
+        throw regieColumnError
+      } else {
+        regieFiltreOk = true
+        setRegieFilterAvailable(true)
+      }
+
+      await chargerDepannages(search, regieFiltreOk ? regieFilter : '', dateFilter, regs || regies, regieFiltreOk)
+
+      const cat = await supabaseSafe(supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom'))
+      setCatalogue(cat || [])
+      setCategories(['Tous', ...Array.from(new Set((cat || []).map(a => a.categorie).filter(Boolean)))])
+
+      const emp = await supabaseSafe(supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom'))
+      setEmployes(emp || [])
+    } catch (error) {
+      console.error('Erreur chargement admin', error)
+      setAdminError("Impossible de charger le tableau de bord admin. Réessaie dans un instant.")
     }
-
-    const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
-    if (ch) setChantiers(ch)
-
-    const { data: regs } = await supabase.from('regies').select('id, nom').eq('actif', true).order('nom')
-    if (regs) setRegies(regs)
-
-    let regieFiltreOk = regieFilterAvailable
-    const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
-    if (regieColumnError?.code === '42703') {
-      regieFiltreOk = false
-      setRegieFilterAvailable(false)
-      setRegieFilter('')
-    } else if (!regieColumnError) {
-      regieFiltreOk = true
-      setRegieFilterAvailable(true)
-    }
-
-    await chargerDepannages(search, regieFiltreOk ? regieFilter : '', dateFilter, regs || regies, regieFiltreOk)
-
-    const { data: cat } = await supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
-    if (cat) {
-      setCatalogue(cat)
-      setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
-    }
-
-    const { data: emp } = await supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom')
-    if (emp) setEmployes(emp)
   }
 
   async function chargerVacancesAdmin() {
     setVacancesLoading(true)
-    const annee = new Date().getFullYear()
-    const debutAnnee = `${annee}-01-01`
-    const finAnnee = `${annee}-12-31`
+    setVacancesError('')
+    try {
+      const annee = new Date().getFullYear()
+      const debutAnnee = `${annee}-01-01`
+      const finAnnee = `${annee}-12-31`
 
-    const [{ data: demandes }, { data: blocages }, { data: listeEmp }] = await Promise.all([
-      supabase.from('vacances')
-        .select('*, employe:employe_id(id, prenom, initiales, vacances_quota_annuel)')
-        .order('created_at', { ascending: false }),
-      supabase.from('vacances_blocages')
-        .select('*')
-        .eq('actif', true)
-        .order('type', { ascending: true })
-        .order('date_debut', { ascending: true }),
-      supabase.from('utilisateurs')
-        .select('id, prenom, initiales, vacances_quota_annuel')
-        .eq('role', 'employe')
-        .order('prenom')
-    ])
+      const [demandes, blocages, listeEmp] = await Promise.all([
+        supabaseSafe(supabase.from('vacances')
+          .select('*, employe:employe_id(id, prenom, initiales, vacances_quota_annuel)')
+          .order('created_at', { ascending: false })),
+        supabaseSafe(supabase.from('vacances_blocages')
+          .select('*')
+          .eq('actif', true)
+          .order('type', { ascending: true })
+          .order('date_debut', { ascending: true })),
+        supabaseSafe(supabase.from('utilisateurs')
+          .select('id, prenom, initiales, vacances_quota_annuel')
+          .eq('role', 'employe')
+          .order('prenom'))
+      ])
 
-    setVacancesAdmin(demandes || [])
-    setBlocagesVacances(blocages || [])
-    if (listeEmp) setEmployes(listeEmp)
+      setVacancesAdmin(demandes || [])
+      setBlocagesVacances(blocages || [])
+      setEmployes(listeEmp || [])
 
-    const stats = {}
-    for (const emp of listeEmp || employes) {
-      const empDemandes = (demandes || []).filter(v => String(v.employe_id) === String(emp.id))
-      const dansAnnee = empDemandes.filter(v => datesSeChevauchent(v.date_debut, v.date_fin, debutAnnee, finAnnee))
-      stats[emp.id] = {
-        quota: emp.vacances_quota_annuel || 20,
-        pris: dansAnnee.filter(v => v.statut === 'accepte').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0),
-        attente: dansAnnee.filter(v => v.statut === 'en_attente').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
+      const stats = {}
+      for (const emp of listeEmp || employes) {
+        const empDemandes = (demandes || []).filter(v => String(v.employe_id) === String(emp.id))
+        const dansAnnee = empDemandes.filter(v => datesSeChevauchent(v.date_debut, v.date_fin, debutAnnee, finAnnee))
+        stats[emp.id] = {
+          quota: emp.vacances_quota_annuel || 20,
+          pris: dansAnnee.filter(v => v.statut === 'accepte').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0),
+          attente: dansAnnee.filter(v => v.statut === 'en_attente').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
+        }
       }
+      setVacancesStats(stats)
+    } catch (error) {
+      console.error('Erreur chargement vacances admin', error)
+      setVacancesError("Impossible de charger les vacances. Réessaie dans un instant.")
+    } finally {
+      setVacancesLoading(false)
     }
-    setVacancesStats(stats)
-    setVacancesLoading(false)
   }
 
   async function deciderVacances(demande, statut) {
@@ -1502,6 +1517,7 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        {vacancesError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{vacancesError}</div>}
         {vacancesLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>Chargement...</div>}
 
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1905,6 +1921,7 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        {adminError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{adminError}</div>}
         {rapportsEnAttente.length > 0 && (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>

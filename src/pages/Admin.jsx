@@ -190,7 +190,7 @@ export default function Admin() {
     }
 
     let query = supabase.from('depannages')
-      .select('*, employe:employe_id(prenom)')
+      .select('*, employe:employe_id(prenom), regie:regies(id, nom)')
 
     if (term) {
       query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
@@ -234,7 +234,7 @@ export default function Admin() {
 
       setDepannages((data || []).map(depannage => ({
         ...depannage,
-        regie: depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null,
+        regie: depannage.regie || (depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null),
         rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
       })))
     } catch (error) {
@@ -915,6 +915,55 @@ export default function Admin() {
     return l.slice(0, 100)
   })()
 
+  function depannageRegieLabel(depannage) {
+    return depannage.regie?.nom || 'Régie non définie'
+  }
+
+  function depannageMoisLabel(depannage) {
+    if (!depannage.date_travail) return 'Date non définie'
+    const d = new Date(depannage.date_travail + 'T12:00:00')
+    if (Number.isNaN(d.getTime())) return 'Date non définie'
+    return `${MOIS_FR[d.getMonth()]} ${d.getFullYear()}`
+  }
+
+  function depannageDescription(depannage) {
+    const texte = (depannage.objet || depannage.titre || depannage.remarques || '').trim()
+    if (!texte) return 'Aucune description'
+    return texte.length > 90 ? `${texte.slice(0, 90)}...` : texte
+  }
+
+  function depannageClientAdresse(depannage) {
+    const client = (depannage.client || depannage.nom_client || '').trim()
+    const adresse = (depannage.adresse || '').trim()
+    if (client && adresse) return `${client} · ${adresse}`
+    return client || adresse || 'Adresse non définie'
+  }
+
+  function depannageTimestamp(depannage) {
+    const value = depannage.date_travail || depannage.created_at
+    if (!value) return 0
+    const normalized = String(value).includes('T') ? value : `${value}T12:00:00`
+    const timestamp = new Date(normalized).getTime()
+    return Number.isNaN(timestamp) ? 0 : timestamp
+  }
+
+  function comparerDepannagesRecent(a, b) {
+    return depannageTimestamp(b) - depannageTimestamp(a)
+  }
+
+  function grouperDepannages(liste) {
+    const groupes = {}
+    for (const depannage of [...liste].sort(comparerDepannagesRecent)) {
+      const regie = depannageRegieLabel(depannage)
+      const mois = depannageMoisLabel(depannage)
+      if (!groupes[regie]) groupes[regie] = { nom: regie, count: 0, mois: {} }
+      if (!groupes[regie].mois[mois]) groupes[regie].mois[mois] = []
+      groupes[regie].mois[mois].push(depannage)
+      groupes[regie].count += 1
+    }
+    return Object.values(groupes)
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // VUES
   // ──────────────────────────────────────────────────────────────────────────
@@ -1326,7 +1375,10 @@ export default function Admin() {
     </div>
   )
 
-  if (vue === 'depannages') return (
+  if (vue === 'depannages') {
+    const depannagesGroupes = grouperDepannages(depannages)
+
+    return (
     <div>
       <div className="top-bar">
         <div>
@@ -1358,7 +1410,7 @@ export default function Admin() {
         >
           <option value="">{regieFilterAvailable ? 'Toutes les régies' : 'Filtre régie indisponible'}</option>
           {regies.map(r => (
-            <option key={r.id} value={r.id}>{r.nom || 'Non assignée'}</option>
+            <option key={r.id} value={r.id}>{r.nom || 'Régie non définie'}</option>
           ))}
         </select>
         <input
@@ -1382,36 +1434,56 @@ export default function Admin() {
           {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
           {!depannagesLoading && depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
           {!depannagesLoading && !depannagesError && depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage trouvé</div>}
-          {depannages.map(d => {
-            const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-            const mo = (d.duree || 1) * TAUX
-            const ttc = (mat + mo) * 1.081
-            return (
-              <div key={d.id} className="row-item">
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{d.adresse}</div>
-                  <div style={{ fontSize: '11px', color: '#666' }}>Régie : {d.regie?.nom || 'Non assignée'}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>
-                    {d.employe?.prenom} · {fmtDuree(Number(d.duree) || 1)} · {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')} · Bon #{d.id}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/admin/depannage/${d.id}`)}
-                    style={{ background: 'white', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
-                  >
-                    Voir
-                  </button>
-                </div>
+          {!depannagesLoading && !depannagesError && depannagesGroupes.map(groupe => (
+            <div key={groupe.nom} style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>{groupe.nom}</div>
+                <span className="badge badge-blue">{groupe.count}</span>
               </div>
-            )
-          })}
+              {Object.entries(groupe.mois).map(([mois, liste]) => (
+                <div key={`${groupe.nom}-${mois}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', paddingTop: '4px' }}>{mois}</div>
+                  {liste.map(d => {
+                    const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
+                    const mo = (d.duree || 1) * TAUX
+                    const ttc = (mat + mo) * 1.081
+                    const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
+                    const statut = d.statut || d.status
+                    return (
+                      <div key={d.id} className="row-item" style={{ alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '12px', fontWeight: 700, color: '#333' }}>{dateLabel}</span>
+                            {statut && <span className="badge badge-amber">{statut}</span>}
+                          </div>
+                          <div style={{ fontSize: '13px', fontWeight: 600 }}>{depannageClientAdresse(d)}</div>
+                          <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>
+                          <div style={{ fontSize: '11px', color: '#888' }}>
+                            {d.employe?.prenom || 'Employé non défini'} · {fmtDuree(Number(d.duree) || 1)} · Bon #{d.id}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/admin/depannage/${d.id}`)}
+                            style={{ background: 'white', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                          >
+                            Voir
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       </div>
     </div>
   )
+  }
 
   if (vue === 'calendrier') {
     const { year, month } = calMois

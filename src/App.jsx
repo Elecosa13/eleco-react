@@ -50,13 +50,28 @@ function CharteGuard({ children }) {
       .select('id')
       .eq('employe_id', profile.id)
       .limit(1)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Erreur vérification charte:', error)
+          setStatus('error')
+          return
+        }
         setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
       })
   }, [profile])
 
   if (status === 'loading') return null
   if (status === 'charte_requise') return <Navigate to="/employe/charte" replace />
+  if (status === 'error') {
+    return (
+      <>
+        <div style={{ background: '#FAEEDA', borderBottom: '1px solid #f39c12', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
+          Impossible de vérifier la charte pour le moment. Vous pouvez continuer, puis réessayer si une action est bloquée.
+        </div>
+        {children}
+      </>
+    )
+  }
   return children
 }
 

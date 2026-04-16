@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { supabase } from '../lib/supabase'
+import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 
 const VERSION_CHARTE = 'v1.0'
@@ -52,13 +53,19 @@ export default function Charte() {
   const [isDrawing, setIsDrawing] = useState(false)
   const [hasSig, setHasSig] = useState(false)
   const [envoi, setEnvoi] = useState(false)
+  const [erreur, setErreur] = useState('')
 
   useEffect(() => {
+    if (!user?.id) return
     supabase.from('chartes_acceptees').select('id').eq('employe_id', user.id).limit(1)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Erreur vérification charte:', error)
+          return
+        }
         if (data && data.length > 0) navigate('/employe', { replace: true })
       })
-  }, [])
+  }, [user?.id, navigate])
 
   function handleScroll(e) {
     const el = e.target
@@ -123,35 +130,41 @@ export default function Charte() {
   }
 
   async function soumettre() {
-    if (!hasSig || envoi) return
+    if (!hasSig || envoi || !user?.id) return
     setEnvoi(true)
+    setErreur('')
 
     const canvas = canvasRef.current
     const signatureBase64 = canvas.toDataURL('image/png')
     const maintenant = new Date().toISOString()
     const deviceInfo = navigator.userAgent.slice(0, 200)
 
-    // 1. Sauvegarde signature
-    await supabase.from('signatures').upsert({
-      employe_id: user.id,
-      signature_base64: signatureBase64,
-      signee_le: maintenant,
-      device_info: deviceInfo
-    }, { onConflict: 'employe_id' })
+    try {
+      // 1. Sauvegarde signature
+      await supabaseSafe(supabase.from('signatures').upsert({
+        employe_id: user.id,
+        signature_base64: signatureBase64,
+        signee_le: maintenant,
+        device_info: deviceInfo
+      }, { onConflict: 'employe_id' }))
 
-    // 2. Sauvegarde acceptation charte
-    await supabase.from('chartes_acceptees').insert({
-      employe_id: user.id,
-      version_charte: VERSION_CHARTE,
-      acceptee_le: maintenant,
-      device_info: deviceInfo
-    })
+      // 2. Sauvegarde acceptation charte
+      await supabaseSafe(supabase.from('chartes_acceptees').insert({
+        employe_id: user.id,
+        version_charte: VERSION_CHARTE,
+        acceptee_le: maintenant,
+        device_info: deviceInfo
+      }))
 
-    // 3. Génération PDF
-    genererPDF(signatureBase64, maintenant)
+      // 3. Génération PDF
+      genererPDF(signatureBase64, maintenant)
 
-    setEnvoi(false)
-    navigate('/employe', { replace: true })
+      navigate('/employe', { replace: true })
+    } catch (error) {
+      setErreur("Erreur lors de l'enregistrement de la charte. Veuillez réessayer.")
+    } finally {
+      setEnvoi(false)
+    }
   }
 
   function genererPDF(signatureBase64, dateISO) {
@@ -337,6 +350,12 @@ export default function Charte() {
           En cliquant sur "Signer et continuer", vous confirmez avoir lu et accepté intégralement
           la Charte Numérique Eleco SA version {VERSION_CHARTE}. Un PDF sera généré et téléchargé automatiquement.
         </div>
+
+        {erreur && (
+          <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+            {erreur}
+          </div>
+        )}
 
         <button
           className="btn-primary"

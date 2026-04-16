@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
@@ -982,13 +982,22 @@ export default function Admin() {
     for (const depannage of [...liste].sort(comparerDepannagesRecent)) {
       const regie = depannageRegieLabel(depannage)
       const mois = depannageMoisLabel(depannage)
-      if (!groupes[regie]) groupes[regie] = { nom: regie, count: 0, mois: {} }
+      const timestamp = depannageTimestamp(depannage)
+      if (!groupes[regie]) groupes[regie] = { nom: regie, count: 0, mois: {}, moisTimestamps: {} }
       if (!groupes[regie].mois[mois]) groupes[regie].mois[mois] = []
       groupes[regie].mois[mois].push(depannage)
+      groupes[regie].moisTimestamps[mois] = Math.max(groupes[regie].moisTimestamps[mois] || 0, timestamp)
       groupes[regie].count += 1
     }
-    return Object.values(groupes)
+    return Object.values(groupes).map(groupe => ({
+      nom: groupe.nom,
+      count: groupe.count,
+      mois: groupe.mois,
+      moisOrdre: Object.keys(groupe.mois).sort((a, b) => (groupe.moisTimestamps[b] || 0) - (groupe.moisTimestamps[a] || 0))
+    }))
   }
+
+  const depannagesGroupes = useMemo(() => grouperDepannages(depannages), [depannages])
 
   // ──────────────────────────────────────────────────────────────────────────
   // VUES
@@ -1402,8 +1411,6 @@ export default function Admin() {
   )
 
   if (vue === 'depannages') {
-    const depannagesGroupes = grouperDepannages(depannages)
-
     return (
     <div>
       <div className="top-bar">
@@ -1468,10 +1475,10 @@ export default function Admin() {
                 <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>{groupe.nom}</div>
                 <span className="badge badge-blue">{groupe.count}</span>
               </div>
-              {Object.entries(groupe.mois).map(([mois, liste]) => (
+              {groupe.moisOrdre.map(mois => (
                 <div key={`${groupe.nom}-${mois}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', paddingTop: '4px' }}>{mois}</div>
-                  {liste.map(d => {
+                  {groupe.mois[mois].map(d => {
                     const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
                     const mo = (d.duree || 1) * TAUX
                     const ttc = (mat + mo) * 1.081

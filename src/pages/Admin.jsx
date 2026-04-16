@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 
@@ -339,41 +340,57 @@ export default function Admin() {
   }
 
   async function deciderVacances(demande, statut) {
-    await supabase.from('vacances').update({
-      statut,
-      decide_par: user?.id || null,
-      decide_le: new Date().toISOString()
-    }).eq('id', demande.id)
-    chargerVacancesAdmin()
+    try {
+      await supabaseSafe(supabase.from('vacances').update({
+        statut,
+        decide_par: user?.id || null,
+        decide_le: new Date().toISOString()
+      }).eq('id', demande.id))
+      chargerVacancesAdmin()
+    } catch (error) {
+      alert('Erreur lors de la mise à jour de la demande. Veuillez réessayer.')
+    }
   }
 
   async function creerBlocageVacances(e) {
     e.preventDefault()
     if (!blocageForm.date_debut || !blocageForm.date_fin || !blocageForm.motif.trim() || blocageForm.date_fin < blocageForm.date_debut) return
-    await supabase.from('vacances_blocages').insert({
-      date_debut: blocageForm.date_debut,
-      date_fin: blocageForm.date_fin,
-      type: blocageForm.type,
-      motif: blocageForm.motif.trim(),
-      created_by: user?.id || null
-    })
-    setBlocageForm({ date_debut: '', date_fin: '', type: 'blocage', motif: '' })
-    chargerVacancesAdmin()
+    try {
+      await supabaseSafe(supabase.from('vacances_blocages').insert({
+        date_debut: blocageForm.date_debut,
+        date_fin: blocageForm.date_fin,
+        type: blocageForm.type,
+        motif: blocageForm.motif.trim(),
+        created_by: user?.id || null
+      }))
+      setBlocageForm({ date_debut: '', date_fin: '', type: 'blocage', motif: '' })
+      chargerVacancesAdmin()
+    } catch (error) {
+      alert('Erreur lors de la création du blocage. Veuillez réessayer.')
+    }
   }
 
   async function supprimerBlocageVacances(id) {
-    await supabase.from('vacances_blocages').update({ actif: false }).eq('id', id)
-    chargerVacancesAdmin()
+    try {
+      await supabaseSafe(supabase.from('vacances_blocages').update({ actif: false }).eq('id', id))
+      chargerVacancesAdmin()
+    } catch (error) {
+      alert('Erreur lors de la suppression du blocage. Veuillez réessayer.')
+    }
   }
 
   async function modifierQuotaVacances(empId, quota) {
     const valeur = Math.max(0, Number(quota) || 0)
-    await supabase.from('utilisateurs').update({ vacances_quota_annuel: valeur }).eq('id', empId)
-    setEmployes(prev => prev.map(e => e.id === empId ? { ...e, vacances_quota_annuel: valeur } : e))
-    setVacancesStats(prev => ({
-      ...prev,
-      [empId]: { ...(prev[empId] || {}), quota: valeur }
-    }))
+    try {
+      await supabaseSafe(supabase.from('utilisateurs').update({ vacances_quota_annuel: valeur }).eq('id', empId))
+      setEmployes(prev => prev.map(e => e.id === empId ? { ...e, vacances_quota_annuel: valeur } : e))
+      setVacancesStats(prev => ({
+        ...prev,
+        [empId]: { ...(prev[empId] || {}), quota: valeur }
+      }))
+    } catch (error) {
+      alert('Erreur lors de la mise à jour du quota. Veuillez réessayer.')
+    }
   }
 
   async function chargerSousDossiers(chantierId) {
@@ -701,11 +718,15 @@ export default function Admin() {
 
   async function reinitialiserCharte(empId) {
     if (!window.confirm(`Réinitialiser la charte de ${empDetail?.prenom} ? Cette action remet le statut à "non signé".`)) return
-    await Promise.all([
-      supabase.from('chartes_acceptees').delete().eq('employe_id', empId),
-      supabase.from('signatures').delete().eq('employe_id', empId)
-    ])
-    setEmpCharteData({ charte: null, sig: null })
+    try {
+      await Promise.all([
+        supabaseSafe(supabase.from('chartes_acceptees').delete().eq('employe_id', empId)),
+        supabaseSafe(supabase.from('signatures').delete().eq('employe_id', empId))
+      ])
+      setEmpCharteData({ charte: null, sig: null })
+    } catch (error) {
+      alert('Erreur lors de la réinitialisation de la charte. Veuillez réessayer.')
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -716,82 +737,116 @@ export default function Admin() {
 
   async function supprimerChantier(c) {
     const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
-    setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
-    await supabase.from('chantiers').update({ actif: false }).eq('id', c.id)
-    chargerTout(); setConfirm(null); setVue('chantiers'); setChantierActif(null)
+    try {
+      await supabaseSafe(supabase.from('chantiers').update({ actif: false }).eq('id', c.id))
+      setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
+      chargerTout(); setConfirm(null); setVue('chantiers'); setChantierActif(null)
+    } catch (error) {
+      alert('Erreur lors de la suppression du chantier. Veuillez réessayer.')
+    }
   }
 
   async function supprimerSousDossier(sd) {
     const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
-    setCorbeille(prev => [...prev, { type: 'sous_dossier', label: sd.nom, data: sd, enfants: raps || [] }])
-    await supabase.from('sous_dossiers').delete().eq('id', sd.id)
-    chargerSousDossiers(chantierActif.id); setConfirm(null)
+    try {
+      await supabaseSafe(supabase.from('sous_dossiers').delete().eq('id', sd.id))
+      setCorbeille(prev => [...prev, { type: 'sous_dossier', label: sd.nom, data: sd, enfants: raps || [] }])
+      chargerSousDossiers(chantierActif.id); setConfirm(null)
+    } catch (error) {
+      alert('Erreur lors de la suppression du sous-dossier. Veuillez réessayer.')
+    }
   }
 
   async function supprimerRapport(r) {
+    try {
+      await supabaseSafe(supabase.from('rapports').delete().eq('id', r.id))
     setCorbeille(prev => [...prev, { type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }])
-    await supabase.from('rapports').delete().eq('id', r.id)
-    if (sousDossierActif) chargerRapports(sousDossierActif.id)
-    setRapportDetail(null); setConfirm(null)
+      if (sousDossierActif) chargerRapports(sousDossierActif.id)
+      setRapportDetail(null); setConfirm(null)
+    } catch (error) {
+      alert('Erreur lors de la suppression du rapport. Veuillez réessayer.')
+    }
   }
 
   async function restaurerCorbeille(item) {
+    try {
     if (item.type === 'chantier') {
-      await supabase.from('chantiers').update({ actif: true }).eq('id', item.data.id)
+      await supabaseSafe(supabase.from('chantiers').update({ actif: true }).eq('id', item.data.id))
     } else if (item.type === 'sous_dossier') {
-      await supabase.from('sous_dossiers').insert({ chantier_id: item.data.chantier_id, nom: item.data.nom })
+      await supabaseSafe(supabase.from('sous_dossiers').insert({ chantier_id: item.data.chantier_id, nom: item.data.nom }))
     } else if (item.type === 'rapport') {
-      const { data: newR } = await supabase.from('rapports').insert({
+      const newR = await supabaseSafe(supabase.from('rapports').insert({
         sous_dossier_id: item.data.sous_dossier_id, employe_id: item.data.employe_id,
         date_travail: item.data.date_travail, heure_debut: item.data.heure_debut,
         heure_fin: item.data.heure_fin, remarques: item.data.remarques, valide: item.data.valide
-      }).select().single()
+      }).select().single())
       if (newR && item.data.rapport_materiaux?.length > 0) {
-        await supabase.from('rapport_materiaux').insert(
+        await supabaseSafe(supabase.from('rapport_materiaux').insert(
           item.data.rapport_materiaux.map(m => ({ rapport_id: newR.id, ref_article: m.ref_article, designation: m.designation, unite: m.unite, quantite: m.quantite, prix_net: m.prix_net }))
-        )
+        ))
       }
     }
     setCorbeille(prev => prev.filter(i => i !== item))
     chargerTout()
+    } catch (error) {
+      alert('Erreur lors de la restauration. Veuillez réessayer.')
+    }
   }
 
   async function renommer() {
     if (!renommerItem || !nouveauNom.trim()) return
-    if (renommerItem.type === 'chantier') {
-      await supabase.from('chantiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id)
-      chargerTout()
-    } else if (renommerItem.type === 'sous_dossier') {
-      await supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id)
-      chargerSousDossiers(chantierActif.id)
+    try {
+      if (renommerItem.type === 'chantier') {
+        await supabaseSafe(supabase.from('chantiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
+        chargerTout()
+      } else if (renommerItem.type === 'sous_dossier') {
+        await supabaseSafe(supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
+        chargerSousDossiers(chantierActif.id)
+      }
+      setRenommerItem(null); setNouveauNom('')
+    } catch (error) {
+      alert('Erreur lors du renommage. Veuillez réessayer.')
     }
-    setRenommerItem(null); setNouveauNom('')
   }
 
   async function valider(rid) {
-    await supabase.from('rapports').update({ valide: true }).eq('id', rid)
-    chargerTout()
-    if (sousDossierActif) chargerRapports(sousDossierActif.id)
-    setRapportDetail(null)
+    try {
+      await supabaseSafe(supabase.from('rapports').update({ valide: true }).eq('id', rid))
+      chargerTout()
+      if (sousDossierActif) chargerRapports(sousDossierActif.id)
+      setRapportDetail(null)
+    } catch (error) {
+      alert('Erreur lors de la validation du rapport. Veuillez réessayer.')
+    }
   }
 
   async function sauvegarderMateriaux(rapportId, newMat) {
-    const { error: deleteError } = await supabase.from('rapport_materiaux').delete().eq('rapport_id', rapportId)
+    let deleteError = null
+    try {
+      await supabaseSafe(supabase.from('rapport_materiaux').delete().eq('rapport_id', rapportId))
+    } catch (error) {
+      deleteError = error
+    }
     if (deleteError) {
       alert('Erreur lors de la suppression des matériaux. Veuillez réessayer.')
       return
     }
     if (newMat.length > 0) {
-      const { error: insertError } = await supabase.from('rapport_materiaux').insert(
-        newMat.map(m => ({
-          rapport_id: rapportId,
-          ref_article: m.ref_article || m.id || null,
-          designation: m.designation || m.nom,
-          unite: m.unite,
-          quantite: m.quantite,
-          prix_net: m.prix_net || m.pu || 0
-        }))
-      )
+      let insertError = null
+      try {
+        await supabaseSafe(supabase.from('rapport_materiaux').insert(
+          newMat.map(m => ({
+            rapport_id: rapportId,
+            ref_article: m.ref_article || m.id || null,
+            designation: m.designation || m.nom,
+            unite: m.unite,
+            quantite: m.quantite,
+            prix_net: m.prix_net || m.pu || 0
+          }))
+        ))
+      } catch (error) {
+        insertError = error
+      }
       if (insertError) {
         alert("Erreur lors de l'enregistrement des mat�riaux. Les donn�es pr�c�dentes ont �t� supprim�es, veuillez ressaisir.")
         chargerTout()
@@ -816,13 +871,17 @@ export default function Admin() {
 
   async function sauvegarderRapportDetail() {
     if (!rapportDetail) return
-    await supabase.from('rapports').update({
-      date_travail: editRapportDate,
-      remarques: editRapportRemarques
-    }).eq('id', rapportDetail.id)
-    setRapportDetail(prev => ({ ...prev, date_travail: editRapportDate, remarques: editRapportRemarques }))
-    setEditRapportMode(false)
-    if (sousDossierActif) chargerRapports(sousDossierActif.id)
+    try {
+      await supabaseSafe(supabase.from('rapports').update({
+        date_travail: editRapportDate,
+        remarques: editRapportRemarques
+      }).eq('id', rapportDetail.id))
+      setRapportDetail(prev => ({ ...prev, date_travail: editRapportDate, remarques: editRapportRemarques }))
+      setEditRapportMode(false)
+      if (sousDossierActif) chargerRapports(sousDossierActif.id)
+    } catch (error) {
+      alert('Erreur lors de la mise à jour du rapport. Veuillez réessayer.')
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1145,8 +1204,12 @@ export default function Admin() {
                 if (!nouveauSdNom.trim()) return
                 const existe = sousDossiers.find(s => s.nom.toLowerCase() === nouveauSdNom.toLowerCase())
                 if (existe) { alert(`"${nouveauSdNom}" existe déjà !`); return }
-                await supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom })
-                setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
+                try {
+                  await supabaseSafe(supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom }))
+                  setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
+                } catch (error) {
+                  alert('Erreur lors de la création du sous-dossier. Veuillez réessayer.')
+                }
               }}>OK</button>
             </div>
           )}
@@ -1222,8 +1285,12 @@ export default function Admin() {
                 if (!nouveauNomChantier.trim()) return
                 const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
                 if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
-                await supabase.from('chantiers').insert({ nom: nouveauNomChantier, adresse: nouvelleAdresse })
-                setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
+                try {
+                  await supabaseSafe(supabase.from('chantiers').insert({ nom: nouveauNomChantier, adresse: nouvelleAdresse }))
+                  setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
+                } catch (error) {
+                  alert('Erreur lors de la création du chantier. Veuillez réessayer.')
+                }
               }}>Créer</button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 
@@ -106,42 +107,53 @@ export default function Rapport() {
     if (!user || !sd) return
     setEnvoi(true)
 
-    const { data: r } = await supabase.from('rapports').insert({
-      sous_dossier_id: id,
-      employe_id: user.id,
-      date_travail: date,
-      heure_debut: '07:30',
-      heure_fin: '17:00',
-      remarques
-    }).select().single()
+    try {
+      const r = await supabaseSafe(
+        supabase.from('rapports').insert({
+          sous_dossier_id: id,
+          employe_id: user.id,
+          date_travail: date,
+          heure_debut: '07:30',
+          heure_fin: '17:00',
+          remarques
+        }).select().single()
+      )
 
-    if (r) {
-      // Enregistrer dans time_entries
-      await supabase.from('time_entries').insert({
-        employe_id: user.id,
-        date_travail: date,
-        type: 'chantier',
-        reference_id: r.id,
-        duree
-      })
-
-      if (materiaux.length > 0) {
-        await supabase.from('rapport_materiaux').insert(
-          materiaux.map(m => ({
-            rapport_id: r.id,
-            ref_article: m.catalogueId || null,
-            designation: m.nom,
-            unite: m.unite,
-            quantite: m.qte,
-            prix_net: m.pu
-          }))
+      if (r) {
+        // Enregistrer dans time_entries
+        await supabaseSafe(
+          supabase.from('time_entries').insert({
+            employe_id: user.id,
+            date_travail: date,
+            type: 'chantier',
+            reference_id: r.id,
+            duree
+          })
         )
-      }
-    }
 
-    setEnvoi(false)
-    setSucces(true)
-    setTimeout(() => navigate(`/employe/chantier/${sd.chantier_id}`), 2000)
+        if (materiaux.length > 0) {
+          await supabaseSafe(
+            supabase.from('rapport_materiaux').insert(
+              materiaux.map(m => ({
+                rapport_id: r.id,
+                ref_article: m.catalogueId || null,
+                designation: m.nom,
+                unite: m.unite,
+                quantite: m.qte,
+                prix_net: m.pu
+              }))
+            )
+          )
+        }
+      }
+
+      setSucces(true)
+      setTimeout(() => navigate(`/employe/chantier/${sd.chantier_id}`), 2000)
+    } catch (error) {
+      alert("Erreur lors de l'envoi du rapport. Veuillez réessayer.")
+    } finally {
+      setEnvoi(false)
+    }
   }
 
   if (succes) return (

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 
@@ -153,12 +154,16 @@ export default function Employe() {
       const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNom.toLowerCase())
       if (existe) { setConfirmDoublon(existe); return }
     }
-    await supabase.from('chantiers').insert({ nom: nouveauNom, adresse: nouvelleAdresse })
-    setNouveauNom('')
-    setNouvelleAdresse('')
-    setAjoutChantier(false)
-    setConfirmDoublon(null)
-    charger()
+    try {
+      await supabaseSafe(supabase.from('chantiers').insert({ nom: nouveauNom, adresse: nouvelleAdresse }))
+      setNouveauNom('')
+      setNouvelleAdresse('')
+      setAjoutChantier(false)
+      setConfirmDoublon(null)
+      charger()
+    } catch (error) {
+      alert("Erreur lors de la création du chantier. Veuillez réessayer.")
+    }
   }
 
   async function soumettreHeuresSupp(e) {
@@ -167,29 +172,34 @@ export default function Employe() {
     setSuppEnvoi(true)
     const aujourdHui = new Date().toISOString().split('T')[0]
     const annee = new Date(aujourdHui + 'T12:00:00').getFullYear()
-    await supabase.from('time_entries').insert({
-      employe_id: user.id,
-      date_travail: aujourdHui,
-      type: 'heures_supp',
-      duree: Number(suppHeures),
-      heures_nettes: Number(suppHeures),
-      semaine: getISOWeek(aujourdHui),
-      annee,
-      commentaire: suppJustification.trim(),
-      chantier_id: suppChantierId || null,
-      reference_id: suppDepannageId || null
-    })
-    setSuppEnvoi(false)
-    setSuppSucces(true)
-    setTimeout(() => {
-      setSuppSucces(false)
-      setModalSupp(false)
-      setSuppHeures(1)
-      setSuppJustification('')
-      setSuppChantierId('')
-      setSuppDepannageId('')
-      charger()
-    }, 1500)
+    try {
+      await supabaseSafe(supabase.from('time_entries').insert({
+        employe_id: user.id,
+        date_travail: aujourdHui,
+        type: 'heures_supp',
+        duree: Number(suppHeures),
+        heures_nettes: Number(suppHeures),
+        semaine: getISOWeek(aujourdHui),
+        annee,
+        commentaire: suppJustification.trim(),
+        chantier_id: suppChantierId || null,
+        reference_id: suppDepannageId || null
+      }))
+      setSuppSucces(true)
+      setTimeout(() => {
+        setSuppSucces(false)
+        setModalSupp(false)
+        setSuppHeures(1)
+        setSuppJustification('')
+        setSuppChantierId('')
+        setSuppDepannageId('')
+        charger()
+      }, 1500)
+    } catch (error) {
+      alert("Erreur lors de l'enregistrement des heures supplémentaires. Veuillez réessayer.")
+    } finally {
+      setSuppEnvoi(false)
+    }
   }
 
   const joursVacancesSelectionnes = useMemo(
@@ -247,25 +257,30 @@ export default function Employe() {
 
     setVacErreur('')
     setVacEnvoi(true)
-    await supabase.from('vacances').insert({
-      employe_id: user.id,
-      date_debut: vacDateDebut,
-      date_fin: vacDateFin,
-      commentaire: vacCommentaire.trim() || null,
-      statut: 'en_attente',
-      jours_ouvrables: joursVacancesSelectionnes
-    })
-    setVacEnvoi(false)
-    setVacSucces(true)
-    setTimeout(() => {
-      setVacSucces(false)
-      setModalVacances(false)
-      setVacDateDebut('')
-      setVacDateFin('')
-      setVacCommentaire('')
-      setVacErreur('')
-      charger()
-    }, 1500)
+    try {
+      await supabaseSafe(supabase.from('vacances').insert({
+        employe_id: user.id,
+        date_debut: vacDateDebut,
+        date_fin: vacDateFin,
+        commentaire: vacCommentaire.trim() || null,
+        statut: 'en_attente',
+        jours_ouvrables: joursVacancesSelectionnes
+      }))
+      setVacSucces(true)
+      setTimeout(() => {
+        setVacSucces(false)
+        setModalVacances(false)
+        setVacDateDebut('')
+        setVacDateFin('')
+        setVacCommentaire('')
+        setVacErreur('')
+        charger()
+      }, 1500)
+    } catch (error) {
+      setVacErreur("Erreur lors de l'envoi de la demande. Veuillez réessayer.")
+    } finally {
+      setVacEnvoi(false)
+    }
   }
 
   async function deconnecter() {

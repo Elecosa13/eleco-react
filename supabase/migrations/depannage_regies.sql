@@ -43,21 +43,3 @@ ALTER TABLE depannages
   ADD COLUMN IF NOT EXISTS regie_id uuid REFERENCES regies(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_depannages_regie_id ON depannages(regie_id);
-
-INSERT INTO regies (nom, nom_normalise)
-SELECT U&'Non assign\00E9e', 'non assignee'
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM regies
-  WHERE nom_normalise = 'non assignee'
-);
-
-UPDATE depannages
-SET regie_id = (
-  SELECT id
-  FROM regies
-  WHERE nom_normalise = 'non assignee'
-  ORDER BY created_at
-  LIMIT 1
-)
-WHERE regie_id IS NULL;

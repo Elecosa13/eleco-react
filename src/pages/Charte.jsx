@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 
 const VERSION_CHARTE = 'v1.0'
 
@@ -42,7 +43,7 @@ const CLAUSES = [
 
 export default function Charte() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user } = useAuth()
   const scrollRef = useRef(null)
   const canvasRef = useRef(null)
 

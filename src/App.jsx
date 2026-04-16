@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { loadCurrentProfile, getCachedProfile, signOut } from './lib/auth'
 import { supabase } from './lib/supabase'
+import { useAuth } from './lib/auth-context'
 import Login from './pages/Login'
 import Employe from './pages/Employe'
 import Chantier from './pages/Chantier'
@@ -11,27 +11,10 @@ import Depannage from './pages/Depannage'
 import Charte from './pages/Charte'
 
 function PrivateRoute({ children, requiredRole }) {
-  const [status, setStatus] = useState('loading')
-  const [profile, setProfile] = useState(null)
-  const [error, setError] = useState(null)
+  const { initializing, profile, role, error, signOut } = useAuth()
 
-  useEffect(() => {
-    let mounted = true
-    loadCurrentProfile().then(({ profile: loaded, error: profileError }) => {
-      if (!mounted) return
-      if (loaded) {
-        setProfile(loaded)
-        setStatus('ok')
-      } else {
-        setError(profileError)
-        setStatus('denied')
-      }
-    })
-    return () => { mounted = false }
-  }, [])
-
-  if (status === 'loading') return null
-  if (status === 'denied' || !profile) {
+  if (initializing) return null
+  if (!profile) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: '#f5f5f5' }}>
         <div style={{ background: 'white', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '20px', maxWidth: '360px', width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -47,8 +30,8 @@ function PrivateRoute({ children, requiredRole }) {
     )
   }
 
-  if (requiredRole && profile.role !== requiredRole) {
-    return <Navigate to={profile.role === 'admin' ? '/admin' : '/employe'} replace />
+  if (requiredRole && role !== requiredRole) {
+    return <Navigate to={role === 'admin' ? '/admin' : '/employe'} replace />
   }
 
   return children
@@ -56,35 +39,56 @@ function PrivateRoute({ children, requiredRole }) {
 
 // Guard charte : vérifie si l'employé a signé la charte
 function CharteGuard({ children }) {
+  const { profile } = useAuth()
   const [status, setStatus] = useState('loading')
 
   useEffect(() => {
-    loadCurrentProfile().then(async ({ profile }) => {
-      if (!profile) { setStatus('charte_requise'); return }
-      const { data } = await supabase.from('chartes_acceptees')
-        .select('id')
-        .eq('employe_id', profile.id)
-        .limit(1)
-      setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
-    })
-  }, [])
+    if (!profile) { setStatus('charte_requise'); return }
+    setStatus('loading')
+    supabase.from('chartes_acceptees')
+      .select('id')
+      .eq('employe_id', profile.id)
+      .limit(1)
+      .then(({ data }) => {
+        setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
+      })
+  }, [profile])
 
   if (status === 'loading') return null
   if (status === 'charte_requise') return <Navigate to="/employe/charte" replace />
   return children
 }
 
+function RootRedirect() {
+  const { initializing, role } = useAuth()
+  if (initializing) return null
+  if (role === 'admin') return <Navigate to="/admin" replace />
+  if (role === 'employe') return <Navigate to="/employe" replace />
+  return <Navigate to="/login" replace />
+}
+
 function NotFound() {
-  const user = getCachedProfile()
-  if (user?.role === 'admin') return <Navigate to="/admin" replace />
-  if (user?.role === 'employe') return <Navigate to="/employe" replace />
+  const { initializing, role } = useAuth()
+  if (initializing) return null
+  if (role === 'admin') return <Navigate to="/admin" replace />
+  if (role === 'employe') return <Navigate to="/employe" replace />
   return <Navigate to="/login" replace />
 }
 
 export default function App() {
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(registration => {
+        console.log('SW UPDATE CHECK')
+        registration.update()
+      })
+    })
+  }, [])
+
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
 
       {/* Charte : route employé sans guard charte (sinon boucle infinie) */}

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { signOut, getCachedProfile } from '../lib/auth'
+import { useAuth } from '../lib/auth-context'
+import { usePageRefresh } from '../lib/refresh'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -74,7 +75,7 @@ function datesSeChevauchent(debutA, finA, debutB, finB) {
 
 export default function Admin() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user, signOut } = useAuth()
 
   // Navigation
   const [vue, setVue] = useState('accueil')
@@ -83,6 +84,7 @@ export default function Admin() {
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
   const [chantiers, setChantiers] = useState([])
   const [depannages, setDepannages] = useState([])
+  const [search, setSearch] = useState('')
   const [employes, setEmployes] = useState([])
   const [catalogue, setCatalogue] = useState([])
   const [categories, setCategories] = useState([])
@@ -151,9 +153,34 @@ export default function Admin() {
 
   useEffect(() => { chargerTout() }, [])
 
+  usePageRefresh(async () => {
+    if (vue === 'calendrier') return chargerCalendrier(calMois)
+    if (vue === 'vacances') return chargerVacancesAdmin()
+    if (vue === 'employes') return chargerStatsEmployes()
+    if (vue === 'employe_detail' && empDetail) return chargerDetailEmploye(empDetail.id, empDetailMois)
+    if (vue === 'sous_dossiers' && chantierActif) return chargerSousDossiers(chantierActif.id)
+    if (vue === 'rapports' && sousDossierActif) return chargerRapports(sousDossierActif.id)
+    return chargerTout()
+  }, [vue, calMois, empDetail, empDetailMois, chantierActif, sousDossierActif])
+
   // ──────────────────────────────────────────────────────────────────────────
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
+
+  async function chargerDepannages(searchValue = search) {
+    const term = searchValue.trim()
+    let query = supabase.from('depannages')
+      .select('*, employe:employe_id(prenom), regie:regies(nom), rapport_materiaux(*)')
+
+    if (term) {
+      query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
+    }
+
+    query = query.order('created_at', { ascending: false })
+
+    const { data } = await query
+    if (data) setDepannages(data)
+  }
 
   async function chargerTout() {
     const { data: rap } = await supabase.from('rapports')
@@ -174,10 +201,7 @@ export default function Admin() {
     const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
     if (ch) setChantiers(ch)
 
-    const { data: dep } = await supabase.from('depannages')
-      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
-      .order('date_travail', { ascending: false })
-    if (dep) setDepannages(dep)
+    await chargerDepannages()
 
     const { data: cat } = await supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
     if (cat) {
@@ -1149,6 +1173,17 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        <input
+          type="search"
+          placeholder="Rechercher..."
+          value={search}
+          onChange={e => {
+            const value = e.target.value
+            setSearch(value)
+            chargerDepannages(value)
+          }}
+          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
+        />
         <div className="card">
           {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
           {depannages.map(d => {
@@ -1159,6 +1194,7 @@ export default function Admin() {
               <div key={d.id} className="row-item">
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 500 }}>{d.adresse}</div>
+                  <div style={{ fontSize: '11px', color: '#666' }}>Régie : {d.regie?.nom || 'Non assignée'}</div>
                   <div style={{ fontSize: '11px', color: '#888' }}>
                     {d.employe?.prenom} · {fmtDuree(Number(d.duree) || 1)} · {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')} · Bon #{d.id}
                   </div>

@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { loadCurrentProfile } from '../lib/auth'
+import { useAuth } from '../lib/auth-context'
 
 function authErrorMessage(error) {
   if (!error) return 'Connexion impossible.'
@@ -23,10 +23,17 @@ function authErrorMessage(error) {
 
 export default function Login() {
   const navigate = useNavigate()
+  const { initializing, role, revalidate } = useAuth()
   const [email, setEmail] = useState('')
   const [mdp, setMdp] = useState('')
   const [erreur, setErreur] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (initializing) return
+    if (role === 'admin') navigate('/admin', { replace: true })
+    if (role === 'employe') navigate('/employe', { replace: true })
+  }, [initializing, role, navigate])
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -46,7 +53,11 @@ export default function Login() {
         return
       }
 
+<<<<<<< HEAD
       const { user, profile, error: profileError } = await loadCurrentProfile()
+=======
+      const { user, profile, error: profileError } = await revalidate()
+>>>>>>> c094c35 (depannage regies + admin search + robustness fixes)
       if (profileError || !profile) {
         await supabase.auth.signOut()
         console.error('[auth] Profil refuse:', profileError)

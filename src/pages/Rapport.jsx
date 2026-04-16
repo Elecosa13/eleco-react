@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
+import { usePageRefresh } from '../lib/refresh'
 
 const FAVORIS_KEY = 'eleco_favoris'
 
 export default function Rapport() {
   const navigate = useNavigate()
   const { id } = useParams()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user } = useAuth()
   const [sd, setSd] = useState(null)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [duree, setDuree] = useState(8)
@@ -27,18 +29,26 @@ export default function Rapport() {
   const CREDIT_JOUR = 8
 
   useEffect(() => {
-    supabase.from('sous_dossiers').select('*, chantiers(nom)').eq('id', id).single()
-      .then(({ data }) => { if (data) setSd(data) })
-    supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          setCatalogue(data)
-          setCategories(['Favoris', ...Array.from(new Set(data.map(a => a.categorie).filter(Boolean)))])
-        }
-        setLoading(false)
-      })
-    chargerCredit(new Date().toISOString().split('T')[0])
+    charger()
   }, [id])
+  usePageRefresh(() => charger(), [id, date, user?.id])
+
+  async function charger() {
+    setLoading(true)
+    await Promise.all([
+      supabase.from('sous_dossiers').select('*, chantiers(nom)').eq('id', id).single()
+        .then(({ data }) => { if (data) setSd(data) }),
+      supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setCatalogue(data)
+            setCategories(['Favoris', ...Array.from(new Set(data.map(a => a.categorie).filter(Boolean)))])
+          }
+        }),
+      chargerCredit(date)
+    ])
+    setLoading(false)
+  }
 
   async function chargerCredit(d) {
     const { data } = await supabase

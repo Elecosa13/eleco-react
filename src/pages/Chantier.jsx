@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { usePageRefresh } from '../lib/refresh'
 
 export default function Chantier() {
   const navigate = useNavigate()
@@ -11,12 +12,16 @@ export default function Chantier() {
   const [ajout, setAjout] = useState(false)
 
   useEffect(() => {
-    supabase.from('chantiers').select('*').eq('id', id).single().then(({ data }) => { if (data) setChantier(data) })
     charger()
   }, [id])
+  usePageRefresh(() => charger(), [id])
 
   async function charger() {
-    const { data } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', id).order('created_at')
+    const [{ data: ch }, { data }] = await Promise.all([
+      supabase.from('chantiers').select('*').eq('id', id).single(),
+      supabase.from('sous_dossiers').select('*').eq('chantier_id', id).order('created_at')
+    ])
+    if (ch) setChantier(ch)
     if (data) setSds(data)
   }
 

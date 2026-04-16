@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 
 function getISOWeek(dateStr) {
   const d = new Date(dateStr + 'T12:00:00')
@@ -19,7 +20,7 @@ function calcHeuresNettes(debut, fin, pauseMins) {
 
 export default function SaisieHeures() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user } = useAuth()
 
   const [chantiers, setChantiers] = useState([])
   const [chantierId, setChantierId] = useState('')

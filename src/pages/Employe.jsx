@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { signOut } from '../lib/auth'
+import { useAuth } from '../lib/auth-context'
+import { usePageRefresh } from '../lib/refresh'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
@@ -38,7 +39,7 @@ function fmtDate(dateStr, opts) {
 
 export default function Employe() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user, signOut } = useAuth()
 
   const [chantiers, setChantiers] = useState([])
   const [vue, setVue] = useState('accueil')
@@ -73,6 +74,7 @@ export default function Employe() {
   const [vacSucces, setVacSucces] = useState(false)
 
   useEffect(() => { charger() }, [])
+  usePageRefresh(() => charger(), [user?.id])
 
   useEffect(() => {
     if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) {

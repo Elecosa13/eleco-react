@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
+import { usePageRefresh } from '../lib/refresh'
 
 const DUREES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8]
 const FAVORIS_KEY = 'eleco_favoris'
 
 export default function Depannage() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('eleco_user') || 'null')
+  const { profile: user } = useAuth()
   const [adresse, setAdresse] = useState('')
   const [duree, setDuree] = useState(1)
   const [remarques, setRemarques] = useState('')
@@ -22,27 +24,64 @@ export default function Depannage() {
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
   const [favoris, setFavoris] = useState(JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]'))
+  const [regies, setRegies] = useState([])
+  const [regieId, setRegieId] = useState('')
+  const [regieNonAssigneeId, setRegieNonAssigneeId] = useState('')
+  const [erreur, setErreur] = useState('')
   const [loading, setLoading] = useState(true)
   const CREDIT_JOUR = 8
 
   useEffect(() => {
-    chargerCredit()
-    supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          setCatalogue(data)
-          setCategories(['Favoris', ...Array.from(new Set(data.map(a => a.categorie).filter(Boolean)))])
-        }
-        setLoading(false)
-      })
+    charger()
   }, [])
+  usePageRefresh(async () => {
+    try {
+      await chargerCredit(date)
+    } catch (error) {
+      console.error('Erreur chargement crédit dépannage', error)
+      setErreur('Impossible de charger les données. Réessaie dans un instant.')
+    }
+  }, [date, user?.id])
 
-  async function chargerCredit() {
-    const { data } = await supabase
+  async function charger() {
+    setLoading(true)
+    setErreur('')
+    try {
+      const [{ data: regiesData, error: regiesError }, { data: catalogueData, error: catalogueError }] = await Promise.all([
+        supabase.from('regies').select('id, nom, nom_normalise').eq('actif', true).order('nom'),
+        supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
+      ])
+
+      if (regiesError) throw regiesError
+      if (catalogueError) throw catalogueError
+
+      const listeRegies = regiesData || []
+      const nonAssignee = listeRegies.find(r => r.nom_normalise === 'non assignee')
+      setRegies(listeRegies)
+      setRegieNonAssigneeId(nonAssignee?.id || '')
+      setRegieId(current => current || nonAssignee?.id || listeRegies[0]?.id || '')
+
+      const listeCatalogue = catalogueData || []
+      setCatalogue(listeCatalogue)
+      setCategories(['Favoris', ...Array.from(new Set(listeCatalogue.map(a => a.categorie).filter(Boolean)))])
+
+      await chargerCredit(date)
+    } catch (error) {
+      console.error('Erreur chargement dépannage', error)
+      setErreur('Impossible de charger les données. Réessaie dans un instant.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function chargerCredit(d = date) {
+    if (!user?.id) return
+    const { data, error } = await supabase
       .from('time_entries')
       .select('duree')
       .eq('employe_id', user.id)
-      .eq('date_travail', date)
+      .eq('date_travail', d)
+    if (error) throw error
     if (data) setCreditUtilise(data.reduce((s, e) => s + Number(e.duree), 0))
   }
 
@@ -72,25 +111,40 @@ export default function Depannage() {
 
   async function envoyer(e) {
     e.preventDefault()
+    if (envoi) return
     if (!adresse) return
+    if (!user?.id) {
+      setErreur("Impossible d'identifier l'utilisateur connecté.")
+      return
+    }
     setEnvoi(true)
+    setErreur('')
 
-    const { data: dep } = await supabase
-      .from('depannages')
-      .insert({ employe_id: user.id, date_travail: date, adresse, duree, remarques })
-      .select()
-      .single()
+    try {
+      const regieIdFinal = regieId || regieNonAssigneeId || ''
+      const depannagePayload = { employe_id: user.id, date_travail: date, adresse, duree, remarques }
+      if (regieIdFinal) depannagePayload.regie_id = regieIdFinal
 
-    if (dep) {
-      await supabase.from('time_entries').insert({
+      const { data: dep, error: depError } = await supabase
+        .from('depannages')
+        .insert(depannagePayload)
+        .select()
+        .single()
+
+      if (depError) throw depError
+      if (!dep?.id) throw new Error('depannage_insert_empty')
+
+      const { error: timeError } = await supabase.from('time_entries').insert({
         employe_id: user.id,
         date_travail: date,
         type: 'depannage',
         reference_id: dep.id,
         duree
       })
+      if (timeError) throw timeError
+
       if (materiaux.length > 0) {
-        await supabase.from('rapport_materiaux').insert(
+        const { error: materiauxError } = await supabase.from('rapport_materiaux').insert(
           materiaux.map(m => ({
             rapport_id: dep.id,
             ref_article: m.id,
@@ -100,12 +154,17 @@ export default function Depannage() {
             prix_net: m.pu
           }))
         )
+        if (materiauxError) throw materiauxError
       }
-    }
 
-    setEnvoi(false)
-    setSucces(true)
-    setTimeout(() => navigate('/employe'), 2000)
+      setSucces(true)
+      setTimeout(() => navigate('/employe'), 2000)
+    } catch (error) {
+      console.error('Erreur enregistrement dépannage', error)
+      setErreur("Impossible d'enregistrer le dépannage. Vérifie les informations et réessaie.")
+    } finally {
+      setEnvoi(false)
+    }
   }
 
   const creditRestant = CREDIT_JOUR - creditUtilise
@@ -128,6 +187,11 @@ export default function Depannage() {
         {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((s, m) => s + m.qte, 0)}</span>}
       </div>
       <div className="page-content">
+        {erreur && (
+          <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+            {erreur}
+          </div>
+        )}
         <input type="search" placeholder="Rechercher..." value={recherche} onChange={e => setRecherche(e.target.value)} />
         <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
           {categories.map(c => (
@@ -183,6 +247,11 @@ export default function Depannage() {
 
       <form onSubmit={envoyer}>
         <div className="page-content">
+          {erreur && (
+            <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+              {erreur}
+            </div>
+          )}
           <div style={{
             background: depasse ? '#FCEBEB' : '#E6F1FB',
             border: `1px solid ${depasse ? '#f09595' : '#185FA5'}`,
@@ -195,8 +264,26 @@ export default function Depannage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Informations</div>
             <div className="form-group">
+              <label>Régie</label>
+              <select value={regieId} onChange={e => setRegieId(e.target.value)}>
+                {regies.length === 0 && <option value="">Non assignée</option>}
+                {regies.map(r => (
+                  <option key={r.id} value={r.id}>{r.nom || 'Non assignée'}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
               <label>Date</label>
-              <input type="date" value={date} onChange={e => { setDate(e.target.value); chargerCredit() }} required />
+              <input type="date" value={date} onChange={async e => {
+                const nextDate = e.target.value
+                setDate(nextDate)
+                try {
+                  await chargerCredit(nextDate)
+                } catch (error) {
+                  console.error('Erreur chargement crédit dépannage', error)
+                  setErreur('Impossible de charger les données. Réessaie dans un instant.')
+                }
+              }} required />
             </div>
             <div className="form-group">
               <label>Adresse *</label>

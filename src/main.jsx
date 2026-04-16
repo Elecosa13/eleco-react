@@ -1,36 +1,47 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
+import { registerSW } from 'virtual:pwa-register'
 import App from './App'
 import { APP_VERSION } from './generated/version'
 import './index.css'
 
-console.log('VERSION', APP_VERSION)
+console.log('VERSION (build)', APP_VERSION)
 
+// PWA update auto
+registerSW({
+  onNeedRefresh() {
+    console.log('Nouvelle version disponible, refresh conseillé')
+  },
+  onOfflineReady() {
+    console.log('App prête en offline')
+  }
+})
+
+// Check version serveur
 async function checkVersion() {
   try {
     const response = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
     if (!response.ok) return
+
     const data = await response.json()
-    console.log('VERSION', data.version)
+    console.log('VERSION (server)', data.version)
+
     if (data.version && data.version !== APP_VERSION) {
-      console.log('UPDATE AVAILABLE')
+      console.log('UPDATE AVAILABLE → reload')
       window.location.reload()
     }
-  } catch (error) {
-    console.error('[version] check failed', error)
+  } catch (e) {
+    console.error('Version check failed', e)
   }
 }
 
-checkVersion()
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') checkVersion()
-})
-window.addEventListener('focus', checkVersion)
-window.addEventListener('pageshow', checkVersion)
+setInterval(checkVersion, 30000)
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <BrowserRouter>
-    <App />
-  </BrowserRouter>
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>
 )

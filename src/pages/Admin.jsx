@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
@@ -78,6 +78,8 @@ export default function Admin() {
   const navigate = useNavigate()
   const location = useLocation()
   const { profile: user, signOut } = useAuth()
+  const depannagesSearchTimerRef = useRef(null)
+  const depannagesRequestRef = useRef(0)
 
   // Navigation
   const [vue, setVue] = useState(location.state?.vue === 'depannages' ? 'depannages' : 'accueil')
@@ -163,6 +165,10 @@ export default function Admin() {
 
   useEffect(() => { chargerTout() }, [])
 
+  useEffect(() => () => {
+    if (depannagesSearchTimerRef.current) clearTimeout(depannagesSearchTimerRef.current)
+  }, [])
+
   usePageRefresh(async () => {
     if (vue === 'calendrier') return chargerCalendrier(calMois)
     if (vue === 'vacances') return chargerVacancesAdmin()
@@ -177,12 +183,28 @@ export default function Admin() {
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
 
+  function annulerRechercheDepannages() {
+    if (!depannagesSearchTimerRef.current) return
+    clearTimeout(depannagesSearchTimerRef.current)
+    depannagesSearchTimerRef.current = null
+  }
+
+  function programmerRechercheDepannages(value) {
+    annulerRechercheDepannages()
+    depannagesSearchTimerRef.current = setTimeout(() => {
+      depannagesSearchTimerRef.current = null
+      chargerDepannages(value, regieFilter, dateFilter, regies, regieFilterAvailable)
+    }, 300)
+  }
+
   async function chargerDepannages(searchValue = search, regieValue = regieFilter, dateValue = dateFilter, regiesValue = regies, regieFilterAvailableValue = regieFilterAvailable) {
+    const requestId = ++depannagesRequestRef.current
     const term = (searchValue || '').trim()
     setDepannagesLoading(true)
     setDepannagesError('')
 
     if (regieValue && !regieFilterAvailableValue) {
+      if (requestId !== depannagesRequestRef.current) return
       setDepannages([])
       setDepannagesError("Le filtre régie est indisponible sur la base actuelle. Réinitialise les filtres pour afficher les dépannages.")
       setDepannagesLoading(false)
@@ -209,6 +231,7 @@ export default function Admin() {
     try {
       const { data, error } = await query
       if (error) throw error
+      if (requestId !== depannagesRequestRef.current) return
 
       const regiesById = {}
       for (const regie of regiesValue || []) regiesById[String(regie.id)] = regie
@@ -220,6 +243,7 @@ export default function Admin() {
           .from('rapport_materiaux')
           .select('*')
           .in('rapport_id', ids)
+        if (requestId !== depannagesRequestRef.current) return
 
         if (matsError) {
           console.error('Erreur chargement materiaux depannages', matsError)
@@ -238,6 +262,7 @@ export default function Admin() {
         rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
       })))
     } catch (error) {
+      if (requestId !== depannagesRequestRef.current) return
       console.error('Erreur chargement depannages admin', error)
       setDepannages([])
       if (error?.code === '42703' && error?.message?.includes('regie_id')) {
@@ -246,11 +271,12 @@ export default function Admin() {
         setDepannagesError("Impossible de charger les dépannages. Réessaie dans un instant.")
       }
     } finally {
-      setDepannagesLoading(false)
+      if (requestId === depannagesRequestRef.current) setDepannagesLoading(false)
     }
   }
 
   function resetDepannagesFilters() {
+    annulerRechercheDepannages()
     setSearch('')
     setRegieFilter('')
     setDateFilter('')
@@ -1394,7 +1420,7 @@ export default function Admin() {
           onChange={e => {
             const value = e.target.value
             setSearch(value)
-            chargerDepannages(value, regieFilter, dateFilter)
+            programmerRechercheDepannages(value)
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
         />
@@ -1403,6 +1429,7 @@ export default function Admin() {
           disabled={!regieFilterAvailable}
           onChange={e => {
             const value = e.target.value
+            annulerRechercheDepannages()
             setRegieFilter(value)
             chargerDepannages(search, value, dateFilter, regies, regieFilterAvailable)
           }}
@@ -1418,6 +1445,7 @@ export default function Admin() {
           value={dateFilter}
           onChange={e => {
             const value = e.target.value
+            annulerRechercheDepannages()
             setDateFilter(value)
             chargerDepannages(search, regieFilter, value)
           }}

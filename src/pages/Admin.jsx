@@ -11,6 +11,8 @@ const JOURS_FR = ['L','M','M','J','V','S','D']
 const JOURS_LONG = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
 const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
+const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
+const STATUT_FACTURE_PRETE = 'Facture prête'
 
 // Clauses de la charte (identiques à Charte.jsx) — nécessaires pour régénérer le PDF côté admin
 const CLAUSES_CHARTE = [
@@ -973,8 +975,8 @@ export default function Admin() {
   }
 
   function depannageStatutBadgeClass(statut) {
-    if (statut === STATUT_RAPPORT_RECU) return 'badge-green'
-    if (statut === STATUT_INTERVENTION_FAITE) return 'badge-blue'
+    if (statut === STATUT_FACTURE_PRETE) return 'badge-green'
+    if ([STATUT_INTERVENTION_FAITE, STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER].includes(statut)) return 'badge-blue'
     return 'badge-amber'
   }
 

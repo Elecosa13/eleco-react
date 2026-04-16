@@ -8,6 +8,9 @@ import { usePageRefresh } from '../lib/refresh'
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
+const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
+const STATUT_FACTURE_PRETE = 'Facture prête'
+const STATUTS_DEPANNAGE_ADMIN = [STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER, STATUT_FACTURE_PRETE]
 
 function countJoursOuvrables(dateDebut, dateFin) {
   if (!dateDebut || !dateFin) return 0
@@ -103,7 +106,7 @@ export default function Employe() {
       .from('depannages')
       .select('id, adresse, date_travail, statut')
       .eq('employe_id', user.id)
-      .neq('statut', STATUT_RAPPORT_RECU)
+      .not('statut', 'in', `(${STATUTS_DEPANNAGE_ADMIN.map(statut => `"${statut}"`).join(',')})`)
       .order('date_travail', { ascending: false })
       .limit(10)
     if (deps) setDepannagesRecents(deps)

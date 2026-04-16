@@ -2,6 +2,12 @@ import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
+const STATUT_A_TRAITER = 'À traiter'
+const STATUT_INTERVENTION_FAITE = 'Intervention faite'
+const STATUT_RAPPORT_RECU = 'Rapport reçu'
+const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
+const STATUT_FACTURE_PRETE = 'Facture prête'
+
 function LoadingSpinner() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#185FA5', fontSize: '13px', fontWeight: 600 }}>
@@ -80,6 +86,12 @@ function FutureSlot({ label }) {
   )
 }
 
+function statutBadgeClass(statut) {
+  if (statut === STATUT_FACTURE_PRETE) return 'badge-green'
+  if (statut === STATUT_INTERVENTION_FAITE || statut === STATUT_RAPPORT_RECU || statut === STATUT_FACTURE_A_PREPARER) return 'badge-blue'
+  return 'badge-amber'
+}
+
 function buildForm(depannage) {
   return {
     regie_id: depannage?.regie_id || '',
@@ -103,6 +115,7 @@ export default function DepannageDetail() {
   const [saveError, setSaveError] = useState('')
   const [saveSuccess, setSaveSuccess] = useState('')
   const [regiesError, setRegiesError] = useState('')
+  const [statutSaving, setStatutSaving] = useState(false)
 
   useEffect(() => {
     chargerDepannage()
@@ -228,13 +241,56 @@ export default function DepannageDetail() {
     })
   }
 
+  function prochainStatutAdmin(statut) {
+    if (statut === STATUT_INTERVENTION_FAITE) {
+      return { statut: STATUT_RAPPORT_RECU, label: 'Forcer réception rapport' }
+    }
+    if (statut === STATUT_RAPPORT_RECU) {
+      return { statut: STATUT_FACTURE_A_PREPARER, label: 'Passer en facture à préparer' }
+    }
+    if (statut === STATUT_FACTURE_A_PREPARER) {
+      return { statut: STATUT_FACTURE_PRETE, label: 'Passer en facture prête' }
+    }
+    return null
+  }
+
+  async function avancerStatutAdmin(nextStatut) {
+    setSaveError('')
+    setSaveSuccess('')
+    setStatutSaving(true)
+
+    try {
+      const { data: updated, error } = await supabase
+        .from('depannages')
+        .update({ statut: nextStatut })
+        .eq('id', id)
+        .select('id')
+        .maybeSingle()
+
+      if (error) throw error
+      if (!updated) throw new Error('depannage_statut_update_empty')
+
+      const data = await lireDepannage()
+      if (!data) throw new Error('depannage_statut_refetch_empty')
+
+      setDepannage(data)
+      setForm(buildForm(data))
+      setSaveSuccess(`Statut mis à jour : ${nextStatut}.`)
+    } catch (error) {
+      console.error('Erreur mise a jour statut depannage', error)
+      setSaveError("Impossible de mettre à jour le statut. Réessaie dans un instant.")
+    } finally {
+      setStatutSaving(false)
+    }
+  }
+
   const detail = depannage ? {
     date: formatDate(depannage.date_travail),
     regie: firstValue(depannage.regie?.nom, depannage.regie_nom),
     client: firstValue(depannage.client, depannage.nom_client),
     adresse: firstValue(depannage.adresse),
     description: firstValue(depannage.objet, depannage.titre, depannage.description, depannage.remarques),
-    statut: firstValue(depannage.statut, depannage.status),
+    statut: firstValue(depannage.statut, depannage.status, STATUT_A_TRAITER),
     intervenant: firstValue(fullName(depannage.employe), depannage.intervenant, depannage.intervenant_nom),
     duree: depannage.duree ? `${depannage.duree} h` : '',
     contact: firstValue(depannage.contact, depannage.telephone, depannage.email),
@@ -242,6 +298,7 @@ export default function DepannageDetail() {
     creeLe: formatDateTime(depannage.created_at),
     modifieLe: formatDateTime(depannage.updated_at)
   } : null
+  const actionStatutAdmin = detail ? prochainStatutAdmin(detail.statut) : null
 
   return (
     <div>
@@ -324,7 +381,7 @@ export default function DepannageDetail() {
                     <div style={{ fontSize: '16px', fontWeight: 700, marginTop: '3px' }}>{detail.client || detail.adresse || 'Dépannage sans client'}</div>
                     {detail.regie && <div style={{ fontSize: '12px', color: '#555', marginTop: '3px' }}>{detail.regie}</div>}
                   </div>
-                  {detail.statut && <span className="badge badge-amber" style={{ flexShrink: 0 }}>{detail.statut}</span>}
+                  {detail.statut && <span className={`badge ${statutBadgeClass(detail.statut)}`} style={{ flexShrink: 0 }}>{detail.statut}</span>}
                 </div>
 
                 <DetailSection title="Informations">
@@ -343,6 +400,25 @@ export default function DepannageDetail() {
                   <InfoLine label="Référence" value={detail.reference} />
                   <InfoLine label="Créé le" value={detail.creeLe} />
                   <InfoLine label="Modifié le" value={detail.modifieLe} />
+                </DetailSection>
+
+                <DetailSection title="Traitement admin">
+                  <InfoLine label="Statut courant" value={detail.statut} />
+                  {actionStatutAdmin && (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={statutSaving}
+                      onClick={() => avancerStatutAdmin(actionStatutAdmin.statut)}
+                    >
+                      {statutSaving ? 'Mise à jour...' : actionStatutAdmin.label}
+                    </button>
+                  )}
+                  {!actionStatutAdmin && (
+                    <div style={{ fontSize: '12px', color: '#888' }}>
+                      Aucune action admin disponible pour ce statut.
+                    </div>
+                  )}
                 </DetailSection>
 
                 <DetailSection title="Dossier">

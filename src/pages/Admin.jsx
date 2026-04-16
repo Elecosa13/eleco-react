@@ -85,6 +85,8 @@ export default function Admin() {
   const [chantiers, setChantiers] = useState([])
   const [depannages, setDepannages] = useState([])
   const [search, setSearch] = useState('')
+  const [regies, setRegies] = useState([])
+  const [regieFilter, setRegieFilter] = useState('')
   const [employes, setEmployes] = useState([])
   const [catalogue, setCatalogue] = useState([])
   const [categories, setCategories] = useState([])
@@ -167,13 +169,17 @@ export default function Admin() {
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
 
-  async function chargerDepannages(searchValue = search) {
+  async function chargerDepannages(searchValue = search, regieValue = regieFilter) {
     const term = searchValue.trim()
     let query = supabase.from('depannages')
       .select('*, employe:employe_id(prenom), regie:regies(nom), rapport_materiaux(*)')
 
     if (term) {
       query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
+    }
+
+    if (regieValue) {
+      query = query.eq('regie_id', regieValue)
     }
 
     query = query.order('created_at', { ascending: false })
@@ -200,6 +206,9 @@ export default function Admin() {
 
     const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
     if (ch) setChantiers(ch)
+
+    const { data: regs } = await supabase.from('regies').select('id, nom').eq('actif', true).order('nom')
+    if (regs) setRegies(regs)
 
     await chargerDepannages()
 
@@ -1180,10 +1189,24 @@ export default function Admin() {
           onChange={e => {
             const value = e.target.value
             setSearch(value)
-            chargerDepannages(value)
+            chargerDepannages(value, regieFilter)
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
         />
+        <select
+          value={regieFilter}
+          onChange={e => {
+            const value = e.target.value
+            setRegieFilter(value)
+            chargerDepannages(search, value)
+          }}
+          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', background: 'white' }}
+        >
+          <option value="">Toutes les régies</option>
+          {regies.map(r => (
+            <option key={r.id} value={r.id}>{r.nom || 'Non assignée'}</option>
+          ))}
+        </select>
         <div className="card">
           {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
           {depannages.map(d => {

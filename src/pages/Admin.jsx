@@ -77,6 +77,7 @@ function datesSeChevauchent(debutA, finA, debutB, finB) {
 export default function Admin() {
   const navigate = useNavigate()
   const location = useLocation()
+  const adminNavigationState = location.state || {}
   const { profile: user, signOut } = useAuth()
   const depannagesSearchTimerRef = useRef(null)
   const depannagesRequestRef = useRef(0)
@@ -91,11 +92,11 @@ export default function Admin() {
   const [depannagesLoading, setDepannagesLoading] = useState(false)
   const [depannagesError, setDepannagesError] = useState('')
   const [adminError, setAdminError] = useState('')
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(adminNavigationState.depannagesSearch || '')
   const [regies, setRegies] = useState([])
-  const [regieFilter, setRegieFilter] = useState('')
+  const [regieFilter, setRegieFilter] = useState(adminNavigationState.depannagesRegieFilter || '')
   const [regieFilterAvailable, setRegieFilterAvailable] = useState(true)
-  const [dateFilter, setDateFilter] = useState('')
+  const [dateFilter, setDateFilter] = useState(adminNavigationState.depannagesDateFilter || '')
   const [employes, setEmployes] = useState([])
   const [catalogue, setCatalogue] = useState([])
   const [categories, setCategories] = useState([])
@@ -1485,7 +1486,34 @@ export default function Admin() {
                     const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
                     const statut = d.statut || d.status
                     return (
-                      <div key={d.id} className="row-item" style={{ alignItems: 'flex-start' }}>
+                      <div
+                        key={d.id}
+                        className="row-item"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => navigate(`/admin/depannage/${d.id}`, {
+                          state: {
+                            fromAdminDepannages: true,
+                            depannagesSearch: search,
+                            depannagesRegieFilter: regieFilter,
+                            depannagesDateFilter: dateFilter
+                          }
+                        })}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            navigate(`/admin/depannage/${d.id}`, {
+                              state: {
+                                fromAdminDepannages: true,
+                                depannagesSearch: search,
+                                depannagesRegieFilter: regieFilter,
+                                depannagesDateFilter: dateFilter
+                              }
+                            })
+                          }
+                        }}
+                        style={{ alignItems: 'flex-start', cursor: 'pointer', gap: '10px' }}
+                      >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '12px', fontWeight: 700, color: '#333' }}>{dateLabel}</span>
@@ -1499,13 +1527,7 @@ export default function Admin() {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                           <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/depannage/${d.id}`)}
-                            style={{ background: 'white', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
-                          >
-                            Voir
-                          </button>
+                          <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
                         </div>
                       </div>
                     )

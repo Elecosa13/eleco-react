@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 function LoadingSpinner() {
@@ -12,20 +12,70 @@ function LoadingSpinner() {
 }
 
 function formatDate(value) {
-  if (!value) return '-'
-  return new Date(`${value}T12:00:00`).toLocaleDateString('fr-CH')
+  if (!value) return ''
+  const date = new Date(`${value}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('fr-CH')
 }
 
 function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString('fr-CH')
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('fr-CH')
+}
+
+function cleanValue(value) {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
+
+function firstValue(...values) {
+  for (const value of values) {
+    const cleaned = cleanValue(value)
+    if (cleaned) return cleaned
+  }
+  return ''
+}
+
+function fullName(person) {
+  if (!person) return ''
+  return firstValue(
+    [person.prenom, person.nom].filter(Boolean).join(' '),
+    person.prenom,
+    person.nom,
+    person.initiales
+  )
 }
 
 function InfoLine({ label, value }) {
+  if (!cleanValue(value)) return null
   return (
     <div>
       <div style={{ fontSize: '11px', color: '#888', marginBottom: '3px' }}>{label}</div>
-      <div style={{ fontSize: '14px', fontWeight: 500, whiteSpace: 'pre-wrap' }}>{value || '-'}</div>
+      <div style={{ fontSize: '14px', fontWeight: 500, whiteSpace: 'pre-wrap' }}>{value}</div>
+    </div>
+  )
+}
+
+function DetailSection({ title, children }) {
+  const items = React.Children.toArray(children).filter(Boolean)
+  if (items.length === 0) return null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: '#185FA5' }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+        {items}
+      </div>
+    </div>
+  )
+}
+
+function FutureSlot({ label }) {
+  return (
+    <div style={{ border: '1px dashed #d7d7d7', borderRadius: '8px', padding: '10px 12px', color: '#888', fontSize: '12px', background: '#fafafa' }}>
+      {label}
     </div>
   )
 }
@@ -41,6 +91,7 @@ function buildForm(depannage) {
 
 export default function DepannageDetail() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { id } = useParams()
   const [depannage, setDepannage] = useState(null)
   const [regies, setRegies] = useState([])
@@ -51,6 +102,7 @@ export default function DepannageDetail() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saveSuccess, setSaveSuccess] = useState('')
+  const [regiesError, setRegiesError] = useState('')
 
   useEffect(() => {
     chargerDepannage()
@@ -78,7 +130,7 @@ export default function DepannageDetail() {
       setForm(buildForm(data))
     } catch (error) {
       console.error('Erreur chargement detail depannage', error)
-      setErreur("Impossible de charger ce depannage. Reessaie dans un instant.")
+      setErreur("Impossible de charger ce dépannage. Réessaie dans un instant.")
       setDepannage(null)
     } finally {
       setLoading(false)
@@ -86,6 +138,8 @@ export default function DepannageDetail() {
   }
 
   async function chargerRegies() {
+    setRegiesError('')
+
     try {
       const { data, error } = await supabase
         .from('regies')
@@ -97,6 +151,8 @@ export default function DepannageDetail() {
       setRegies(data || [])
     } catch (error) {
       console.error('Erreur chargement regies depannage detail', error)
+      setRegies([])
+      setRegiesError("Impossible de charger la liste des régies. La régie actuelle reste affichée si elle est connue.")
     }
   }
 
@@ -152,26 +208,52 @@ export default function DepannageDetail() {
       setDepannage(data)
       setForm(buildForm(data))
       setEdition(false)
-      setSaveSuccess('Depannage mis a jour.')
+      setSaveSuccess('Dépannage mis à jour.')
     } catch (error) {
       console.error('Erreur sauvegarde depannage', error)
-      setSaveError("Impossible d'enregistrer les modifications. Verifie les champs et reessaie.")
+      setSaveError("Impossible d'enregistrer les modifications. Vérifie les champs et réessaie.")
     } finally {
       setSaving(false)
     }
   }
+
+  function retourListe() {
+    navigate('/admin', {
+      state: {
+        vue: 'depannages',
+        depannagesSearch: location.state?.depannagesSearch || '',
+        depannagesRegieFilter: location.state?.depannagesRegieFilter || '',
+        depannagesDateFilter: location.state?.depannagesDateFilter || ''
+      }
+    })
+  }
+
+  const detail = depannage ? {
+    date: formatDate(depannage.date_travail),
+    regie: firstValue(depannage.regie?.nom, depannage.regie_nom),
+    client: firstValue(depannage.client, depannage.nom_client),
+    adresse: firstValue(depannage.adresse),
+    description: firstValue(depannage.objet, depannage.titre, depannage.description, depannage.remarques),
+    statut: firstValue(depannage.statut, depannage.status),
+    intervenant: firstValue(fullName(depannage.employe), depannage.intervenant, depannage.intervenant_nom),
+    duree: depannage.duree ? `${depannage.duree} h` : '',
+    contact: firstValue(depannage.contact, depannage.telephone, depannage.email),
+    reference: firstValue(depannage.numero_bon, depannage.reference, depannage.ref),
+    creeLe: formatDateTime(depannage.created_at),
+    modifieLe: formatDateTime(depannage.updated_at)
+  } : null
 
   return (
     <div>
       <div className="top-bar">
         <div>
           <button
-            onClick={() => navigate('/admin', { state: { vue: 'depannages' } })}
+            onClick={retourListe}
             style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}
           >
-            Retour
+            Retour liste
           </button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Detail depannage</div>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Détail dépannage</div>
           <div style={{ fontSize: '11px', color: '#888' }}>Bon #{id}</div>
         </div>
       </div>
@@ -191,21 +273,22 @@ export default function DepannageDetail() {
 
         {!loading && !erreur && !depannage && (
           <div className="card" style={{ fontSize: '13px', color: '#888' }}>
-            Aucun depannage trouve pour ce bon.
+            Aucun dépannage trouvé pour ce bon.
           </div>
         )}
 
-        {!loading && !erreur && depannage && (
+        {!loading && !erreur && depannage && detail && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {saveSuccess && <div style={{ color: '#3B6D11', fontSize: '13px' }}>{saveSuccess}</div>}
             {saveError && <div style={{ color: '#A32D2D', fontSize: '13px' }}>{saveError}</div>}
+            {regiesError && <div style={{ color: '#A32D2D', background: '#FCEBEB', border: '1px solid #f4c7c7', borderRadius: '8px', padding: '8px 10px', fontSize: '12px' }}>{regiesError}</div>}
 
             {edition ? (
               <form onSubmit={enregistrerDepannage} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="form-group">
-                  <label>Regie</label>
+                  <label>Régie</label>
                   <select value={form.regie_id} onChange={e => setForm(prev => ({ ...prev, regie_id: e.target.value }))}>
-                    <option value="">Non assignee</option>
+                    <option value="">Non assignée</option>
                     {depannage.regie_id && depannage.regie?.nom && !regies.some(r => String(r.id) === String(depannage.regie_id)) && (
                       <option value={depannage.regie_id}>{depannage.regie.nom}</option>
                     )}
@@ -235,14 +318,39 @@ export default function DepannageDetail() {
               </form>
             ) : (
               <>
-                <InfoLine label="Regie" value={depannage.regie?.nom || 'Non assignee'} />
-                <InfoLine label="Adresse / titre" value={depannage.adresse} />
-                <InfoLine label="Description" value={depannage.remarques} />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                  <InfoLine label="Date" value={formatDate(depannage.date_travail)} />
-                  <InfoLine label="Cree le" value={formatDateTime(depannage.created_at)} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', color: '#888' }}>{detail.date || 'Date non définie'}</div>
+                    <div style={{ fontSize: '16px', fontWeight: 700, marginTop: '3px' }}>{detail.client || detail.adresse || 'Dépannage sans client'}</div>
+                    {detail.regie && <div style={{ fontSize: '12px', color: '#555', marginTop: '3px' }}>{detail.regie}</div>}
+                  </div>
+                  {detail.statut && <span className="badge badge-amber" style={{ flexShrink: 0 }}>{detail.statut}</span>}
                 </div>
-                <InfoLine label="Createur" value={depannage.employe?.prenom || 'Non disponible'} />
+
+                <DetailSection title="Informations">
+                  <InfoLine label="Date" value={detail.date} />
+                  <InfoLine label="Régie" value={detail.regie || 'Régie non définie'} />
+                  <InfoLine label="Client" value={detail.client} />
+                  <InfoLine label="Adresse" value={detail.adresse} />
+                  <InfoLine label="Description / objet" value={detail.description || 'Aucune description renseignée'} />
+                </DetailSection>
+
+                <DetailSection title="Suivi">
+                  <InfoLine label="Statut" value={detail.statut} />
+                  <InfoLine label="Intervenant" value={detail.intervenant} />
+                  <InfoLine label="Durée" value={detail.duree} />
+                  <InfoLine label="Contact" value={detail.contact} />
+                  <InfoLine label="Référence" value={detail.reference} />
+                  <InfoLine label="Créé le" value={detail.creeLe} />
+                  <InfoLine label="Modifié le" value={detail.modifieLe} />
+                </DetailSection>
+
+                <DetailSection title="Dossier">
+                  <FutureSlot label="Pièces jointes à venir" />
+                  <FutureSlot label="Historique à venir" />
+                  <FutureSlot label="PDF, envoi et classement à venir" />
+                </DetailSection>
+
                 <button type="button" className="btn-primary" onClick={ouvrirEdition}>Modifier</button>
               </>
             )}

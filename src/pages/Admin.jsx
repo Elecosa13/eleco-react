@@ -9,6 +9,8 @@ const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
 const JOURS_FR = ['L','M','M','J','V','S','D']
 const JOURS_LONG = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
+const STATUT_INTERVENTION_FAITE = 'Intervention faite'
+const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
 // Clauses de la charte (identiques à Charte.jsx) — nécessaires pour régénérer le PDF côté admin
 const CLAUSES_CHARTE = [
@@ -966,6 +968,16 @@ export default function Admin() {
     return client || adresse || 'Adresse non définie'
   }
 
+  function depannageStatut(depannage) {
+    return depannage.statut || depannage.status || 'À traiter'
+  }
+
+  function depannageStatutBadgeClass(statut) {
+    if (statut === STATUT_RAPPORT_RECU) return 'badge-green'
+    if (statut === STATUT_INTERVENTION_FAITE) return 'badge-blue'
+    return 'badge-amber'
+  }
+
   function depannageTimestamp(depannage) {
     const value = depannage.date_travail || depannage.created_at
     if (!value) return 0
@@ -1484,7 +1496,7 @@ export default function Admin() {
                     const mo = (d.duree || 1) * TAUX
                     const ttc = (mat + mo) * 1.081
                     const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
-                    const statut = d.statut || d.status
+                    const statut = depannageStatut(d)
                     return (
                       <div
                         key={d.id}
@@ -1517,7 +1529,7 @@ export default function Admin() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '12px', fontWeight: 700, color: '#333' }}>{dateLabel}</span>
-                            {statut && <span className="badge badge-amber">{statut}</span>}
+                            <span className={`badge ${depannageStatutBadgeClass(statut)}`}>{statut}</span>
                           </div>
                           <div style={{ fontSize: '13px', fontWeight: 600 }}>{depannageClientAdresse(d)}</div>
                           <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>

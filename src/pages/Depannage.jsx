@@ -6,6 +6,8 @@ import { usePageRefresh } from '../lib/refresh'
 
 const DUREES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8]
 const FAVORIS_KEY = 'eleco_favoris'
+const STATUT_INTERVENTION_FAITE = 'Intervention faite'
+const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
 export default function Depannage() {
   const navigate = useNavigate()
@@ -16,6 +18,7 @@ export default function Depannage() {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [creditUtilise, setCreditUtilise] = useState(0)
   const [envoi, setEnvoi] = useState(false)
+  const [soumissionVerrouillee, setSoumissionVerrouillee] = useState(false)
   const [succes, setSucces] = useState(false)
   const [materiaux, setMateriaux] = useState([])
   const [catalogue, setCatalogue] = useState([])
@@ -111,7 +114,7 @@ export default function Depannage() {
 
   async function envoyer(e) {
     e.preventDefault()
-    if (envoi) return
+    if (envoi || soumissionVerrouillee) return
     if (!adresse) return
     if (!user?.id) {
       setErreur("Impossible d'identifier l'utilisateur connecté.")
@@ -119,10 +122,12 @@ export default function Depannage() {
     }
     setEnvoi(true)
     setErreur('')
+    let depannageCreeId = null
+    let ecriturePartielle = false
 
     try {
       const regieIdFinal = regieId || regieNonAssigneeId || ''
-      const depannagePayload = { employe_id: user.id, date_travail: date, adresse, duree, remarques }
+      const depannagePayload = { employe_id: user.id, date_travail: date, adresse, duree, remarques, statut: STATUT_INTERVENTION_FAITE }
       if (regieIdFinal) depannagePayload.regie_id = regieIdFinal
 
       const { data: dep, error: depError } = await supabase
@@ -133,6 +138,8 @@ export default function Depannage() {
 
       if (depError) throw depError
       if (!dep?.id) throw new Error('depannage_insert_empty')
+      depannageCreeId = dep.id
+      ecriturePartielle = true
 
       const { error: timeError } = await supabase.from('time_entries').insert({
         employe_id: user.id,
@@ -142,6 +149,7 @@ export default function Depannage() {
         duree
       })
       if (timeError) throw timeError
+      ecriturePartielle = true
 
       if (materiaux.length > 0) {
         const { error: materiauxError } = await supabase.from('rapport_materiaux').insert(
@@ -155,12 +163,25 @@ export default function Depannage() {
           }))
         )
         if (materiauxError) throw materiauxError
+        ecriturePartielle = true
       }
+
+      const { error: statutError } = await supabase
+        .from('depannages')
+        .update({ statut: STATUT_RAPPORT_RECU })
+        .eq('id', depannageCreeId)
+
+      if (statutError) throw statutError
 
       setSucces(true)
       setTimeout(() => navigate('/employe'), 2000)
     } catch (error) {
       console.error('Erreur enregistrement dépannage', error)
+      if (depannageCreeId || ecriturePartielle) {
+        setSoumissionVerrouillee(true)
+        setErreur("Le rapport a probablement été enregistré partiellement. Ne le renvoie pas immédiatement : retourne à l'accueil et laisse l'administration contrôler le dossier.")
+        return
+      }
       setErreur("Impossible d'enregistrer le dépannage. Vérifie les informations et réessaie.")
     } finally {
       setEnvoi(false)
@@ -252,6 +273,11 @@ export default function Depannage() {
               {erreur}
             </div>
           )}
+          {soumissionVerrouillee && (
+            <button type="button" className="btn-primary" onClick={() => navigate('/employe')}>
+              Retour à l'accueil
+            </button>
+          )}
           <div style={{
             background: depasse ? '#FCEBEB' : '#E6F1FB',
             border: `1px solid ${depasse ? '#f09595' : '#185FA5'}`,
@@ -309,7 +335,7 @@ export default function Depannage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
-              <button type="button" className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
+              <button type="button" className="btn-primary btn-sm" disabled={soumissionVerrouillee} style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
             </div>
             {materiaux.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun article</div>}
             {materiaux.map(m => (
@@ -329,7 +355,7 @@ export default function Depannage() {
             <textarea placeholder="Observations, client, travaux effectués..." value={remarques} onChange={e => setRemarques(e.target.value)} rows={3} />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={envoi}>
+          <button type="submit" className="btn-primary" disabled={envoi || soumissionVerrouillee}>
             {envoi ? 'Envoi...' : '⚡ Enregistrer le dépannage'}
           </button>
         </div>

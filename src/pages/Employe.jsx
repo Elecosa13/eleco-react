@@ -7,6 +7,7 @@ import { usePageRefresh } from '../lib/refresh'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
+const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
 function countJoursOuvrables(dateDebut, dateFin) {
   if (!dateDebut || !dateFin) return 0
@@ -100,8 +101,9 @@ export default function Employe() {
 
     const { data: deps } = await supabase
       .from('depannages')
-      .select('id, adresse, date_travail')
+      .select('id, adresse, date_travail, statut')
       .eq('employe_id', user.id)
+      .neq('statut', STATUT_RAPPORT_RECU)
       .order('date_travail', { ascending: false })
       .limit(10)
     if (deps) setDepannagesRecents(deps)

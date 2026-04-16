@@ -87,6 +87,7 @@ export default function Admin() {
   const [search, setSearch] = useState('')
   const [regies, setRegies] = useState([])
   const [regieFilter, setRegieFilter] = useState('')
+  const [dateFilter, setDateFilter] = useState('')
   const [employes, setEmployes] = useState([])
   const [catalogue, setCatalogue] = useState([])
   const [categories, setCategories] = useState([])
@@ -169,7 +170,7 @@ export default function Admin() {
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
 
-  async function chargerDepannages(searchValue = search, regieValue = regieFilter) {
+  async function chargerDepannages(searchValue = search, regieValue = regieFilter, dateValue = dateFilter) {
     const term = searchValue.trim()
     let query = supabase.from('depannages')
       .select('*, employe:employe_id(prenom), regie:regies(nom), rapport_materiaux(*)')
@@ -180,6 +181,10 @@ export default function Admin() {
 
     if (regieValue) {
       query = query.eq('regie_id', regieValue)
+    }
+
+    if (dateValue) {
+      query = query.eq('date_travail', dateValue)
     }
 
     query = query.order('created_at', { ascending: false })
@@ -1189,7 +1194,7 @@ export default function Admin() {
           onChange={e => {
             const value = e.target.value
             setSearch(value)
-            chargerDepannages(value, regieFilter)
+            chargerDepannages(value, regieFilter, dateFilter)
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
         />
@@ -1198,7 +1203,7 @@ export default function Admin() {
           onChange={e => {
             const value = e.target.value
             setRegieFilter(value)
-            chargerDepannages(search, value)
+            chargerDepannages(search, value, dateFilter)
           }}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', background: 'white' }}
         >
@@ -1207,6 +1212,16 @@ export default function Admin() {
             <option key={r.id} value={r.id}>{r.nom || 'Non assignée'}</option>
           ))}
         </select>
+        <input
+          type="date"
+          value={dateFilter}
+          onChange={e => {
+            const value = e.target.value
+            setDateFilter(value)
+            chargerDepannages(search, regieFilter, value)
+          }}
+          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
+        />
         <div className="card">
           {depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage</div>}
           {depannages.map(d => {

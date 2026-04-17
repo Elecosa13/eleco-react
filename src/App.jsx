@@ -3,8 +3,9 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuth } from './lib/auth-context'
 import ErrorBoundary from './components/ErrorBoundary'
+import PwaUpdatePrompt from './components/PwaUpdatePrompt'
 import { diag } from './lib/diagnostics'
-import { safeLocation } from './lib/safe-browser'
+import { safeLocation, withTimeout } from './lib/safe-browser'
 import Login from './pages/Login'
 import Employe from './pages/Employe'
 import Chantier from './pages/Chantier'
@@ -91,10 +92,11 @@ function CharteGuard({ children }) {
     diag('route', 'CharteGuard check start', { profileId: profile?.id || null })
     if (!profile?.id) { setStatus('charte_requise'); return }
     setStatus('loading')
-    supabase.from('chartes_acceptees')
-      .select('id')
-      .eq('employe_id', profile.id)
-      .limit(1)
+    withTimeout(
+      supabase.from('chartes_acceptees').select('id').eq('employe_id', profile.id).limit(1),
+      8000,
+      () => new Error('CharteGuard: timeout reseau')
+    )
       .then(({ data, error }) => {
         if (error) {
           diag('route', 'CharteGuard check error', error, 'warn')
@@ -148,6 +150,7 @@ export default function App() {
 
   return (
     <ErrorBoundary scope="routes" title="Erreur de navigation">
+      <PwaUpdatePrompt />
       <Routes>
         <Route path="/" element={guardedPage('route:root', <RootRedirect />)} />
         <Route path="/login" element={guardedPage('route:login', <Login />)} />

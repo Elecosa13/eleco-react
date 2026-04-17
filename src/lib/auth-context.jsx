@@ -128,6 +128,24 @@ export function AuthProvider({ children }) {
     }
   }, [applyProfile])
 
+  // On iOS, setTimeout is throttled when the app is suspended in background.
+  // If the app resumes and the auth boot timer never fired, force a failed state
+  // so the user sees a recoverable fallback instead of an infinite loading screen.
+  useEffect(() => {
+    return addWindowListener('pageshow', () => {
+      setState(prev => {
+        if (prev.bootStatus !== 'booting') return prev
+        diag('auth', 'pageshow while still booting — forcing timeout', null, 'warn')
+        return {
+          ...prev,
+          initializing: false,
+          bootStatus: 'failed',
+          error: createAuthTimeoutError()
+        }
+      })
+    })
+  }, [])
+
   useEffect(() => {
     let lastRun = 0
     const refreshIfActive = () => {

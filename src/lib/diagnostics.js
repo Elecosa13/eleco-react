@@ -1,6 +1,10 @@
 const DIAGNOSTIC_PREFIX = 'eleco'
 const DIAGNOSTIC_STORAGE_KEY = 'eleco_diagnostics'
 
+// Direct globalThis.localStorage access here is intentional: diagnostics.js is
+// loaded before safe-browser.js to avoid a circular dependency, so the safe
+// wrapper is not available. New code must NEVER replicate this pattern — use
+// safeLocalStorage from safe-browser.js instead.
 function canReadDiagnosticsFlag() {
   try {
     const search = globalThis?.location?.search || ''

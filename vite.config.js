@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['logo.png'],
       manifest: {
         name: 'Eleco SA',
@@ -37,7 +37,6 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        skipWaiting: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg}']
       }
     })

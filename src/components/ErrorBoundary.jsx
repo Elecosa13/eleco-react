@@ -32,10 +32,16 @@ export default class ErrorBoundary extends React.Component {
             Cette zone n'a pas pu se charger correctement. Le reste de l'application reste protege.
           </p>
           <div style={{ marginBottom: '10px', fontSize: '12px', color: '#6b7280' }}>Zone: {scope}</div>
-          <pre style={{ whiteSpace: 'pre-wrap', overflowX: 'auto', background: '#f7f7f7', border: '1px solid #ddd', borderRadius: '6px', padding: '12px', fontSize: '12px' }}>
-            {error?.stack || error?.message || String(error)}
-            {errorInfo?.componentStack || ''}
-          </pre>
+          {import.meta.env.DEV ? (
+            <pre style={{ whiteSpace: 'pre-wrap', overflowX: 'auto', background: '#f7f7f7', border: '1px solid #ddd', borderRadius: '6px', padding: '12px', fontSize: '12px' }}>
+              {error?.stack || error?.message || String(error)}
+              {errorInfo?.componentStack || ''}
+            </pre>
+          ) : (
+            <div style={{ background: '#f7f7f7', border: '1px solid #ddd', borderRadius: '6px', padding: '12px', fontSize: '12px', color: '#6b7280' }}>
+              Code erreur : {error?.message?.slice(0, 80) || 'ERR_UNKNOWN'}
+            </div>
+          )}
           <button type="button" className="btn-primary" onClick={() => safeLocation.reload()}>
             Recharger
           </button>

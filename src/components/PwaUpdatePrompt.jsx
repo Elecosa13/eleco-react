@@ -1,13 +1,15 @@
-import React from 'react'
-import { useVersion } from '../lib/version'
-import { safeLocation } from '../lib/safe-browser'
+import React, { useEffect, useState } from 'react'
+import { addWindowListener } from '../lib/safe-browser'
+import { triggerSWUpdate } from '../lib/appBoot'
 
+// Listens for the 'eleco-sw-update' event dispatched by appBoot when a new SW is waiting.
+// Update is ONLY applied on explicit user action — never automatically.
 export default function PwaUpdatePrompt() {
-  const { updateAvailable } = useVersion()
+  const [updateAvailable, setUpdateAvailable] = useState(false)
 
-  function applyUpdate() {
-    safeLocation.reload()
-  }
+  useEffect(() => {
+    return addWindowListener('eleco-sw-update', () => setUpdateAvailable(true))
+  }, [])
 
   if (!updateAvailable) return null
 
@@ -17,7 +19,7 @@ export default function PwaUpdatePrompt() {
         <div className="pwa-update__title">Nouvelle version disponible</div>
         <div className="pwa-update__text">Actualise pour charger la derniere version.</div>
       </div>
-      <button type="button" onClick={applyUpdate}>Mettre a jour</button>
+      <button type="button" onClick={triggerSWUpdate}>Mettre a jour</button>
     </div>
   )
 }

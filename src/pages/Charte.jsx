@@ -4,7 +4,7 @@ import { jsPDF } from 'jspdf'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
-import { getUserAgent, runSafeFeature } from '../lib/safe-browser'
+import { getSafeNavigator, getUserAgent, runSafeFeature } from '../lib/safe-browser'
 
 const VERSION_CHARTE = 'v1.0'
 
@@ -55,6 +55,7 @@ export default function Charte() {
   const [hasSig, setHasSig] = useState(false)
   const [envoi, setEnvoi] = useState(false)
   const [erreur, setErreur] = useState('')
+  const [pdfInfo, setPdfInfo] = useState('')
 
   useEffect(() => {
     if (!user?.id) return
@@ -130,10 +131,16 @@ export default function Charte() {
     setHasSig(false)
   }
 
+  // navigator.standalone is an iOS-only property; true when running as an installed PWA.
+  function isIOSStandalone() {
+    return getSafeNavigator()?.standalone === true
+  }
+
   async function soumettre() {
     if (!hasSig || envoi || !user?.id) return
     setEnvoi(true)
     setErreur('')
+    setPdfInfo('')
 
     const canvas = canvasRef.current
     const signatureBase64 = canvas.toDataURL('image/png')
@@ -158,9 +165,18 @@ export default function Charte() {
       }))
 
       // 3. Génération PDF
-      runSafeFeature('feature', 'charte pdf generation', () => {
+      // doc.save() uses <a download> which is blocked in iOS standalone PWA.
+      // On failure we surface an explicit message rather than silently continuing.
+      const pdfGenerated = runSafeFeature('feature', 'charte pdf generation', () => {
         genererPDF(signatureBase64, maintenant)
+        return true
       })
+
+      if (!pdfGenerated && isIOSStandalone()) {
+        setEnvoi(false)
+        setPdfInfo("Votre signature a bien été enregistrée. Le téléchargement du PDF n'est pas disponible depuis l'application installée sur iOS — votre accord est conservé dans le système.")
+        return
+      }
 
       navigate('/employe', { replace: true })
     } catch (error) {
@@ -360,13 +376,26 @@ export default function Charte() {
           </div>
         )}
 
-        <button
-          className="btn-primary"
-          disabled={!hasSig || envoi}
-          onClick={soumettre}
-        >
-          {envoi ? 'Enregistrement...' : 'Signer et continuer'}
-        </button>
+        {pdfInfo && (
+          <div style={{ background: '#EAF4FB', border: '1px solid #90caf9', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#1565C0', lineHeight: 1.5 }}>
+            {pdfInfo}
+            <div style={{ marginTop: '10px' }}>
+              <button type="button" className="btn-primary" onClick={() => navigate('/employe', { replace: true })}>
+                Continuer
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!pdfInfo && (
+          <button
+            className="btn-primary"
+            disabled={!hasSig || envoi}
+            onClick={soumettre}
+          >
+            {envoi ? 'Enregistrement...' : 'Signer et continuer'}
+          </button>
+        )}
       </div>
     </div>
   )

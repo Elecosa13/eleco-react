@@ -1,9 +1,13 @@
 import { registerSW } from 'virtual:pwa-register'
-import { APP_VERSION } from '../generated/version'
 import { diag } from './diagnostics'
-import { addWindowListener, runSafeFeature, safeFetchJSON, safeLocation } from './safe-browser'
+import { addWindowListener, runSafeFeature } from './safe-browser'
 
-const VERSION_CHECK_INTERVAL_MS = 30000
+// Holds the vite-plugin-pwa update trigger; called only on explicit user action.
+let _updateSW = null
+
+export function triggerSWUpdate() {
+  if (_updateSW) _updateSW(true)
+}
 
 function registerGlobalErrorLogging() {
   const cleanupError = addWindowListener('error', event => {
@@ -22,12 +26,14 @@ function registerGlobalErrorLogging() {
 
 function registerServiceWorker() {
   return runSafeFeature('boot', 'service worker registration', () => {
-    let updateSW
-    updateSW = registerSW({
+    _updateSW = registerSW({
       immediate: true,
       onNeedRefresh() {
         diag('pwa', 'new service worker available')
-        updateSW?.(true)
+        // Signal PwaUpdatePrompt via event — never auto-reload.
+        runSafeFeature('pwa', 'sw update event dispatch', () => {
+          window.dispatchEvent(new CustomEvent('eleco-sw-update'))
+        })
       },
       onOfflineReady() {
         diag('pwa', 'offline ready')
@@ -39,31 +45,9 @@ function registerServiceWorker() {
   })
 }
 
-async function checkVersion() {
-  const data = await safeFetchJSON(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
-  if (!data?.version) return
-
-  diag('boot', 'server version', data.version)
-  if (data.version !== APP_VERSION) {
-    diag('boot', 'version mismatch, reload requested', {
-      build: APP_VERSION,
-      server: data.version
-    }, 'warn')
-    safeLocation.reload()
-  }
-}
-
-function startVersionChecks() {
-  runSafeFeature('boot', 'version check', () => {
-    checkVersion()
-    setInterval(checkVersion, VERSION_CHECK_INTERVAL_MS)
-  })
-}
-
 export function initializeAppBoot() {
   // Boot rule: secondary browser features must be isolated here, never in main.jsx.
-  diag('boot', 'initialize', { version: APP_VERSION })
+  diag('boot', 'initialize')
   registerGlobalErrorLogging()
   registerServiceWorker()
-  startVersionChecks()
 }

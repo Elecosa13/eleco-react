@@ -26,6 +26,10 @@ function createNoopClient() {
     auth: {
       getUser: () => Promise.resolve({ data: { user: null }, error: configError }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+      signInWithPassword: () => Promise.resolve({
+        data: { user: null, session: null },
+        error: Object.assign(configError, { code: 'MISSING_SUPABASE_CONFIG' })
+      }),
       signOut: () => Promise.resolve({ error: null })
     },
     from: () => makeQueryProxy(),

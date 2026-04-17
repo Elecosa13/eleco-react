@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
+import { getUserAgent, runSafeFeature } from '../lib/safe-browser'
 
 const VERSION_CHARTE = 'v1.0'
 
@@ -137,7 +138,7 @@ export default function Charte() {
     const canvas = canvasRef.current
     const signatureBase64 = canvas.toDataURL('image/png')
     const maintenant = new Date().toISOString()
-    const deviceInfo = navigator.userAgent.slice(0, 200)
+    const deviceInfo = getUserAgent().slice(0, 200)
 
     try {
       // 1. Sauvegarde signature
@@ -157,7 +158,9 @@ export default function Charte() {
       }))
 
       // 3. Génération PDF
-      genererPDF(signatureBase64, maintenant)
+      runSafeFeature('feature', 'charte pdf generation', () => {
+        genererPDF(signatureBase64, maintenant)
+      })
 
       navigate('/employe', { replace: true })
     } catch (error) {

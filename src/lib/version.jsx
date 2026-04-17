@@ -1,13 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { APP_VERSION } from '../generated/version'
+import { diag } from './diagnostics'
+import { addDocumentListener, addWindowListener, getVisibilityState, safeFetchJSON } from './safe-browser'
 
 const VersionContext = createContext(null)
 
 async function fetchServerVersion() {
-  const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`Version check failed: ${res.status}`)
-  const data = await res.json()
-  return data.version
+  const data = await safeFetchJSON(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
+  return data?.version || null
 }
 
 export function VersionProvider({ children }) {
@@ -18,15 +18,15 @@ export function VersionProvider({ children }) {
   const checkVersion = useCallback(async () => {
     try {
       const nextVersion = await fetchServerVersion()
-      console.log('VERSION', nextVersion)
+      diag('boot', 'version check result', nextVersion)
       setServerVersion(nextVersion)
       if (nextVersion && nextVersion !== currentVersionRef.current) {
-        console.log('UPDATE AVAILABLE')
+        diag('boot', 'update available', { nextVersion })
         setUpdateAvailable(true)
       }
       return nextVersion
     } catch (error) {
-      console.error('[version] Check failed:', error)
+      diag('boot', 'version check failed', error, 'warn')
       return null
     }
   }, [])
@@ -38,20 +38,20 @@ export function VersionProvider({ children }) {
   useEffect(() => {
     let lastRun = 0
     const checkIfActive = () => {
-      if (document.visibilityState === 'hidden') return
+      if (getVisibilityState() === 'hidden') return
       const now = Date.now()
       if (now - lastRun < 1500) return
       lastRun = now
       checkVersion()
     }
 
-    document.addEventListener('visibilitychange', checkIfActive)
-    window.addEventListener('focus', checkIfActive)
-    window.addEventListener('pageshow', checkIfActive)
+    const cleanupVisibility = addDocumentListener('visibilitychange', checkIfActive)
+    const cleanupFocus = addWindowListener('focus', checkIfActive)
+    const cleanupPageShow = addWindowListener('pageshow', checkIfActive)
     return () => {
-      document.removeEventListener('visibilitychange', checkIfActive)
-      window.removeEventListener('focus', checkIfActive)
-      window.removeEventListener('pageshow', checkIfActive)
+      cleanupVisibility()
+      cleanupFocus()
+      cleanupPageShow()
     }
   }, [checkVersion])
 

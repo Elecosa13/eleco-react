@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuth } from './lib/auth-context'
+import ErrorBoundary from './components/ErrorBoundary'
+import { diag } from './lib/diagnostics'
+import { safeLocation } from './lib/safe-browser'
 import Login from './pages/Login'
 import Employe from './pages/Employe'
 import Chantier from './pages/Chantier'
@@ -11,10 +14,34 @@ import Depannage from './pages/Depannage'
 import DepannageDetail from './pages/DepannageDetail'
 import Charte from './pages/Charte'
 
+function GuardFallback({ title = 'Chargement', message = 'Verification en cours...', action }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: '#f5f5f5' }}>
+      <div style={{ background: 'white', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '20px', maxWidth: '380px', width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ fontWeight: 700, fontSize: '16px' }}>{title}</div>
+        <div style={{ fontSize: '13px', color: '#555' }}>{message}</div>
+        {action}
+      </div>
+    </div>
+  )
+}
+
+function RouteBoundary({ scope, children }) {
+  return (
+    <ErrorBoundary scope={scope} title="Erreur dans cette page">
+      {children}
+    </ErrorBoundary>
+  )
+}
+
+function guardedPage(scope, element) {
+  return <RouteBoundary scope={scope}>{element}</RouteBoundary>
+}
+
 function PrivateRoute({ children, requiredRole }) {
   const { initializing, profile, role, error, signOut } = useAuth()
 
-  console.log('[PrivateRoute]', {
+  diag('route', 'PrivateRoute render', {
     requiredRole,
     initializing,
     hasProfile: Boolean(profile),
@@ -22,38 +49,47 @@ function PrivateRoute({ children, requiredRole }) {
     error: error?.code || error?.message || null
   })
 
-  if (initializing) return null
+  if (initializing) {
+    return <GuardFallback title="Session en cours" message="Verification de votre acces..." />
+  }
+
   if (!profile) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: '#f5f5f5' }}>
-        <div style={{ background: 'white', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '20px', maxWidth: '360px', width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ fontWeight: 700, fontSize: '16px' }}>Acces bloque</div>
-          <div style={{ fontSize: '13px', color: '#555' }}>
-            {error?.message || 'Aucun profil Eleco lie a cette session Supabase.'}
-          </div>
-          <button className="btn-primary" onClick={async () => { await signOut(); window.location.href = '/login' }}>
+      <GuardFallback
+        title="Acces bloque"
+        message={error?.message || 'Aucun profil Eleco lie a cette session Supabase.'}
+        action={(
+          <button className="btn-primary" onClick={async () => {
+            await signOut().catch(signOutError => {
+              diag('route', 'signOut from PrivateRoute failed', signOutError, 'warn')
+            })
+            safeLocation.assign('/login')
+          }}>
             Retour a la connexion
           </button>
-        </div>
-      </div>
+        )}
+      />
     )
   }
 
   if (requiredRole && role !== requiredRole) {
+    if (role !== 'admin' && role !== 'employe') {
+      return <GuardFallback title="Role invalide" message="Votre profil ne contient pas de role applicatif valide." />
+    }
     return <Navigate to={role === 'admin' ? '/admin' : '/employe'} replace />
   }
 
-  return children
+  return <RouteBoundary scope={`private:${requiredRole || 'any'}`}>{children}</RouteBoundary>
 }
 
-// Guard charte : vérifie si l'employé a signé la charte
+// Guard rule: no route guard may return a silent blank screen or throw on missing data.
 function CharteGuard({ children }) {
   const { profile } = useAuth()
   const [status, setStatus] = useState('loading')
 
   useEffect(() => {
-    console.log('[CharteGuard] check start', { profileId: profile?.id || null })
-    if (!profile) { setStatus('charte_requise'); return }
+    diag('route', 'CharteGuard check start', { profileId: profile?.id || null })
+    if (!profile?.id) { setStatus('charte_requise'); return }
     setStatus('loading')
     supabase.from('chartes_acceptees')
       .select('id')
@@ -61,39 +97,39 @@ function CharteGuard({ children }) {
       .limit(1)
       .then(({ data, error }) => {
         if (error) {
-          console.error('Erreur vérification charte:', error)
+          diag('route', 'CharteGuard check error', error, 'warn')
           setStatus('error')
           return
         }
-        console.log('[CharteGuard] check result', { accepted: Boolean(data && data.length > 0) })
+        diag('route', 'CharteGuard check result', { accepted: Boolean(data && data.length > 0) })
         setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
       })
       .catch(error => {
-        console.error('[CharteGuard] check failed:', error)
+        diag('route', 'CharteGuard check failed', error, 'error')
         setStatus('error')
       })
   }, [profile])
 
-  console.log('[CharteGuard] render', { status })
+  diag('route', 'CharteGuard render', { status })
 
-  if (status === 'loading') return null
+  if (status === 'loading') return <GuardFallback title="Charte" message="Verification de la charte..." />
   if (status === 'charte_requise') return <Navigate to="/employe/charte" replace />
   if (status === 'error') {
     return (
       <>
         <div style={{ background: '#FAEEDA', borderBottom: '1px solid #f39c12', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
-          Impossible de vérifier la charte pour le moment. Vous pouvez continuer, puis réessayer si une action est bloquée.
+          Impossible de verifier la charte pour le moment. Vous pouvez continuer, puis reessayer si une action est bloquee.
         </div>
-        {children}
+        <RouteBoundary scope="charte-guard-fallback">{children}</RouteBoundary>
       </>
     )
   }
-  return children
+  return <RouteBoundary scope="charte-guard">{children}</RouteBoundary>
 }
 
 function RootRedirect() {
   const { initializing, role } = useAuth()
-  if (initializing) return null
+  if (initializing) return <GuardFallback title="Session en cours" message="Redirection apres verification..." />
   if (role === 'admin') return <Navigate to="/admin" replace />
   if (role === 'employe') return <Navigate to="/employe" replace />
   return <Navigate to="/login" replace />
@@ -101,62 +137,54 @@ function RootRedirect() {
 
 function NotFound() {
   const { initializing, role } = useAuth()
-  if (initializing) return null
+  if (initializing) return <GuardFallback title="Session en cours" message="Recherche de votre espace..." />
   if (role === 'admin') return <Navigate to="/admin" replace />
   if (role === 'employe') return <Navigate to="/employe" replace />
   return <Navigate to="/login" replace />
 }
 
 export default function App() {
-  useEffect(() => {
-    console.log('[App] mounted')
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
-    navigator.serviceWorker.getRegistrations()
-      .then(registrations => {
-        registrations.forEach(registration => {
-          console.log('SW UPDATE CHECK')
-          registration.update().catch(error => {
-            console.error('[App] SW update failed:', error)
-          })
-        })
-      })
-      .catch(error => {
-        console.error('[App] SW registrations failed:', error)
-      })
-  }, [])
-
-  console.log('[App] render')
+  diag('route', 'App render')
 
   return (
-    <Routes>
-      <Route path="/" element={<RootRedirect />} />
-      <Route path="/login" element={<Login />} />
+    <ErrorBoundary scope="routes" title="Erreur de navigation">
+      <Routes>
+        <Route path="/" element={guardedPage('route:root', <RootRedirect />)} />
+        <Route path="/login" element={guardedPage('route:login', <Login />)} />
 
-      {/* Charte : route employé sans guard charte (sinon boucle infinie) */}
-      <Route path="/employe/charte" element={
-        <PrivateRoute requiredRole="employe"><Charte /></PrivateRoute>
-      } />
+        <Route path="/employe/charte" element={guardedPage(
+          'route:employe-charte',
+          <PrivateRoute requiredRole="employe"><Charte /></PrivateRoute>
+        )} />
 
-      {/* Routes employé protégées par guard charte */}
-      <Route path="/employe" element={
-        <PrivateRoute requiredRole="employe"><CharteGuard><Employe /></CharteGuard></PrivateRoute>
-      } />
-      <Route path="/employe/chantier/:id" element={
-        <PrivateRoute requiredRole="employe"><CharteGuard><Chantier /></CharteGuard></PrivateRoute>
-      } />
-      <Route path="/employe/rapport/:id" element={
-        <PrivateRoute requiredRole="employe"><CharteGuard><Rapport /></CharteGuard></PrivateRoute>
-      } />
-      <Route path="/employe/depannage" element={
-        <PrivateRoute requiredRole="employe"><CharteGuard><Depannage /></CharteGuard></PrivateRoute>
-      } />
+        <Route path="/employe" element={guardedPage(
+          'route:employe',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Employe /></CharteGuard></PrivateRoute>
+        )} />
+        <Route path="/employe/chantier/:id" element={guardedPage(
+          'route:employe-chantier',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Chantier /></CharteGuard></PrivateRoute>
+        )} />
+        <Route path="/employe/rapport/:id" element={guardedPage(
+          'route:employe-rapport',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Rapport /></CharteGuard></PrivateRoute>
+        )} />
+        <Route path="/employe/depannage" element={guardedPage(
+          'route:employe-depannage',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Depannage /></CharteGuard></PrivateRoute>
+        )} />
 
-      {/* Routes admin */}
-      <Route path="/admin" element={<PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>} />
-      <Route path="/admin/depannage/:id" element={<PrivateRoute requiredRole="admin"><DepannageDetail /></PrivateRoute>} />
+        <Route path="/admin" element={guardedPage(
+          'route:admin',
+          <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
+        )} />
+        <Route path="/admin/depannage/:id" element={guardedPage(
+          'route:admin-depannage-detail',
+          <PrivateRoute requiredRole="admin"><DepannageDetail /></PrivateRoute>
+        )} />
 
-      {/* Toute URL inconnue → redirection intelligente */}
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+        <Route path="*" element={guardedPage('route:not-found', <NotFound />)} />
+      </Routes>
+    </ErrorBoundary>
   )
 }

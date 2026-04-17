@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
+import { safeLocalStorage } from '../lib/safe-browser'
 
 const DUREES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8]
 const FAVORIS_KEY = 'eleco_favoris'
@@ -10,20 +11,11 @@ const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
 function loadFavoris() {
-  try {
-    return JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]')
-  } catch (error) {
-    console.warn('[Depannage] favoris localStorage indisponible:', error)
-    return []
-  }
+  return safeLocalStorage.getJSON(FAVORIS_KEY, [])
 }
 
 function saveFavoris(favoris) {
-  try {
-    localStorage.setItem(FAVORIS_KEY, JSON.stringify(favoris))
-  } catch (error) {
-    console.warn('[Depannage] favoris localStorage non sauvegarde:', error)
-  }
+  safeLocalStorage.setJSON(FAVORIS_KEY, favoris)
 }
 
 export default function Depannage() {

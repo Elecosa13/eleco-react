@@ -1,32 +1,54 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { cacheProfile, loadCurrentProfile, signOut as authSignOut } from './auth'
+import { AuthProfileError, cacheProfile, loadCurrentProfile, signOut as authSignOut } from './auth'
 import { supabase } from './supabase'
+import { diag } from './diagnostics'
+import { addDocumentListener, addWindowListener, getVisibilityState, withTimeout } from './safe-browser'
 
 const AuthContext = createContext(null)
+const AUTH_BOOT_TIMEOUT_MS = 8000
+
+// Auth boot checklist:
+// - every auth restore path must finish with ready or failed, never infinite initializing.
+// - Supabase restore/profile loading must be timeout protected.
+// - listener failures must show a controlled fallback and keep routing recoverable.
+function createAuthTimeoutError() {
+  return new AuthProfileError('Initialisation auth trop longue. Retournez a la connexion si le probleme persiste.', 'AUTH_BOOT_TIMEOUT')
+}
+
+function AuthLoadingFallback() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: '#f5f5f5' }}>
+      <div style={{ background: '#fff', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '18px', maxWidth: '360px', width: '100%', textAlign: 'center' }}>
+        <div style={{ fontWeight: 700, fontSize: '16px', marginBottom: '8px' }}>Chargement securise</div>
+        <div style={{ color: '#555', fontSize: '13px' }}>Initialisation de la session...</div>
+      </div>
+    </div>
+  )
+}
 
 export function AuthProvider({ children }) {
-  console.log('[auth-context] render')
+  diag('auth', 'provider render')
   const [state, setState] = useState({
     initializing: true,
+    bootStatus: 'booting',
     user: null,
     profile: null,
     role: null,
     error: null
   })
 
-  const applyProfile = useCallback((user, profile, error = null, initializing = false) => {
-    console.log('[auth-context] applyProfile', {
+  const applyProfile = useCallback((user, profile, error = null, initializing = false, bootStatus = 'ready') => {
+    diag('auth', 'applyProfile', {
       initializing,
+      bootStatus,
       hasUser: Boolean(user),
       hasProfile: Boolean(profile),
       role: profile?.role || null,
       error: error?.code || error?.message || null
     })
-    console.log('SESSION', user)
-    console.log('PROFILE', profile)
-    console.log('ROLE', profile?.role || null)
     setState({
       initializing,
+      bootStatus,
       user,
       profile,
       role: profile?.role || null,
@@ -35,14 +57,18 @@ export function AuthProvider({ children }) {
   }, [])
 
   const revalidate = useCallback(async () => {
-    console.log('[auth-context] revalidate')
+    diag('auth', 'revalidate')
     try {
-      const { user, profile, error } = await loadCurrentProfile()
+      const { user, profile, error } = await withTimeout(
+        loadCurrentProfile(),
+        AUTH_BOOT_TIMEOUT_MS,
+        createAuthTimeoutError
+      )
       applyProfile(user, profile, error, false)
       return { user, profile, error }
     } catch (error) {
-      console.error('[auth-context] revalidate failed:', error)
-      applyProfile(null, null, error, false)
+      diag('auth', 'revalidate failed', error, 'error')
+      applyProfile(null, null, error, false, 'failed')
       return { user: null, profile: null, error }
     }
   }, [applyProfile])
@@ -55,40 +81,46 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let mounted = true
 
-    console.log('[auth-context] initial load')
+    diag('auth', 'initial load')
 
-    loadCurrentProfile()
+    withTimeout(loadCurrentProfile(), AUTH_BOOT_TIMEOUT_MS, createAuthTimeoutError)
       .then(({ user, profile, error }) => {
         if (!mounted) return
         applyProfile(user, profile, error, false)
       })
       .catch(error => {
-        console.error('[auth-context] initial load failed:', error)
+        diag('auth', 'initial load failed', error, 'error')
         if (!mounted) return
-        applyProfile(null, null, error, false)
+        applyProfile(null, null, error, false, 'failed')
       })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[auth-context] auth event', event)
-      console.log('SESSION', session)
-      if (event === 'SIGNED_OUT' || !session?.user) {
-        cacheProfile(null)
-        applyProfile(null, null, null, false)
-        return
-      }
-      setTimeout(() => {
-        loadCurrentProfile()
-          .then(({ user, profile, error }) => {
-            if (!mounted) return
-            applyProfile(user, profile, error, false)
-          })
-          .catch(error => {
-            console.error('[auth-context] auth event load failed:', error)
-            if (!mounted) return
-            applyProfile(null, null, error, false)
-          })
-      }, 0)
-    })
+    let listener = null
+    try {
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        diag('auth', 'auth event', { event, hasSession: Boolean(session) })
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          cacheProfile(null)
+          applyProfile(null, null, null, false)
+          return
+        }
+        setTimeout(() => {
+          withTimeout(loadCurrentProfile(), AUTH_BOOT_TIMEOUT_MS, createAuthTimeoutError)
+            .then(({ user, profile, error }) => {
+              if (!mounted) return
+              applyProfile(user, profile, error, false)
+            })
+            .catch(error => {
+              diag('auth', 'auth event load failed', error, 'error')
+              if (!mounted) return
+              applyProfile(null, null, error, false, 'failed')
+            })
+        }, 0)
+      })
+      listener = data
+    } catch (error) {
+      diag('auth', 'auth listener failed', error, 'error')
+      applyProfile(null, null, error, false, 'failed')
+    }
 
     return () => {
       mounted = false
@@ -99,21 +131,21 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let lastRun = 0
     const refreshIfActive = () => {
-      console.log('[auth-context] refreshIfActive')
-      if (document.visibilityState === 'hidden') return
+      diag('auth', 'refreshIfActive')
+      if (getVisibilityState() === 'hidden') return
       const now = Date.now()
       if (now - lastRun < 1500) return
       lastRun = now
       revalidate()
     }
 
-    document.addEventListener('visibilitychange', refreshIfActive)
-    window.addEventListener('focus', refreshIfActive)
-    window.addEventListener('pageshow', refreshIfActive)
+    const cleanupVisibility = addDocumentListener('visibilitychange', refreshIfActive)
+    const cleanupFocus = addWindowListener('focus', refreshIfActive)
+    const cleanupPageShow = addWindowListener('pageshow', refreshIfActive)
     return () => {
-      document.removeEventListener('visibilitychange', refreshIfActive)
-      window.removeEventListener('focus', refreshIfActive)
-      window.removeEventListener('pageshow', refreshIfActive)
+      cleanupVisibility()
+      cleanupFocus()
+      cleanupPageShow()
     }
   }, [revalidate])
 
@@ -123,7 +155,11 @@ export function AuthProvider({ children }) {
     signOut
   }), [state, revalidate, signOut])
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      {state.bootStatus === 'booting' ? <AuthLoadingFallback /> : children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

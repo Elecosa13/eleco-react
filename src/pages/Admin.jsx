@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
+import { safeConfirm } from '../lib/safe-browser'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -763,7 +764,7 @@ export default function Admin() {
   }
 
   async function reinitialiserCharte(empId) {
-    if (!window.confirm(`Réinitialiser la charte de ${empDetail?.prenom} ? Cette action remet le statut à "non signé".`)) return
+    if (!safeConfirm(`Réinitialiser la charte de ${empDetail?.prenom} ? Cette action remet le statut à "non signé".`)) return
     try {
       await Promise.all([
         supabaseSafe(supabase.from('chartes_acceptees').delete().eq('employe_id', empId)),

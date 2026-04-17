@@ -1,11 +1,12 @@
 import React from 'react'
 import { useVersion } from '../lib/version'
+import { safeLocation } from '../lib/safe-browser'
 
 export default function PwaUpdatePrompt() {
   const { updateAvailable } = useVersion()
 
   function applyUpdate() {
-    window.location.reload()
+    safeLocation.reload()
   }
 
   if (!updateAvailable) return null

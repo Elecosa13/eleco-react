@@ -1,20 +1,9 @@
 import { supabase } from './supabase'
+import { diag } from './diagnostics'
+import { safeLocalStorage } from './safe-browser'
 
 const USER_CACHE_KEY = 'eleco_user'
 const PROFILE_FIELDS = 'id, auth_user_id, prenom, role, initiales, email, actif'
-
-function getSafeLocalStorage() {
-  try {
-    if (typeof window === 'undefined' || !window.localStorage) return null
-    const testKey = '__eleco_storage_test__'
-    window.localStorage.setItem(testKey, '1')
-    window.localStorage.removeItem(testKey)
-    return window.localStorage
-  } catch (error) {
-    console.warn('[auth] localStorage indisponible:', error)
-    return null
-  }
-}
 
 export class AuthProfileError extends Error {
   constructor(message, code, cause) {
@@ -26,11 +15,8 @@ export class AuthProfileError extends Error {
 }
 
 export function cacheProfile(profile) {
-  const storage = getSafeLocalStorage()
-  if (!storage) return profile || null
-
   if (!profile) {
-    storage.removeItem(USER_CACHE_KEY)
+    safeLocalStorage.removeItem(USER_CACHE_KEY)
     return null
   }
 
@@ -42,28 +28,20 @@ export function cacheProfile(profile) {
     initiales: profile.initiales,
     email: profile.email
   }
-  storage.setItem(USER_CACHE_KEY, JSON.stringify(cached))
+  safeLocalStorage.setJSON(USER_CACHE_KEY, cached)
   return cached
 }
 
 export function getCachedProfile() {
-  const storage = getSafeLocalStorage()
-  if (!storage) return null
-
-  try {
-    return JSON.parse(storage.getItem(USER_CACHE_KEY) || 'null')
-  } catch {
-    storage.removeItem(USER_CACHE_KEY)
-    return null
-  }
+  return safeLocalStorage.getJSON(USER_CACHE_KEY, null)
 }
 
 export async function loadCurrentProfile() {
-  console.log('[auth] loadCurrentProfile start')
+  diag('auth', 'loadCurrentProfile start')
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) {
     cacheProfile(null)
-    console.log('[auth] no Supabase user', userError)
+    diag('auth', 'no Supabase user', userError, 'warn')
     return {
       user: null,
       profile: null,
@@ -71,7 +49,7 @@ export async function loadCurrentProfile() {
     }
   }
 
-  console.info('[auth] Supabase user.id:', user.id)
+  diag('auth', 'Supabase user loaded', { userId: user.id })
 
   const loadLinkedProfile = () => supabase
     .from('utilisateurs')
@@ -162,7 +140,7 @@ export async function loadCurrentProfile() {
     }
   }
 
-  console.info('[auth] Profil charge:', {
+  diag('auth', 'profile loaded', {
     utilisateur_id: profile.id,
     role: profile.role
   })
@@ -171,7 +149,7 @@ export async function loadCurrentProfile() {
 }
 
 export async function signOut() {
-  console.log('[auth] signOut')
+  diag('auth', 'signOut')
   await supabase.auth.signOut()
   cacheProfile(null)
 }

@@ -4,24 +4,16 @@ import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
+import { safeLocalStorage } from '../lib/safe-browser'
 
 const FAVORIS_KEY = 'eleco_favoris'
 
 function loadFavoris() {
-  try {
-    return JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]')
-  } catch (error) {
-    console.warn('[Rapport] favoris localStorage indisponible:', error)
-    return []
-  }
+  return safeLocalStorage.getJSON(FAVORIS_KEY, [])
 }
 
 function saveFavoris(favoris) {
-  try {
-    localStorage.setItem(FAVORIS_KEY, JSON.stringify(favoris))
-  } catch (error) {
-    console.warn('[Rapport] favoris localStorage non sauvegarde:', error)
-  }
+  safeLocalStorage.setJSON(FAVORIS_KEY, favoris)
 }
 
 export default function Rapport() {

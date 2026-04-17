@@ -1,4 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { addDocumentListener, addWindowListener, getScrollY, getVisibilityState } from './safe-browser'
+import { diag } from './diagnostics'
 
 const RefreshContext = createContext({
   refreshing: false,
@@ -46,7 +48,7 @@ export function RefreshProvider({ children }) {
 
   useEffect(() => {
     function canPull(target) {
-      if (window.scrollY > 0) return false
+      if (getScrollY() > 0) return false
       if (target?.closest?.('input, textarea, select, button')) return false
       return true
     }
@@ -60,7 +62,7 @@ export function RefreshProvider({ children }) {
     function onTouchMove(e) {
       if (!pullingRef.current || refreshing) return
       const distance = e.touches[0].clientY - startYRef.current
-      if (distance <= 0 || window.scrollY > 0) {
+      if (distance <= 0 || getScrollY() > 0) {
         setPullDistance(0)
         return
       }
@@ -79,35 +81,37 @@ export function RefreshProvider({ children }) {
       }
     }
 
-    window.addEventListener('touchstart', onTouchStart, { passive: true })
-    window.addEventListener('touchmove', onTouchMove, { passive: false })
-    window.addEventListener('touchend', onTouchEnd)
-    window.addEventListener('touchcancel', onTouchEnd)
+    const cleanupStart = addWindowListener('touchstart', onTouchStart, { passive: true })
+    const cleanupMove = addWindowListener('touchmove', onTouchMove, { passive: false })
+    const cleanupEnd = addWindowListener('touchend', onTouchEnd)
+    const cleanupCancel = addWindowListener('touchcancel', onTouchEnd)
     return () => {
-      window.removeEventListener('touchstart', onTouchStart)
-      window.removeEventListener('touchmove', onTouchMove)
-      window.removeEventListener('touchend', onTouchEnd)
-      window.removeEventListener('touchcancel', onTouchEnd)
+      cleanupStart()
+      cleanupMove()
+      cleanupEnd()
+      cleanupCancel()
     }
   }, [pullDistance, refresh, refreshing])
 
   useEffect(() => {
     let lastRun = 0
     const refreshIfActive = () => {
-      if (document.visibilityState === 'hidden') return
+      if (getVisibilityState() === 'hidden') return
       const now = Date.now()
       if (now - lastRun < 1500) return
       lastRun = now
-      refresh()
+      refresh().catch(error => {
+        diag('refresh', 'page refresh failed', error, 'warn')
+      })
     }
 
-    document.addEventListener('visibilitychange', refreshIfActive)
-    window.addEventListener('focus', refreshIfActive)
-    window.addEventListener('pageshow', refreshIfActive)
+    const cleanupVisibility = addDocumentListener('visibilitychange', refreshIfActive)
+    const cleanupFocus = addWindowListener('focus', refreshIfActive)
+    const cleanupPageShow = addWindowListener('pageshow', refreshIfActive)
     return () => {
-      document.removeEventListener('visibilitychange', refreshIfActive)
-      window.removeEventListener('focus', refreshIfActive)
-      window.removeEventListener('pageshow', refreshIfActive)
+      cleanupVisibility()
+      cleanupFocus()
+      cleanupPageShow()
     }
   }, [refresh])
 

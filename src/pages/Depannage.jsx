@@ -9,6 +9,23 @@ const FAVORIS_KEY = 'eleco_favoris'
 const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
+function loadFavoris() {
+  try {
+    return JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]')
+  } catch (error) {
+    console.warn('[Depannage] favoris localStorage indisponible:', error)
+    return []
+  }
+}
+
+function saveFavoris(favoris) {
+  try {
+    localStorage.setItem(FAVORIS_KEY, JSON.stringify(favoris))
+  } catch (error) {
+    console.warn('[Depannage] favoris localStorage non sauvegarde:', error)
+  }
+}
+
 export default function Depannage() {
   const navigate = useNavigate()
   const { profile: user } = useAuth()
@@ -26,7 +43,7 @@ export default function Depannage() {
   const [catalogueVue, setCatalogueVue] = useState(false)
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
-  const [favoris, setFavoris] = useState(JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]'))
+  const [favoris, setFavoris] = useState(loadFavoris)
   const [regies, setRegies] = useState([])
   const [regieId, setRegieId] = useState('')
   const [regieNonAssigneeId, setRegieNonAssigneeId] = useState('')
@@ -91,7 +108,7 @@ export default function Depannage() {
   function toggleFavori(favId) {
     const n = favoris.includes(favId) ? favoris.filter(f => f !== favId) : [...favoris, favId]
     setFavoris(n)
-    localStorage.setItem(FAVORIS_KEY, JSON.stringify(n))
+    saveFavoris(n)
   }
 
   function ajouter(a) {

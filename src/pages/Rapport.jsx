@@ -7,6 +7,23 @@ import { usePageRefresh } from '../lib/refresh'
 
 const FAVORIS_KEY = 'eleco_favoris'
 
+function loadFavoris() {
+  try {
+    return JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]')
+  } catch (error) {
+    console.warn('[Rapport] favoris localStorage indisponible:', error)
+    return []
+  }
+}
+
+function saveFavoris(favoris) {
+  try {
+    localStorage.setItem(FAVORIS_KEY, JSON.stringify(favoris))
+  } catch (error) {
+    console.warn('[Rapport] favoris localStorage non sauvegarde:', error)
+  }
+}
+
 export default function Rapport() {
   const navigate = useNavigate()
   const { id } = useParams()
@@ -21,7 +38,7 @@ export default function Rapport() {
   const [catalogueVue, setCatalogueVue] = useState(false)
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
-  const [favoris, setFavoris] = useState(JSON.parse(localStorage.getItem(FAVORIS_KEY) || '[]'))
+  const [favoris, setFavoris] = useState(loadFavoris)
   const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1, pu: '0' })
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
@@ -63,7 +80,7 @@ export default function Rapport() {
   function toggleFavori(favId) {
     const n = favoris.includes(favId) ? favoris.filter(f => f !== favId) : [...favoris, favId]
     setFavoris(n)
-    localStorage.setItem(FAVORIS_KEY, JSON.stringify(n))
+    saveFavoris(n)
   }
 
   const articlesFiltres = (() => {

@@ -14,6 +14,14 @@ import Charte from './pages/Charte'
 function PrivateRoute({ children, requiredRole }) {
   const { initializing, profile, role, error, signOut } = useAuth()
 
+  console.log('[PrivateRoute]', {
+    requiredRole,
+    initializing,
+    hasProfile: Boolean(profile),
+    role,
+    error: error?.code || error?.message || null
+  })
+
   if (initializing) return null
   if (!profile) {
     return (
@@ -44,6 +52,7 @@ function CharteGuard({ children }) {
   const [status, setStatus] = useState('loading')
 
   useEffect(() => {
+    console.log('[CharteGuard] check start', { profileId: profile?.id || null })
     if (!profile) { setStatus('charte_requise'); return }
     setStatus('loading')
     supabase.from('chartes_acceptees')
@@ -56,9 +65,16 @@ function CharteGuard({ children }) {
           setStatus('error')
           return
         }
+        console.log('[CharteGuard] check result', { accepted: Boolean(data && data.length > 0) })
         setStatus(data && data.length > 0 ? 'ok' : 'charte_requise')
       })
+      .catch(error => {
+        console.error('[CharteGuard] check failed:', error)
+        setStatus('error')
+      })
   }, [profile])
+
+  console.log('[CharteGuard] render', { status })
 
   if (status === 'loading') return null
   if (status === 'charte_requise') return <Navigate to="/employe/charte" replace />
@@ -93,14 +109,23 @@ function NotFound() {
 
 export default function App() {
   useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      registrations.forEach(registration => {
-        console.log('SW UPDATE CHECK')
-        registration.update()
+    console.log('[App] mounted')
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    navigator.serviceWorker.getRegistrations()
+      .then(registrations => {
+        registrations.forEach(registration => {
+          console.log('SW UPDATE CHECK')
+          registration.update().catch(error => {
+            console.error('[App] SW update failed:', error)
+          })
+        })
       })
-    })
+      .catch(error => {
+        console.error('[App] SW registrations failed:', error)
+      })
   }, [])
+
+  console.log('[App] render')
 
   return (
     <Routes>

@@ -3,6 +3,19 @@ import { supabase } from './supabase'
 const USER_CACHE_KEY = 'eleco_user'
 const PROFILE_FIELDS = 'id, auth_user_id, prenom, role, initiales, email, actif'
 
+function getSafeLocalStorage() {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null
+    const testKey = '__eleco_storage_test__'
+    window.localStorage.setItem(testKey, '1')
+    window.localStorage.removeItem(testKey)
+    return window.localStorage
+  } catch (error) {
+    console.warn('[auth] localStorage indisponible:', error)
+    return null
+  }
+}
+
 export class AuthProfileError extends Error {
   constructor(message, code, cause) {
     super(message)
@@ -13,8 +26,11 @@ export class AuthProfileError extends Error {
 }
 
 export function cacheProfile(profile) {
+  const storage = getSafeLocalStorage()
+  if (!storage) return profile || null
+
   if (!profile) {
-    localStorage.removeItem(USER_CACHE_KEY)
+    storage.removeItem(USER_CACHE_KEY)
     return null
   }
 
@@ -26,23 +42,28 @@ export function cacheProfile(profile) {
     initiales: profile.initiales,
     email: profile.email
   }
-  localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cached))
+  storage.setItem(USER_CACHE_KEY, JSON.stringify(cached))
   return cached
 }
 
 export function getCachedProfile() {
+  const storage = getSafeLocalStorage()
+  if (!storage) return null
+
   try {
-    return JSON.parse(localStorage.getItem(USER_CACHE_KEY) || 'null')
+    return JSON.parse(storage.getItem(USER_CACHE_KEY) || 'null')
   } catch {
-    localStorage.removeItem(USER_CACHE_KEY)
+    storage.removeItem(USER_CACHE_KEY)
     return null
   }
 }
 
 export async function loadCurrentProfile() {
+  console.log('[auth] loadCurrentProfile start')
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) {
     cacheProfile(null)
+    console.log('[auth] no Supabase user', userError)
     return {
       user: null,
       profile: null,
@@ -150,6 +171,7 @@ export async function loadCurrentProfile() {
 }
 
 export async function signOut() {
+  console.log('[auth] signOut')
   await supabase.auth.signOut()
   cacheProfile(null)
 }

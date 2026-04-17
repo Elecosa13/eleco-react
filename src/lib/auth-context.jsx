@@ -5,6 +5,7 @@ import { supabase } from './supabase'
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
+  console.log('[auth-context] render')
   const [state, setState] = useState({
     initializing: true,
     user: null,
@@ -14,6 +15,13 @@ export function AuthProvider({ children }) {
   })
 
   const applyProfile = useCallback((user, profile, error = null, initializing = false) => {
+    console.log('[auth-context] applyProfile', {
+      initializing,
+      hasUser: Boolean(user),
+      hasProfile: Boolean(profile),
+      role: profile?.role || null,
+      error: error?.code || error?.message || null
+    })
     console.log('SESSION', user)
     console.log('PROFILE', profile)
     console.log('ROLE', profile?.role || null)
@@ -27,9 +35,16 @@ export function AuthProvider({ children }) {
   }, [])
 
   const revalidate = useCallback(async () => {
-    const { user, profile, error } = await loadCurrentProfile()
-    applyProfile(user, profile, error, false)
-    return { user, profile, error }
+    console.log('[auth-context] revalidate')
+    try {
+      const { user, profile, error } = await loadCurrentProfile()
+      applyProfile(user, profile, error, false)
+      return { user, profile, error }
+    } catch (error) {
+      console.error('[auth-context] revalidate failed:', error)
+      applyProfile(null, null, error, false)
+      return { user: null, profile: null, error }
+    }
   }, [applyProfile])
 
   const signOut = useCallback(async () => {
@@ -40,12 +55,21 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let mounted = true
 
-    loadCurrentProfile().then(({ user, profile, error }) => {
-      if (!mounted) return
-      applyProfile(user, profile, error, false)
-    })
+    console.log('[auth-context] initial load')
+
+    loadCurrentProfile()
+      .then(({ user, profile, error }) => {
+        if (!mounted) return
+        applyProfile(user, profile, error, false)
+      })
+      .catch(error => {
+        console.error('[auth-context] initial load failed:', error)
+        if (!mounted) return
+        applyProfile(null, null, error, false)
+      })
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[auth-context] auth event', event)
       console.log('SESSION', session)
       if (event === 'SIGNED_OUT' || !session?.user) {
         cacheProfile(null)
@@ -53,10 +77,16 @@ export function AuthProvider({ children }) {
         return
       }
       setTimeout(() => {
-        loadCurrentProfile().then(({ user, profile, error }) => {
-          if (!mounted) return
-          applyProfile(user, profile, error, false)
-        })
+        loadCurrentProfile()
+          .then(({ user, profile, error }) => {
+            if (!mounted) return
+            applyProfile(user, profile, error, false)
+          })
+          .catch(error => {
+            console.error('[auth-context] auth event load failed:', error)
+            if (!mounted) return
+            applyProfile(null, null, error, false)
+          })
       }, 0)
     })
 
@@ -69,6 +99,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let lastRun = 0
     const refreshIfActive = () => {
+      console.log('[auth-context] refreshIfActive')
       if (document.visibilityState === 'hidden') return
       const now = Date.now()
       if (now - lastRun < 1500) return

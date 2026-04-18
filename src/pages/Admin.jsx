@@ -545,6 +545,32 @@ export default function Admin() {
     setEmpAbsences(abs || [])
   }
 
+  async function approuverAbsence(id) {
+    try {
+      await supabaseSafe(supabase.from('absences').update({
+        statut: 'approuve',
+        decide_par: user?.id || null,
+        decide_le: new Date().toISOString()
+      }).eq('id', id))
+      if (empDetail) chargerDetailEmploye(empDetail.id, empDetailMois)
+    } catch (error) {
+      alert("Erreur lors de l'approbation de l'absence.")
+    }
+  }
+
+  async function refuserAbsence(id) {
+    try {
+      await supabaseSafe(supabase.from('absences').update({
+        statut: 'refuse',
+        decide_par: user?.id || null,
+        decide_le: new Date().toISOString()
+      }).eq('id', id))
+      if (empDetail) chargerDetailEmploye(empDetail.id, empDetailMois)
+    } catch (error) {
+      alert("Erreur lors du refus de l'absence.")
+    }
+  }
+
   async function chargerCharteEmploye(empId) {
     setEmpCharteLoading(true)
     const [{ data: charte }, { data: sig }] = await Promise.all([
@@ -2019,27 +2045,53 @@ export default function Admin() {
           )}
 
           {/* ── Tab Absences ─────────────────────────────────────────────── */}
-          {ficheTab === 'Absences' && (
-            <div className="card">
-              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Absences & vacances</div>
-              {empAbsences.length === 0 && (
-                <div style={{ fontSize: '13px', color: '#888' }}>Aucune absence enregistrée</div>
-              )}
-              {empAbsences.map((a, i) => (
-                <div key={a.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < empAbsences.length - 1 ? '1px solid #eee' : 'none' }}>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{a.type || 'Absence'}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>
-                      {a.date_debut ? new Date(a.date_debut + 'T12:00:00').toLocaleDateString('fr-CH') : '—'}
-                      {a.date_fin ? ` → ${new Date(a.date_fin + 'T12:00:00').toLocaleDateString('fr-CH')}` : ''}
+          {ficheTab === 'Absences' && (() => {
+            const absTypeLabel = { maladie: 'Maladie', accident: 'Accident', autre: 'Autre' }
+            const absStatutLabel = { en_attente: 'En attente', approuve: 'Approuvé', refuse: 'Refusé' }
+            return (
+              <div className="card">
+                <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Absences déclarées</div>
+                {empAbsences.length === 0 && (
+                  <div style={{ fontSize: '13px', color: '#888' }}>Aucune absence enregistrée</div>
+                )}
+                {empAbsences.map((a, i) => (
+                  <div key={a.id || i} style={{ padding: '10px 0', borderBottom: i < empAbsences.length - 1 ? '1px solid #eee' : 'none' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{absTypeLabel[a.type] || a.type || 'Absence'}</div>
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                          {a.date_debut ? new Date(a.date_debut + 'T12:00:00').toLocaleDateString('fr-CH') : '—'}
+                          {a.date_fin ? ` → ${new Date(a.date_fin + 'T12:00:00').toLocaleDateString('fr-CH')}` : ''}
+                        </div>
+                        {a.commentaire && <div style={{ fontSize: '11px', color: '#999', fontStyle: 'italic', marginTop: '2px' }}>{a.commentaire}</div>}
+                      </div>
+                      <span className={`badge ${a.statut === 'approuve' ? 'badge-green' : a.statut === 'refuse' ? 'badge-red' : 'badge-amber'}`}>
+                        {absStatutLabel[a.statut] || a.statut}
+                      </span>
                     </div>
-                    {a.commentaire && <div style={{ fontSize: '11px', color: '#999', fontStyle: 'italic' }}>{a.commentaire}</div>}
+                    {a.statut === 'en_attente' && (
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button
+                          className="btn-primary btn-sm"
+                          style={{ flex: 1 }}
+                          onClick={() => approuverAbsence(a.id)}
+                        >
+                          ✓ Approuver
+                        </button>
+                        <button
+                          className="btn-outline btn-sm"
+                          style={{ flex: 1, color: '#A32D2D', borderColor: '#f09595' }}
+                          onClick={() => refuserAbsence(a.id)}
+                        >
+                          ✕ Refuser
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {a.statut && <span className={`badge ${a.statut === 'approuve' ? 'badge-green' : a.statut === 'refuse' ? 'badge-red' : 'badge-amber'}`}>{a.statut}</span>}
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )
+          })()}
 
         </div>
       </div>

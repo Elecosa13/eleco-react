@@ -78,6 +78,16 @@ export default function Employe() {
   const [vacEnvoi, setVacEnvoi] = useState(false)
   const [vacSucces, setVacSucces] = useState(false)
 
+  const [absences, setAbsences] = useState([])
+  const [modalAbsence, setModalAbsence] = useState(false)
+  const [absType, setAbsType] = useState('maladie')
+  const [absDateDebut, setAbsDateDebut] = useState('')
+  const [absDateFin, setAbsDateFin] = useState('')
+  const [absCommentaire, setAbsCommentaire] = useState('')
+  const [absEnvoi, setAbsEnvoi] = useState(false)
+  const [absSucces, setAbsSucces] = useState(false)
+  const [absErreur, setAbsErreur] = useState('')
+
   useEffect(() => { charger() }, [])
   usePageRefresh(() => charger(), [user?.id])
 
@@ -151,6 +161,17 @@ export default function Employe() {
       setSoldeVacances({ pris, attente })
     }
 
+    await chargerAbsences()
+
+  }
+
+  async function chargerAbsences() {
+    const { data: abs } = await supabase.from('absences')
+      .select('*')
+      .eq('employe_id', user.id)
+      .order('date_debut', { ascending: false })
+      .limit(3)
+    if (abs) setAbsences(abs)
   }
 
   async function creerChantier(forcer = false) {
@@ -288,6 +309,38 @@ export default function Employe() {
     }
   }
 
+  async function soumettreAbsence(e) {
+    e.preventDefault()
+    if (!absDateDebut || !absDateFin || absDateFin < absDateDebut) return
+    setAbsErreur('')
+    setAbsEnvoi(true)
+    try {
+      await supabaseSafe(supabase.from('absences').insert({
+        employe_id: user.id,
+        type: absType,
+        date_debut: absDateDebut,
+        date_fin: absDateFin,
+        commentaire: absCommentaire.trim() || null,
+        statut: 'en_attente'
+      }))
+      setAbsSucces(true)
+      setTimeout(() => {
+        setAbsSucces(false)
+        setModalAbsence(false)
+        setAbsType('maladie')
+        setAbsDateDebut('')
+        setAbsDateFin('')
+        setAbsCommentaire('')
+        setAbsErreur('')
+        chargerAbsences()
+      }, 1500)
+    } catch {
+      setAbsErreur("Erreur lors de l'envoi. Veuillez réessayer.")
+    } finally {
+      setAbsEnvoi(false)
+    }
+  }
+
   async function deconnecter() {
     await signOut()
     navigate('/login')
@@ -304,6 +357,10 @@ export default function Employe() {
   const statutLabel = { en_attente: 'En attente', accepte: 'Accepté', refuse: 'Refusé' }
   const statutColor = { en_attente: '#BA7517', accepte: '#3B6D11', refuse: '#A32D2D' }
   const statutBg = { en_attente: '#FAEEDA', accepte: '#EAF3DE', refuse: '#FCEBEB' }
+  const absStatutLabel = { en_attente: 'En attente', approuve: 'Approuvé', refuse: 'Refusé' }
+  const absStatutColor = { en_attente: '#BA7517', approuve: '#3B6D11', refuse: '#A32D2D' }
+  const absStatutBg = { en_attente: '#FAEEDA', approuve: '#EAF3DE', refuse: '#FCEBEB' }
+  const absTypeLabel = { maladie: 'Maladie', accident: 'Accident', autre: 'Autre' }
 
   if (modalSupp) {
     if (suppSucces) return (
@@ -433,6 +490,61 @@ export default function Employe() {
     )
   }
 
+  if (modalAbsence) {
+    if (absSucces) return (
+      <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
+        <div style={{ fontSize: '48px' }}>✅</div>
+        <div style={{ fontWeight: 600, fontSize: '16px' }}>Absence déclarée !</div>
+        <div style={{ fontSize: '13px', color: '#888' }}>En attente de validation par l'administration.</div>
+      </div>
+    )
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+        <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <span style={{ fontWeight: 700, fontSize: '16px' }}>Déclarer une absence</span>
+            <button onClick={() => { setModalAbsence(false); setAbsErreur('') }} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
+          </div>
+          <form onSubmit={soumettreAbsence} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label>Type d'absence *</label>
+              <select value={absType} onChange={e => setAbsType(e.target.value)} required>
+                <option value="maladie">Maladie</option>
+                <option value="accident">Accident</option>
+                <option value="autre">Autre</option>
+              </select>
+            </div>
+            <div className="grid2">
+              <div className="form-group">
+                <label>Date de début *</label>
+                <input type="date" value={absDateDebut} onChange={e => { setAbsDateDebut(e.target.value); setAbsErreur('') }} required />
+              </div>
+              <div className="form-group">
+                <label>Date de fin *</label>
+                <input type="date" value={absDateFin} min={absDateDebut} onChange={e => { setAbsDateFin(e.target.value); setAbsErreur('') }} required />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Commentaire (optionnel)</label>
+              <textarea rows={2} value={absCommentaire} onChange={e => setAbsCommentaire(e.target.value)} placeholder="Informations complémentaires..." style={{ resize: 'none' }} />
+            </div>
+            {absErreur && (
+              <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+                {absErreur}
+              </div>
+            )}
+            <div style={{ background: '#FAEEDA', border: '1px solid #f39c12', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
+              Cette absence sera visible par l'administration.
+            </div>
+            <button type="submit" className="btn-primary" disabled={absEnvoi || !absDateDebut || !absDateFin || absDateFin < absDateDebut}>
+              {absEnvoi ? 'Envoi...' : "✓ Déclarer l'absence"}
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
   if (confirmDoublon) return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
       <div style={{ fontSize: '40px' }}>⚠️</div>
@@ -549,6 +661,33 @@ export default function Employe() {
                 </div>
                 <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 8px', borderRadius: '12px', flexShrink: 0, marginLeft: '8px', background: statutBg[v.statut] || '#f0f0f0', color: statutColor[v.statut] || '#666' }}>
                   {statutLabel[v.statut] || v.statut}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>🤒 Absences</span>
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setModalAbsence(true)}>Déclarer une absence</button>
+            </div>
+            {absences.length === 0 && (
+              <div style={{ fontSize: '12px', color: '#bbb', textAlign: 'center', padding: '4px 0' }}>Aucune absence enregistrée</div>
+            )}
+            {absences.slice(0, 3).map((a, i) => (
+              <div key={a.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: i === 0 ? '1px solid #eee' : 'none', paddingBottom: '4px' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 500 }}>
+                    {absTypeLabel[a.type] || a.type || 'Absence'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#999', marginTop: '1px' }}>
+                    {a.date_debut ? fmtDate(a.date_debut, { day: '2-digit', month: '2-digit' }) : '—'}
+                    {a.date_fin && a.date_fin !== a.date_debut ? ` → ${fmtDate(a.date_fin, { day: '2-digit', month: '2-digit' })}` : ''}
+                  </div>
+                  {a.commentaire && <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic', marginTop: '1px' }}>{a.commentaire}</div>}
+                </div>
+                <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 8px', borderRadius: '12px', flexShrink: 0, marginLeft: '8px', background: absStatutBg[a.statut] || '#f0f0f0', color: absStatutColor[a.statut] || '#666' }}>
+                  {absStatutLabel[a.statut] || a.statut || 'En attente'}
                 </span>
               </div>
             ))}

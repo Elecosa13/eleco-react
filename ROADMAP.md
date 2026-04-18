@@ -3,48 +3,31 @@
 
 ---
 
-<<<<<<< HEAD
-## STATUT SÉCURITÉ / AUTH / RLS — OK PRÉ-PRODUCTION ✅ (audit 2026-04-15)
+## STATUT SÉCURITÉ — ⚠️ PRÉ-PRODUCTION (audit 2026-04-15)
 
-> **Auth Supabase réelle implémentée** (signInWithPassword, session JWT, PrivateRoute vérifié).
-> **RLS audité** : architecture correcte, politiques SECURITY DEFINER sur 12 tables, `USING(true)` supprimé.
-> **Conditions restantes avant production réelle :**
->
-> **Conditions pour passer en production :**
-> 1. Exécuter `auth_rls_security.sql` EN DERNIER (après `sections_5_6_7.sql`)
-> 2. Créer tous les comptes dans Supabase Auth avec le même email que dans `utilisateurs`
-> 3. Vérifier que `auth_user_id` est bien renseigné sur tous les profils
-> 4. Supprimer la colonne `mot_de_passe` de la table `utilisateurs` (données sensibles résiduelles)
+> **Auth Supabase réelle implémentée** — signInWithPassword, session JWT, PrivateRoute vérifié.
+> **RLS audité** — politiques SECURITY DEFINER sur 12 tables, `USING(true)` supprimé.
+> **⛔ Ne pas déployer en production sans appliquer `auth_rls_security.sql`**
 
 ---
 
-## Phase 1 — Sécurité
+## Phase 1 — Sécurité ✅ Pré-prod validée
 
 - [x] Migrer vers Supabase Auth (signInWithPassword + session JWT)
 - [x] RLS activé sur toutes les tables — migration prête
 - [x] Politiques RLS séparées employé / admin avec SECURITY DEFINER
-- [ ] Appliquer la migration `auth_rls_security.sql` en production (EN DERNIER)
+- [x] Vérifier qu’un employé ne peut jamais accéder aux données admin
+- [x] Variables d’environnement Supabase via Vite env (`.env`)
+
+### Checklist avant mise en production
+
+- [ ] Exécuter `auth_rls_security.sql` EN DERNIER (après `sections_5_6_7.sql`)
 - [ ] Créer les comptes Supabase Auth pour chaque employé
-- [ ] Supprimer la colonne `mot_de_passe` de `utilisateurs` après migration
-- [ ] Tester RLS réellement connecté avec un compte employé
-- [ ] Sécuriser la clé Supabase via variable d'environnement
-=======
-## Phase 1 — Sécurité ✅ VALIDÉE PRÉ-PRODUCTION
-
-- [x] Vérifier et corriger RLS sur toutes les tables Supabase → DONE
-- [x] Supprimer définitivement les mots de passe en clair → DONE (colonne à supprimer en prod)
-- [x] Utiliser uniquement Supabase Auth → DONE
-- [x] Vérifier qu’un employé ne peut jamais accéder aux données admin → DONE (isolation OK)
-
-### Pré-production checklist
-
-- [ ] Exécuter `auth_rls_security.sql` en prod (Supabase SQL Editor)
-- [ ] Créer les comptes Auth Supabase pour chaque employé
-- [ ] Vérifier que chaque utilisateur a `auth_user_id` renseigné dans la table `utilisateurs`
+- [ ] Vérifier que chaque utilisateur a `auth_user_id` renseigné dans `utilisateurs`
 - [ ] Supprimer le fallback email dans `Login.jsx` — utiliser `authData.user.id` uniquement
 - [ ] Supprimer la colonne `mot_de_passe` de la table `utilisateurs`
 - [ ] Corriger les policies `USING(true)` dans `sections_5_6_7.sql` (signatures + chartes_acceptees)
->>>>>>> e26453e (final auth policy fix)
+- [ ] Tester RLS réellement connecté avec un compte employé
 
 ---
 
@@ -77,15 +60,18 @@
 
 ## Phase 3 — Déploiement & stabilité
 
+- [x] Variables d'environnement Supabase via Vite env
 - [ ] Stabiliser Netlify / Cloudflare Pages
 - [ ] Corriger définitivement le routing SPA
-- [ ] Vérifier les variables d'environnement
 - [ ] Tester tous les liens (/login, /admin, /employe)
 
 ---
 
 ## Phase 4 — PWA (APP TÉLÉPHONE)
 
+- [x] Fix white screen iOS Safari au boot
+- [x] Hardening boot app iOS (écran blanc, init Auth)
+- [x] Fix flux login cassé (2026-04-18)
 - [ ] Rendre l'app installable (manifest + icône)
 - [ ] Ajout écran d'accueil Samsung
 - [ ] Test réel avec le patron
@@ -114,7 +100,12 @@
 
 ## Phase 7 — Dépannages & chantiers
 
-- [ ] Navigation propre
+- [x] Grouper dépannages par régie (admin)
+- [x] Recherche admin avec debounce
+- [x] Harden soumission workflow dépannage
+- [x] Fix navigation retour détail dépannage
+- [x] Fix statut admin / déblocage intervention
+- [ ] Navigation propre (à revalider)
 - [ ] Accès rapide aux bons
 - [ ] Structure claire des données
 

@@ -211,19 +211,24 @@ CREATE POLICY "absences_delete_admin"
 -- ------------------------------------------------------------
 
 -- Doit retourner 0 ligne avant VALIDATE depannages_regie_id_fkey.
-SELECT id, regie_id
-FROM public.depannages
-WHERE regie_id IS NOT NULL
+-- Compatible ancien schema: ne casse pas si depannages.regie_id est absente.
+SELECT d.id, to_jsonb(d)->>'regie_id' AS regie_id
+FROM public.depannages d
+WHERE to_jsonb(d) ? 'regie_id'
+  AND NULLIF(to_jsonb(d)->>'regie_id', '') IS NOT NULL
   AND NOT EXISTS (
     SELECT 1
     FROM public.regies r
-    WHERE r.id = depannages.regie_id
+    WHERE r.id::text = to_jsonb(d)->>'regie_id'
   );
 
 -- Doit retourner 0 ligne avant VALIDATE depannages_statut_metier_check.
-SELECT id, statut
-FROM public.depannages
-WHERE statut NOT IN (
+-- Compatible ancien schema: ne casse pas si depannages.statut est absente.
+SELECT d.id, to_jsonb(d)->>'statut' AS statut
+FROM public.depannages d
+WHERE to_jsonb(d) ? 'statut'
+  AND NULLIF(to_jsonb(d)->>'statut', '') IS NOT NULL
+  AND to_jsonb(d)->>'statut' NOT IN (
   'Bon reçu',
   'À traiter',
   'Intervention faite',

@@ -320,7 +320,9 @@ export default function Admin() {
         setRegieFilterAvailable(false)
         setRegieFilter('')
       } else if (regieColumnError) {
-        throw regieColumnError
+        regieFiltreOk = false
+        setRegieFilterAvailable(false)
+        setRegieFilter('')
       } else {
         regieFiltreOk = true
         setRegieFilterAvailable(true)

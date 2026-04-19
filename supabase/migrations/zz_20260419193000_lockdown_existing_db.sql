@@ -99,8 +99,6 @@ CREATE POLICY "vacances_update_own_or_admin"
     OR (
       employe_id = public.current_utilisateur_id()
       AND statut = 'en_attente'
-      AND decide_par IS NULL
-      AND decide_le IS NULL
     )
   );
 
@@ -197,8 +195,6 @@ CREATE POLICY "absences_update_own_or_admin"
     OR (
       employe_id = public.current_utilisateur_id()
       AND statut = 'en_attente'
-      AND decide_par IS NULL
-      AND decide_le IS NULL
     )
   );
 

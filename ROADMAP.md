@@ -1,5 +1,5 @@
 # ROADMAP — Eleco SA
-> Mis à jour — Avril 2026
+> Mis à jour — 19 Avril 2026
 
 ---
 
@@ -154,7 +154,7 @@
 - [x] Décompte automatique jours ouvrables
 - [x] Avertissement couverture (non bloquant)
 - [ ] Vue calendrier global vacances
-- [ ] Gestion absences maladie / autres
+- [x] Gestion absences maladie / autres (saisie employé + approbation admin — 2026-04-18)
 
 ---
 

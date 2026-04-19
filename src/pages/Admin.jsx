@@ -328,9 +328,12 @@ export default function Admin() {
 
       await chargerDepannages(search, regieFiltreOk ? regieFilter : '', dateFilter, regs || regies, regieFiltreOk)
 
-      const cat = await supabaseSafe(supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom'))
-      setCatalogue(cat || [])
-      setCategories(['Tous', ...Array.from(new Set((cat || []).map(a => a.categorie).filter(Boolean)))])
+      let cat = []
+      try {
+        cat = await supabaseSafe(supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')) || []
+      } catch { cat = [] }
+      setCatalogue(cat)
+      setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
 
       const emp = await supabaseSafe(supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom'))
       setEmployes(emp || [])

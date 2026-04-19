@@ -16,6 +16,19 @@ CREATE TABLE IF NOT EXISTS absences (
   CHECK (date_fin >= date_debut)
 );
 
+-- Correction si la table existait déjà sans ces colonnes (migration partielle)
+ALTER TABLE absences ADD COLUMN IF NOT EXISTS statut     text NOT NULL DEFAULT 'en_attente';
+ALTER TABLE absences ADD COLUMN IF NOT EXISTS decide_par uuid REFERENCES utilisateurs(id) ON DELETE SET NULL;
+ALTER TABLE absences ADD COLUMN IF NOT EXISTS decide_le  timestamptz;
+ALTER TABLE absences ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
+
+-- Contrainte CHECK sur statut (idempotent via nom explicite)
+DO $$ BEGIN
+  ALTER TABLE absences ADD CONSTRAINT absences_statut_check
+    CHECK (statut IN ('en_attente', 'approuve', 'refuse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_absences_employe ON absences(employe_id, date_debut);
 CREATE INDEX IF NOT EXISTS idx_absences_statut ON absences(statut);
 

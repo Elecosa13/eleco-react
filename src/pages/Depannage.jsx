@@ -59,13 +59,12 @@ export default function Depannage() {
     setLoading(true)
     setErreur('')
     try {
-      const [{ data: regiesData, error: regiesError }, { data: catalogueData, error: catalogueError }] = await Promise.all([
+      const [{ data: regiesData, error: regiesError }, { data: catalogueData }] = await Promise.all([
         supabase.from('regies').select('id, nom, nom_normalise').eq('actif', true).order('nom'),
         supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')
       ])
 
       if (regiesError) throw regiesError
-      if (catalogueError) throw catalogueError
 
       const listeRegies = regiesData || []
       const nonAssignee = listeRegies.find(r => r.nom_normalise === 'non assignee')

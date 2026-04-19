@@ -87,8 +87,22 @@ CREATE POLICY "vacances_insert_own_or_admin"
 
 CREATE POLICY "vacances_update_own_or_admin"
   ON public.vacances FOR UPDATE TO authenticated
-  USING (public.is_admin() OR employe_id = public.current_utilisateur_id())
-  WITH CHECK (public.is_admin() OR employe_id = public.current_utilisateur_id());
+  USING (
+    public.is_admin()
+    OR (
+      employe_id = public.current_utilisateur_id()
+      AND statut = 'en_attente'
+    )
+  )
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      employe_id = public.current_utilisateur_id()
+      AND statut = 'en_attente'
+      AND decide_par IS NULL
+      AND decide_le IS NULL
+    )
+  );
 
 CREATE POLICY "vacances_delete_admin"
   ON public.vacances FOR DELETE TO authenticated
@@ -171,8 +185,22 @@ CREATE POLICY "absences_insert_own_or_admin"
 
 CREATE POLICY "absences_update_own_or_admin"
   ON public.absences FOR UPDATE TO authenticated
-  USING (public.is_admin() OR employe_id = public.current_utilisateur_id())
-  WITH CHECK (public.is_admin() OR employe_id = public.current_utilisateur_id());
+  USING (
+    public.is_admin()
+    OR (
+      employe_id = public.current_utilisateur_id()
+      AND statut = 'en_attente'
+    )
+  )
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      employe_id = public.current_utilisateur_id()
+      AND statut = 'en_attente'
+      AND decide_par IS NULL
+      AND decide_le IS NULL
+    )
+  );
 
 CREATE POLICY "absences_delete_admin"
   ON public.absences FOR DELETE TO authenticated

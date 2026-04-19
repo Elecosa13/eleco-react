@@ -310,8 +310,11 @@ export default function Admin() {
       const ch = await supabaseSafe(supabase.from('chantiers').select('*').eq('actif', true).order('nom'))
       setChantiers(ch || [])
 
-      const regs = await supabaseSafe(supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
-      setRegies(regs || [])
+      let regs = null
+      try {
+        regs = await supabaseSafe(supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
+        setRegies(regs || [])
+      } catch { setRegies([]) }
 
       let regieFiltreOk = regieFilterAvailable
       const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
@@ -337,8 +340,11 @@ export default function Admin() {
       setCatalogue(cat)
       setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
 
-      const emp = await supabaseSafe(supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom'))
-      setEmployes(emp || [])
+      let emp = null
+      try {
+        emp = await supabaseSafe(supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom'))
+        setEmployes(emp || [])
+      } catch { setEmployes([]) }
     } catch (error) {
       console.error('Erreur chargement admin', error)
       setAdminError("Impossible de charger le tableau de bord admin. Réessaie dans un instant.")

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS public.regies (
   nom            text NOT NULL,
   nom_normalise  text,
   actif          boolean NOT NULL DEFAULT true,
+  created_by     uuid REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now()
 );
@@ -131,6 +132,11 @@ CREATE TABLE IF NOT EXISTS public.depannages (
   duree            numeric NOT NULL DEFAULT 1,
   remarques        text,
   statut           text NOT NULL DEFAULT 'À traiter',
+  pris_par         uuid REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
+  pris_le          timestamptz,
+  libere_par       uuid REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
+  libere_le        timestamptz,
+  adresse_normalisee text,
 
   -- Colonnes legacy/fallback lues par DepannageDetail/Admin si presentes.
   regie_nom        text,
@@ -156,16 +162,20 @@ CREATE TABLE IF NOT EXISTS public.depannages (
     CHECK (statut IN (
       'Bon reçu',
       'À traiter',
+      'En cours',
       'Intervention faite',
       'Rapport reçu',
       'Facture à préparer',
-      'Facture prête'
+      'Facture prête',
+      'Annulé'
     ))
 );
 
 CREATE INDEX IF NOT EXISTS idx_depannages_employe_date ON public.depannages(employe_id, date_travail);
 CREATE INDEX IF NOT EXISTS idx_depannages_regie_id ON public.depannages(regie_id);
 CREATE INDEX IF NOT EXISTS idx_depannages_statut ON public.depannages(statut);
+CREATE INDEX IF NOT EXISTS idx_depannages_pris_par ON public.depannages(pris_par);
+CREATE INDEX IF NOT EXISTS idx_depannages_adresse_normalisee ON public.depannages(adresse_normalisee);
 CREATE INDEX IF NOT EXISTS idx_depannages_created_at ON public.depannages(created_at);
 
 -- ------------------------------------------------------------

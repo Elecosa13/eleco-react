@@ -227,10 +227,12 @@ WHERE to_jsonb(d) ? 'statut'
   AND to_jsonb(d)->>'statut' NOT IN (
   'Bon reçu',
   'À traiter',
+  'En cours',
   'Intervention faite',
   'Rapport reçu',
   'Facture à préparer',
-  'Facture prête'
+  'Facture prête',
+  'Annulé'
 );
 
 -- A lancer manuellement seulement si les 2 controles ci-dessus retournent 0 ligne.

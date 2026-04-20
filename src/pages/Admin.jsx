@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import { safeConfirm } from '../lib/safe-browser'
 import { getInitiales } from '../services/depannages.service'
+import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -59,6 +60,31 @@ function fmtDuree(h) {
   const hrs = Math.floor(h)
   const mins = Math.round((h - hrs) * 60)
   return mins === 0 ? `${hrs}h` : `${hrs}h${String(mins).padStart(2, '0')}`
+}
+
+async function hydraterRapportsPhotos(rapports) {
+  const list = Array.from(rapports || [])
+  const allPhotos = list.flatMap(rapport => rapport.rapport_photos || [])
+  if (allPhotos.length === 0) return list
+
+  try {
+    const signedPhotos = await withSignedPhotoUrls(allPhotos)
+    const photosByRapportId = {}
+
+    for (const photo of signedPhotos) {
+      const key = String(photo.rapport_id)
+      if (!photosByRapportId[key]) photosByRapportId[key] = []
+      photosByRapportId[key].push(photo)
+    }
+
+    return list.map(rapport => ({
+      ...rapport,
+      rapport_photos: photosByRapportId[String(rapport.id)] || []
+    }))
+  } catch (error) {
+    console.error('Erreur signature photos rapports admin', error)
+    return list
+  }
 }
 
 function countJoursOuvrables(dateDebut, dateFin) {
@@ -244,28 +270,66 @@ export default function Admin() {
       for (const regie of regiesValue || []) regiesById[String(regie.id)] = regie
 
       let materiauxByDepannage = {}
+      let linkedRapportsByDepannage = {}
       const ids = (data || []).map(d => d.id).filter(Boolean)
       if (ids.length > 0) {
-        const { data: mats, error: matsError } = await supabase
-          .from('rapport_materiaux')
-          .select('*')
-          .in('rapport_id', ids)
+        const [{ data: mats, error: matsError }, { data: linkedRapports, error: linkedRapportsError }] = await Promise.all([
+          supabase
+            .from('rapport_materiaux')
+            .select('*')
+            .in('rapport_id', ids),
+          supabase
+            .from('rapports')
+            .select('id, depannage_id, sous_dossier_id')
+            .in('depannage_id', ids)
+        ])
         if (requestId !== depannagesRequestRef.current) return
 
-        if (matsError) {
-          console.error('Erreur chargement materiaux depannages', matsError)
+        if (linkedRapportsError) {
+          console.error('Erreur chargement rapports lies depannages', linkedRapportsError)
         } else {
+          for (const rapport of linkedRapports || []) {
+            linkedRapportsByDepannage[String(rapport.depannage_id)] = rapport
+          }
+        }
+
+        const rapportIds = (linkedRapports || []).map(rapport => rapport.id).filter(Boolean)
+        let linkedMateriaux = []
+
+        if (rapportIds.length > 0) {
+          const { data: matsLinked, error: matsLinkedError } = await supabase
+            .from('rapport_materiaux')
+            .select('*')
+            .in('rapport_id', rapportIds)
+          if (requestId !== depannagesRequestRef.current) return
+
+          if (matsLinkedError) {
+            console.error('Erreur chargement materiaux rapports depannages', matsLinkedError)
+          } else {
+            linkedMateriaux = matsLinked || []
+          }
+        }
+
+        for (const rapport of linkedRapports || []) {
+          materiauxByDepannage[String(rapport.depannage_id)] = linkedMateriaux.filter(mat => String(mat.rapport_id) === String(rapport.id))
+        }
+
+        if (!matsError) {
           for (const mat of mats || []) {
             const key = String(mat.rapport_id)
+            if (materiauxByDepannage[key]?.length) continue
             if (!materiauxByDepannage[key]) materiauxByDepannage[key] = []
             materiauxByDepannage[key].push(mat)
           }
+        } else {
+          console.error('Erreur chargement materiaux depannages', matsError)
         }
       }
 
       setDepannages((data || []).map(depannage => ({
         ...depannage,
         regie: depannage.regie || (depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null),
+        rapport_lie: linkedRapportsByDepannage[String(depannage.id)] || null,
         rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
       })))
     } catch (error) {
@@ -294,7 +358,7 @@ export default function Admin() {
     setAdminError('')
     try {
       const rap = await supabaseSafe(supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*)')
+        .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('valide', false).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
@@ -303,7 +367,8 @@ export default function Admin() {
           .in('reference_id', rap.map(r => r.id)))
         const byRap = {}
         for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-        setRapportsEnAttente(rap.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+        const rapportsHydrates = await hydraterRapportsPhotos(rap)
+        setRapportsEnAttente(rapportsHydrates.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
       } else {
         setRapportsEnAttente(rap || [])
       }
@@ -459,16 +524,17 @@ export default function Admin() {
 
   async function chargerRapports(sdId) {
     const { data } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+      .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
       .eq('sous_dossier_id', sdId).order('date_travail', { ascending: false })
     if (!data) { setRapports([]); return }
-    if (data.length > 0) {
+    const rapportsHydrates = await hydraterRapportsPhotos(data)
+    if (rapportsHydrates.length > 0) {
       const { data: rapEnt } = await supabase.from('time_entries')
         .select('reference_id, duree').eq('type', 'chantier')
-        .in('reference_id', data.map(r => r.id))
+        .in('reference_id', rapportsHydrates.map(r => r.id))
       const byRap = {}
       for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-      setRapports(data.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+      setRapports(rapportsHydrates.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
     } else {
       setRapports([])
     }
@@ -933,13 +999,14 @@ export default function Admin() {
       chargerTout()
       // Recharger le rapportDetail avec les nouvelles données
       const { data: updatedR } = await supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+        .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
         .eq('id', rapportId).single()
       if (updatedR) {
         const { data: rapEnt } = await supabase.from('time_entries')
           .select('reference_id, duree').eq('type', 'chantier').eq('reference_id', rapportId)
         const duree = rapEnt?.[0] ? Number(rapEnt[0].duree) : calcDuree(updatedR.heure_debut, updatedR.heure_fin)
-        setRapportDetail({ ...updatedR, _duree: duree })
+        const [rapportHydrate] = await hydraterRapportsPhotos([{ ...updatedR, _duree: duree }])
+        setRapportDetail(rapportHydrate)
       }
       setEditMateriaux(null); setAjoutArticleVue(false)
       setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
@@ -1015,7 +1082,7 @@ export default function Admin() {
 
   function depannageStatutBadgeClass(statut) {
     if (statut === STATUT_FACTURE_PRETE) return 'badge-green'
-    if ([STATUT_INTERVENTION_FAITE, STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER].includes(statut)) return 'badge-blue'
+    if (['Planifié', 'En cours', STATUT_INTERVENTION_FAITE, STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER].includes(statut)) return 'badge-blue'
     return 'badge-amber'
   }
 
@@ -1285,6 +1352,7 @@ export default function Admin() {
                 <div><div style={{ fontSize: '11px', color: '#888' }}>Employé</div><div style={{ fontWeight: 500 }}>{rapportDetail.employe?.prenom}</div></div>
                 <div><div style={{ fontSize: '11px', color: '#888' }}>Date</div><div style={{ fontWeight: 500 }}>{new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div></div>
                 <div><div style={{ fontSize: '11px', color: '#888' }}>Durée</div><div style={{ fontWeight: 500 }}>{fmtDuree(t.duree)}</div></div>
+                {rapportDetail.depannage_id && <div><div style={{ fontSize: '11px', color: '#888' }}>Dépannage</div><div style={{ fontWeight: 500 }}>Bon #{rapportDetail.depannage_id}</div></div>}
               </div>
               {rapportDetail.remarques && <div style={{ padding: '8px', background: '#f9f9f9', borderRadius: '6px', fontSize: '13px' }}>💬 {rapportDetail.remarques}</div>}
             </div>
@@ -1302,6 +1370,23 @@ export default function Admin() {
                 <div style={{ fontSize: '13px', fontWeight: 600 }}>{(m.quantite * (m.prix_net || 0)).toFixed(2)} CHF</div>
               </div>
             ))}
+          </div>
+
+          <div className="card">
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>Photos terrain</div>
+            {(rapportDetail.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
+            {(rapportDetail.rapport_photos || []).length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
+                {(rapportDetail.rapport_photos || []).map(photo => (
+                  <a key={photo.id} href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                      {photo.signed_url && <img src={photo.signed_url} alt={photo.file_name} style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />}
+                      <div style={{ padding: '8px', fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -1403,7 +1488,7 @@ export default function Admin() {
               <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{fmtDuree(t.duree)} · {(r.rapport_materiaux || []).length} articles</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{fmtDuree(t.duree)} · {(r.rapport_materiaux || []).length} articles · {(r.rapport_photos || []).length} photo(s)</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '13px', fontWeight: 600 }}>{t.ttc.toFixed(0)} CHF</div>

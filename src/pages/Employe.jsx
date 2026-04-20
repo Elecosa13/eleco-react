@@ -6,9 +6,12 @@ import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import DepannageCard from '../components/depannage/DepannageCard'
 import {
+  demarrerDepannage,
   fetchDepannages,
   libererDepannage,
+  planifierDepannage,
   prendreDepannage,
+  prendreDepannageSansDate,
   quitterDepannage,
   rejoindreDepannage
 } from '../services/depannages.service'
@@ -374,11 +377,19 @@ export default function Employe() {
     navigate('/login')
   }
 
-  async function agirSurDepannage(action, depannage) {
+  async function agirSurDepannage(action, depannage, payload = null) {
     if (!depannage?.id) return
+
+    if (action === 'rapport') {
+      navigate(`/employe/depannage?depannageId=${depannage.id}`)
+      return
+    }
 
     const actions = {
       prendre: prendreDepannage,
+      prendreSansDate: prendreDepannageSansDate,
+      planifier: id => planifierDepannage(id, payload || {}),
+      demarrer: demarrerDepannage,
       rejoindre: rejoindreDepannage,
       quitter: quitterDepannage,
       liberer: libererDepannage

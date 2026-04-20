@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
 
 const STATUT_A_TRAITER = 'À traiter'
+const STATUT_PRIS = 'Pris'
+const STATUT_PLANIFIE = 'Planifié'
 const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
@@ -78,26 +81,21 @@ function DetailSection({ title, children }) {
   )
 }
 
-function FutureSlot({ label }) {
-  return (
-    <div style={{ border: '1px dashed #d7d7d7', borderRadius: '8px', padding: '10px 12px', color: '#888', fontSize: '12px', background: '#fafafa' }}>
-      {label}
-    </div>
-  )
-}
-
 function statutBadgeClass(statut) {
   if (statut === STATUT_FACTURE_PRETE) return 'badge-green'
-  if (statut === STATUT_INTERVENTION_FAITE || statut === STATUT_RAPPORT_RECU || statut === STATUT_FACTURE_A_PREPARER) return 'badge-blue'
+  if ([STATUT_PLANIFIE, STATUT_INTERVENTION_FAITE, STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER].includes(statut)) return 'badge-blue'
   return 'badge-amber'
 }
 
 function buildForm(depannage) {
   return {
     regie_id: depannage?.regie_id || '',
+    chantier_id: depannage?.chantier_id || '',
     adresse: depannage?.adresse || '',
     remarques: depannage?.remarques || '',
-    date_travail: depannage?.date_travail || ''
+    date_travail: depannage?.date_travail || '',
+    date_planifiee: depannage?.date_planifiee || '',
+    heure_planifiee: String(depannage?.heure_planifiee || '').slice(0, 5)
   }
 }
 
@@ -106,7 +104,9 @@ export default function DepannageDetail() {
   const location = useLocation()
   const { id } = useParams()
   const [depannage, setDepannage] = useState(null)
+  const [rapportLie, setRapportLie] = useState(null)
   const [regies, setRegies] = useState([])
+  const [chantiers, setChantiers] = useState([])
   const [loading, setLoading] = useState(true)
   const [erreur, setErreur] = useState('')
   const [edition, setEdition] = useState(false)
@@ -119,13 +119,13 @@ export default function DepannageDetail() {
 
   useEffect(() => {
     chargerDepannage()
-    chargerRegies()
+    chargerReferentiels()
   }, [id])
 
   async function lireDepannage() {
     const { data, error } = await supabase
       .from('depannages')
-      .select('*, employe:employe_id(prenom), regie:regies(nom)')
+      .select('*, employe:employe_id(prenom, nom, initiales), regie:regies(nom), chantier:chantiers(id, nom, adresse)')
       .eq('id', id)
       .maybeSingle()
 
@@ -141,31 +141,50 @@ export default function DepannageDetail() {
       const data = await lireDepannage()
       setDepannage(data || null)
       setForm(buildForm(data))
+      setRapportLie(await chargerRapportLie())
     } catch (error) {
       console.error('Erreur chargement detail depannage', error)
       setErreur("Impossible de charger ce dépannage. Réessaie dans un instant.")
       setDepannage(null)
+      setRapportLie(null)
     } finally {
       setLoading(false)
     }
   }
 
-  async function chargerRegies() {
+  async function chargerRapportLie() {
+    const { data, error } = await supabase
+      .from('rapports')
+      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom, adresse)), rapport_materiaux(*), rapport_photos(*)')
+      .eq('depannage_id', id)
+      .maybeSingle()
+
+    if (error) throw error
+    if (!data) return null
+
+    const photos = await withSignedPhotoUrls(data.rapport_photos || [])
+    return { ...data, rapport_photos: photos }
+  }
+
+  async function chargerReferentiels() {
     setRegiesError('')
 
     try {
-      const { data, error } = await supabase
-        .from('regies')
-        .select('id, nom')
-        .eq('actif', true)
-        .order('nom')
+      const [{ data: regiesData, error: regiesQueryError }, { data: chantiersData, error: chantiersError }] = await Promise.all([
+        supabase.from('regies').select('id, nom').eq('actif', true).order('nom'),
+        supabase.from('chantiers').select('id, nom').eq('actif', true).order('nom')
+      ])
 
-      if (error) throw error
-      setRegies(data || [])
+      if (regiesQueryError) throw regiesQueryError
+      if (chantiersError) throw chantiersError
+
+      setRegies(regiesData || [])
+      setChantiers(chantiersData || [])
     } catch (error) {
-      console.error('Erreur chargement regies depannage detail', error)
+      console.error('Erreur chargement referentiels depannage detail', error)
       setRegies([])
-      setRegiesError("Impossible de charger la liste des régies. La régie actuelle reste affichée si elle est connue.")
+      setChantiers([])
+      setRegiesError("Impossible de charger les listes de référence. Les données existantes restent consultables.")
     }
   }
 
@@ -182,8 +201,8 @@ export default function DepannageDetail() {
     setEdition(false)
   }
 
-  async function enregistrerDepannage(e) {
-    e.preventDefault()
+  async function enregistrerDepannage(event) {
+    event.preventDefault()
     setSaveError('')
     setSaveSuccess('')
 
@@ -200,9 +219,12 @@ export default function DepannageDetail() {
     try {
       const payload = {
         regie_id: form.regie_id || null,
+        chantier_id: form.chantier_id || null,
         adresse,
         remarques: form.remarques.trim(),
-        date_travail: dateTravail
+        date_travail: dateTravail,
+        date_planifiee: form.date_planifiee || null,
+        heure_planifiee: form.heure_planifiee || null
       }
 
       const { data: updated, error: updateError } = await supabase
@@ -286,7 +308,10 @@ export default function DepannageDetail() {
 
   const detail = depannage ? {
     date: formatDate(depannage.date_travail),
+    datePlanifiee: formatDate(depannage.date_planifiee),
+    heurePlanifiee: String(depannage.heure_planifiee || '').slice(0, 5),
     regie: firstValue(depannage.regie?.nom, depannage.regie_nom),
+    chantier: firstValue(depannage.chantier?.nom),
     client: firstValue(depannage.client, depannage.nom_client),
     adresse: firstValue(depannage.adresse),
     description: firstValue(depannage.objet, depannage.titre, depannage.description, depannage.remarques),
@@ -298,6 +323,7 @@ export default function DepannageDetail() {
     creeLe: formatDateTime(depannage.created_at),
     modifieLe: formatDateTime(depannage.updated_at)
   } : null
+
   const actionStatutAdmin = detail ? prochainStatutAdmin(detail.statut) : null
 
   return (
@@ -344,9 +370,9 @@ export default function DepannageDetail() {
               <form onSubmit={enregistrerDepannage} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="form-group">
                   <label>Régie</label>
-                  <select value={form.regie_id} onChange={e => setForm(prev => ({ ...prev, regie_id: e.target.value }))}>
+                  <select value={form.regie_id} onChange={event => setForm(previous => ({ ...previous, regie_id: event.target.value }))}>
                     <option value="">Non assignée</option>
-                    {depannage.regie_id && depannage.regie?.nom && !regies.some(r => String(r.id) === String(depannage.regie_id)) && (
+                    {depannage.regie_id && depannage.regie?.nom && !regies.some(regie => String(regie.id) === String(depannage.regie_id)) && (
                       <option value={depannage.regie_id}>{depannage.regie.nom}</option>
                     )}
                     {regies.map(regie => (
@@ -355,16 +381,35 @@ export default function DepannageDetail() {
                   </select>
                 </div>
                 <div className="form-group">
+                  <label>Chantier</label>
+                  <select value={form.chantier_id} onChange={event => setForm(previous => ({ ...previous, chantier_id: event.target.value }))}>
+                    <option value="">Aucun</option>
+                    {chantiers.map(chantier => (
+                      <option key={chantier.id} value={chantier.id}>{chantier.nom}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
                   <label>Adresse / titre</label>
-                  <input value={form.adresse} onChange={e => setForm(prev => ({ ...prev, adresse: e.target.value }))} required />
+                  <input value={form.adresse} onChange={event => setForm(previous => ({ ...previous, adresse: event.target.value }))} required />
                 </div>
                 <div className="form-group">
                   <label>Description</label>
-                  <textarea rows={4} value={form.remarques} onChange={e => setForm(prev => ({ ...prev, remarques: e.target.value }))} style={{ resize: 'vertical' }} />
+                  <textarea rows={4} value={form.remarques} onChange={event => setForm(previous => ({ ...previous, remarques: event.target.value }))} style={{ resize: 'vertical' }} />
+                </div>
+                <div className="grid2">
+                  <div className="form-group">
+                    <label>Date</label>
+                    <input type="date" value={form.date_travail} onChange={event => setForm(previous => ({ ...previous, date_travail: event.target.value }))} required />
+                  </div>
+                  <div className="form-group">
+                    <label>Date planifiée</label>
+                    <input type="date" value={form.date_planifiee} onChange={event => setForm(previous => ({ ...previous, date_planifiee: event.target.value }))} />
+                  </div>
                 </div>
                 <div className="form-group">
-                  <label>Date</label>
-                  <input type="date" value={form.date_travail} onChange={e => setForm(prev => ({ ...prev, date_travail: e.target.value }))} required />
+                  <label>Heure planifiée</label>
+                  <input type="time" value={form.heure_planifiee} onChange={event => setForm(previous => ({ ...previous, heure_planifiee: event.target.value }))} />
                 </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button type="button" className="btn-outline" onClick={annulerEdition} disabled={saving} style={{ flex: 1 }}>Annuler</button>
@@ -387,15 +432,21 @@ export default function DepannageDetail() {
                 <DetailSection title="Informations">
                   <InfoLine label="Date" value={detail.date} />
                   <InfoLine label="Régie" value={detail.regie || 'Régie non définie'} />
+                  <InfoLine label="Chantier lié" value={detail.chantier} />
                   <InfoLine label="Client" value={detail.client} />
                   <InfoLine label="Adresse" value={detail.adresse} />
                   <InfoLine label="Description / objet" value={detail.description || 'Aucune description renseignée'} />
                 </DetailSection>
 
-                <DetailSection title="Suivi">
-                  <InfoLine label="Statut" value={detail.statut} />
+                <DetailSection title="Planification">
+                  <InfoLine label="Statut terrain" value={detail.statut} />
+                  <InfoLine label="Date planifiée" value={detail.datePlanifiee} />
+                  <InfoLine label="Heure planifiée" value={detail.heurePlanifiee} />
                   <InfoLine label="Intervenant" value={detail.intervenant} />
                   <InfoLine label="Durée" value={detail.duree} />
+                </DetailSection>
+
+                <DetailSection title="Suivi">
                   <InfoLine label="Contact" value={detail.contact} />
                   <InfoLine label="Référence" value={detail.reference} />
                   <InfoLine label="Créé le" value={detail.creeLe} />
@@ -422,10 +473,58 @@ export default function DepannageDetail() {
                 </DetailSection>
 
                 <DetailSection title="Dossier">
-                  <FutureSlot label="Pièces jointes à venir" />
-                  <FutureSlot label="Historique à venir" />
-                  <FutureSlot label="PDF, envoi et classement à venir" />
+                  <InfoLine label="Rapport lié" value={rapportLie ? `Rapport #${rapportLie.id}` : 'Aucun rapport lié'} />
+                  <InfoLine label="Sous-dossier" value={rapportLie?.sous_dossiers?.nom} />
+                  <InfoLine label="Chantier dossier" value={rapportLie?.sous_dossiers?.chantiers?.nom || detail.chantier} />
+                  {!rapportLie && (
+                    <div style={{ fontSize: '12px', color: '#888' }}>
+                      Le rapport n'a pas encore été classé dans un dossier chantier.
+                    </div>
+                  )}
                 </DetailSection>
+
+                {rapportLie && (
+                  <DetailSection title="Rapport terrain">
+                    <InfoLine label="Date rapport" value={formatDate(rapportLie.date_travail)} />
+                    <InfoLine label="Remarques rapport" value={rapportLie.remarques} />
+                    <InfoLine label="Photos" value={`${(rapportLie.rapport_photos || []).length} photo(s)`} />
+                  </DetailSection>
+                )}
+
+                {rapportLie && (
+                  <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux du rapport</div>
+                    {(rapportLie.rapport_materiaux || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun matériau</div>}
+                    {(rapportLie.rapport_materiaux || []).map(materiau => (
+                      <div key={materiau.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', paddingBottom: '8px', borderBottom: '1px solid #eee' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 500 }}>{materiau.designation}</div>
+                          <div style={{ fontSize: '11px', color: '#888' }}>{materiau.quantite} × {materiau.unite}</div>
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>{(Number(materiau.quantite || 0) * Number(materiau.prix_net || 0)).toFixed(2)} CHF</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {rapportLie && (
+                  <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px' }}>Photos du rapport</div>
+                    {(rapportLie.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
+                    {(rapportLie.rapport_photos || []).length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
+                        {(rapportLie.rapport_photos || []).map(photo => (
+                          <a key={photo.id} href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                            <div style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                              {photo.signed_url && <img src={photo.signed_url} alt={photo.file_name} style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />}
+                              <div style={{ padding: '8px', fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <button type="button" className="btn-primary" onClick={ouvrirEdition}>Modifier</button>
               </>

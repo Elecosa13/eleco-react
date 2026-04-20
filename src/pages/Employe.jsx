@@ -4,6 +4,14 @@ import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
+import DepannageCard from '../components/depannage/DepannageCard'
+import {
+  fetchDepannages,
+  libererDepannage,
+  prendreDepannage,
+  quitterDepannage,
+  rejoindreDepannage
+} from '../services/depannages.service'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
@@ -55,6 +63,11 @@ export default function Employe() {
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [confirmDoublon, setConfirmDoublon] = useState(null)
   const [depannagesRecents, setDepannagesRecents] = useState([])
+  const [depannagesTerrain, setDepannagesTerrain] = useState([])
+  const [depannagesLoading, setDepannagesLoading] = useState(false)
+  const [depannagesErreur, setDepannagesErreur] = useState('')
+  const [depannagesRecherche, setDepannagesRecherche] = useState('')
+  const [depannageActionLoading, setDepannageActionLoading] = useState('')
 
   const [modalSupp, setModalSupp] = useState(false)
   const [suppHeures, setSuppHeures] = useState(1)
@@ -162,7 +175,22 @@ export default function Employe() {
     }
 
     await chargerAbsences()
+    await chargerDepannagesTerrain()
 
+  }
+
+  async function chargerDepannagesTerrain() {
+    setDepannagesLoading(true)
+    setDepannagesErreur('')
+    try {
+      const data = await fetchDepannages()
+      setDepannagesTerrain(data)
+    } catch (error) {
+      console.error('Erreur chargement depannages terrain', error)
+      setDepannagesErreur("Impossible de charger les dépannages. Réessaie dans un instant.")
+    } finally {
+      setDepannagesLoading(false)
+    }
   }
 
   async function chargerAbsences() {
@@ -346,6 +374,31 @@ export default function Employe() {
     navigate('/login')
   }
 
+  async function agirSurDepannage(action, depannage) {
+    if (!depannage?.id) return
+
+    const actions = {
+      prendre: prendreDepannage,
+      rejoindre: rejoindreDepannage,
+      quitter: quitterDepannage,
+      liberer: libererDepannage
+    }
+    const executer = actions[action]
+    if (!executer) return
+
+    setDepannagesErreur('')
+    setDepannageActionLoading(`${action}:${depannage.id}`)
+    try {
+      await executer(depannage.id)
+      await chargerDepannagesTerrain()
+    } catch (error) {
+      console.error(`Erreur action depannage ${action}`, error)
+      setDepannagesErreur(error?.message || "Action impossible pour ce dépannage. La liste reste disponible.")
+    } finally {
+      setDepannageActionLoading('')
+    }
+  }
+
   const creditRestant = CREDIT_JOUR - creditUtilise
   const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
   const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
@@ -353,6 +406,14 @@ export default function Employe() {
     c.nom.toLowerCase().includes(recherche.toLowerCase()) ||
     (c.adresse || '').toLowerCase().includes(recherche.toLowerCase())
   )
+  const depannagesFiltres = useMemo(() => {
+    const term = normaliserRecherche(depannagesRecherche)
+    if (!term) return depannagesTerrain
+    return depannagesTerrain.filter(depannage =>
+      normaliserRecherche(depannage.adresse).includes(term) ||
+      normaliserRecherche(depannage.adresse_normalisee).includes(term)
+    )
+  }, [depannagesRecherche, depannagesTerrain])
 
   const statutLabel = { en_attente: 'En attente', accepte: 'Accepté', refuse: 'Refusé' }
   const statutColor = { en_attente: '#BA7517', accepte: '#3B6D11', refuse: '#A32D2D' }
@@ -562,13 +623,13 @@ export default function Employe() {
       <div className="top-bar">
         <div>
           <div style={{ fontWeight: 600, fontSize: '15px' }}>
-            {vue === 'accueil' ? `Bonjour, ${user?.prenom}` : 'Chantiers actifs'}
+            {vue === 'accueil' ? `Bonjour, ${user?.prenom}` : vue === 'depannages' ? 'Dépannages' : 'Chantiers actifs'}
           </div>
           <div style={{ fontSize: '11px', color: '#888' }}>Espace employé</div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {vue !== 'accueil' && (
-            <button className="btn-outline btn-sm" onClick={() => { setVue('accueil'); setRecherche(''); setAjoutChantier(false) }}>← Retour</button>
+            <button className="btn-outline btn-sm" onClick={() => { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) }}>← Retour</button>
           )}
           <button className="avatar" onClick={deconnecter}>{user?.initiales}</button>
         </div>
@@ -619,7 +680,7 @@ export default function Employe() {
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantier</span>
               <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier en cours</span>
             </button>
-            <button onClick={() => navigate('/employe/depannage')} style={{ background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => setVue('depannages')} style={{ background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>⚡</span>
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannage</span>
               <span style={{ fontSize: '11px', color: '#666' }}>Intervention rapide</span>
@@ -735,7 +796,47 @@ export default function Employe() {
             ))}
           </div>
         </>}
+
+        {vue === 'depannages' && <>
+          <input
+            type="search"
+            placeholder="Rechercher une adresse..."
+            value={depannagesRecherche}
+            onChange={e => setDepannagesRecherche(e.target.value)}
+            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
+          />
+          {depannagesErreur && (
+            <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
+              {depannagesErreur}
+            </div>
+          )}
+          {depannagesLoading && (
+            <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement des dépannages...</div>
+          )}
+          {!depannagesLoading && depannagesFiltres.length === 0 && (
+            <div className="card" style={{ fontSize: '13px', color: '#888', borderRadius: '8px' }}>
+              Aucun dépannage trouvé
+            </div>
+          )}
+          {!depannagesLoading && depannagesFiltres.map(depannage => (
+            <DepannageCard
+              key={depannage.id}
+              depannage={depannage}
+              currentUserId={user?.id}
+              onAction={agirSurDepannage}
+              actionLoading={depannageActionLoading}
+            />
+          ))}
+        </>}
       </div>
     </div>
   )
+}
+
+function normaliserRecherche(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
 }

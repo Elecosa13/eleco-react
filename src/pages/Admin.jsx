@@ -5,6 +5,7 @@ import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import { safeConfirm } from '../lib/safe-browser'
+import { getInitiales } from '../services/depannages.service'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -218,7 +219,7 @@ export default function Admin() {
     }
 
     let query = supabase.from('depannages')
-      .select('*, employe:employe_id(prenom), regie:regies(id, nom)')
+      .select('*, employe:employe_id(prenom), regie:regies(id, nom), pris_par_user:utilisateurs!depannages_pris_par_fkey(id, prenom, initiales), depannage_intervenants(employe_id)')
 
     if (term) {
       query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
@@ -1018,6 +1019,14 @@ export default function Admin() {
     return 'badge-amber'
   }
 
+  function depannageResponsableLabel(depannage) {
+    return getInitiales(depannage.pris_par_user) || 'Aucun'
+  }
+
+  function depannageIntervenantsCount(depannage) {
+    return (depannage.depannage_intervenants || []).length
+  }
+
   function depannageTimestamp(depannage) {
     const value = depannage.date_travail || depannage.created_at
     if (!value) return 0
@@ -1537,6 +1546,8 @@ export default function Admin() {
                     const ttc = (mat + mo) * 1.081
                     const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
                     const statut = depannageStatut(d)
+                    const responsable = depannageResponsableLabel(d)
+                    const intervenantsCount = depannageIntervenantsCount(d)
                     return (
                       <div
                         key={d.id}
@@ -1575,6 +1586,9 @@ export default function Admin() {
                           <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>
                           <div style={{ fontSize: '11px', color: '#888' }}>
                             {d.employe?.prenom || 'Employé non défini'} · {fmtDuree(Number(d.duree) || 1)} · Bon #{d.id}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#555' }}>
+                            Statut : {statut} · Resp. : {responsable} · Intervenants : {intervenantsCount}
                           </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>

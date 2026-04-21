@@ -111,7 +111,6 @@ export default function Admin() {
   const location = useLocation()
   const adminNavigationState = location.state || {}
   const { profile: user, signOut } = useAuth()
-  const depannagesSearchTimerRef = useRef(null)
   const depannagesRequestRef = useRef(0)
 
   // Navigation
@@ -198,10 +197,6 @@ export default function Admin() {
 
   useEffect(() => { chargerTout() }, [])
 
-  useEffect(() => () => {
-    if (depannagesSearchTimerRef.current) clearTimeout(depannagesSearchTimerRef.current)
-  }, [])
-
   usePageRefresh(async () => {
     if (vue === 'calendrier') return chargerCalendrier(calMois)
     if (vue === 'vacances') return chargerVacancesAdmin()
@@ -216,23 +211,8 @@ export default function Admin() {
   // CHARGEMENT
   // ──────────────────────────────────────────────────────────────────────────
 
-  function annulerRechercheDepannages() {
-    if (!depannagesSearchTimerRef.current) return
-    clearTimeout(depannagesSearchTimerRef.current)
-    depannagesSearchTimerRef.current = null
-  }
-
-  function programmerRechercheDepannages(value) {
-    annulerRechercheDepannages()
-    depannagesSearchTimerRef.current = setTimeout(() => {
-      depannagesSearchTimerRef.current = null
-      chargerDepannages(value, regieFilter, dateFilter, regies, regieFilterAvailable)
-    }, 300)
-  }
-
   async function chargerDepannages(searchValue = search, regieValue = regieFilter, dateValue = dateFilter, regiesValue = regies, regieFilterAvailableValue = regieFilterAvailable) {
     const requestId = ++depannagesRequestRef.current
-    const term = (searchValue || '').trim()
     setDepannagesLoading(true)
     setDepannagesError('')
 
@@ -246,10 +226,6 @@ export default function Admin() {
 
     let query = supabase.from('depannages')
       .select('*, employe:employe_id(prenom), regie:regies(id, nom), pris_par_user:utilisateurs!depannages_pris_par_fkey(id, prenom, initiales), depannage_intervenants(employe_id)')
-
-    if (term) {
-      query = query.or(`adresse.ilike.%${term}%,remarques.ilike.%${term}%`)
-    }
 
     if (regieValue) {
       query = query.eq('regie_id', regieValue)
@@ -347,7 +323,6 @@ export default function Admin() {
   }
 
   function resetDepannagesFilters() {
-    annulerRechercheDepannages()
     setSearch('')
     setRegieFilter('')
     setDateFilter('')
@@ -1106,6 +1081,32 @@ export default function Admin() {
     return depannageTimestamp(b) - depannageTimestamp(a)
   }
 
+  function normalizeDepannageSearchValue(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+  }
+
+  function depannageMatchesSearch(depannage, rawSearch) {
+    const term = normalizeDepannageSearchValue(rawSearch)
+    if (!term) return true
+
+    const searchableValues = [
+      depannage.id,
+      depannage.regie?.nom,
+      depannage.adresse,
+      depannage.remarques,
+      depannage.objet,
+      depannage.titre,
+      depannage.client,
+      depannage.nom_client
+    ]
+
+    return searchableValues.some(value => normalizeDepannageSearchValue(value).includes(term))
+  }
+
   function grouperDepannages(liste) {
     const groupes = {}
     for (const depannage of [...liste].sort(comparerDepannagesRecent)) {
@@ -1126,7 +1127,12 @@ export default function Admin() {
     }))
   }
 
-  const depannagesGroupes = useMemo(() => grouperDepannages(depannages), [depannages])
+  const depannagesFiltres = useMemo(
+    () => depannages.filter(depannage => depannageMatchesSearch(depannage, search)),
+    [depannages, search]
+  )
+
+  const depannagesGroupes = useMemo(() => grouperDepannages(depannagesFiltres), [depannagesFiltres])
 
   // ──────────────────────────────────────────────────────────────────────────
   // VUES
@@ -1432,6 +1438,18 @@ export default function Admin() {
       </div>
       <div className="page-content">
         <div className="card">
+          {false && !depannagesLoading && !depannagesError && depannages.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '4px 2px 0', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Classement dossiers</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>RÃ©gie â†’ mois â†’ dÃ©pannages</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span className="badge badge-blue">{depannagesFiltres.length} dÃ©pannage{depannagesFiltres.length > 1 ? 's' : ''}</span>
+                <span className="badge badge-amber">{depannagesGroupes.length} rÃ©gie{depannagesGroupes.length > 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <span style={{ fontWeight: 600, fontSize: '14px' }}>Sous-dossiers</span>
             <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setNouveauSd(true)}>+ Nouveau</button>
@@ -1481,6 +1499,18 @@ export default function Admin() {
       </div>
       <div className="page-content">
         <div className="card">
+          {false && !depannagesLoading && !depannagesError && depannages.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '4px 2px 0', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Classement dossiers</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>RÃ©gie â†’ mois â†’ dÃ©pannages</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span className="badge badge-blue">{depannagesFiltres.length} dÃ©pannage{depannagesFiltres.length > 1 ? 's' : ''}</span>
+                <span className="badge badge-amber">{depannagesGroupes.length} rÃ©gie{depannagesGroupes.length > 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          )}
           {rapports.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun rapport</div>}
           {rapports.map(r => {
             const t = totaux(r)
@@ -1535,7 +1565,7 @@ export default function Admin() {
             </div>
           </div>
         )}
-        <div className="card">
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
           {chantiers.map(c => (
             <div key={c.id} className="row-item">
@@ -1558,6 +1588,8 @@ export default function Admin() {
   )
 
   if (vue === 'depannages') {
+    const rechercheActive = search.trim()
+
     return (
     <div>
       <div className="top-bar">
@@ -1569,13 +1601,9 @@ export default function Admin() {
       <div className="page-content">
         <input
           type="search"
-          placeholder="Rechercher..."
+          placeholder="Rechercher une régie, une adresse, une remarque ou un bon #..."
           value={search}
-          onChange={e => {
-            const value = e.target.value
-            setSearch(value)
-            programmerRechercheDepannages(value)
-          }}
+          onChange={e => setSearch(e.target.value)}
           style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
         />
         <select
@@ -1583,7 +1611,6 @@ export default function Admin() {
           disabled={!regieFilterAvailable}
           onChange={e => {
             const value = e.target.value
-            annulerRechercheDepannages()
             setRegieFilter(value)
             chargerDepannages(search, value, dateFilter, regies, regieFilterAvailable)
           }}
@@ -1599,7 +1626,6 @@ export default function Admin() {
           value={dateFilter}
           onChange={e => {
             const value = e.target.value
-            annulerRechercheDepannages()
             setDateFilter(value)
             chargerDepannages(search, regieFilter, value)
           }}
@@ -1614,17 +1640,84 @@ export default function Admin() {
         </button>
         <div className="card">
           {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
+          {!depannagesLoading && !depannagesError && depannagesGroupes.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '4px 2px 0', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Classement dossiers</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Régie → mois → dépannages</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span className="badge badge-blue">{depannagesFiltres.length} dépannage{depannagesFiltres.length > 1 ? 's' : ''}</span>
+                <span className="badge badge-amber">{depannagesGroupes.length} régie{depannagesGroupes.length > 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          )}
           {!depannagesLoading && depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
-          {!depannagesLoading && !depannagesError && depannages.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage trouvé</div>}
+          {!depannagesLoading && !depannagesError && depannages.length === 0 && (
+            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun dépannage</div>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Les dossiers apparaîtront ici, classés par régie puis par mois.</div>
+            </div>
+          )}
+          {!depannagesLoading && !depannagesError && depannages.length > 0 && depannagesFiltres.length === 0 && (
+            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun resultat</div>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                {rechercheActive
+                  ? `Aucun depannage ne correspond a "${search.trim()}".`
+                  : 'Aucun depannage ne correspond aux filtres actuels.'}
+              </div>
+            </div>
+          )}
+          {false && !depannagesLoading && !depannagesError && depannages.length > 0 && depannagesFiltres.length === 0 && (
+            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun rÃ©sultat</div>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                {rechercheActive
+                  ? `Aucun dÃ©pannage ne correspond Ã  "${search.trim()}".`
+                  : 'Aucun dÃ©pannage ne correspond aux filtres actuels.'}
+              </div>
+            </div>
+          )}
           {!depannagesLoading && !depannagesError && depannagesGroupes.map(groupe => (
-            <div key={groupe.nom} style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>{groupe.nom}</div>
-                <span className="badge badge-blue">{groupe.count}</span>
+            <div
+              key={groupe.nom}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                marginTop: '12px',
+                padding: '14px',
+                borderRadius: '18px',
+                border: '1px solid #DCE6F2',
+                background: 'linear-gradient(180deg, #F9FBFF 0%, #FFFFFF 100%)',
+                boxShadow: '0 8px 24px rgba(24,95,165,0.05)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Regie</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{groupe.nom}</div>
+                </div>
+                <span className="badge badge-blue">{groupe.count} dossier{groupe.count > 1 ? 's' : ''}</span>
               </div>
               {groupe.moisOrdre.map(mois => (
-                <div key={`${groupe.nom}-${mois}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', paddingTop: '4px' }}>{mois}</div>
+                <div
+                  key={`${groupe.nom}-${mois}`}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '12px',
+                    borderRadius: '14px',
+                    background: '#FFFFFF',
+                    border: '1px solid #E7EDF5'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>{mois}</div>
+                    <div style={{ fontSize: '11px', color: '#7A8795' }}>{groupe.mois[mois].length} depannage{groupe.mois[mois].length > 1 ? 's' : ''}</div>
+                  </div>
                   {groupe.mois[mois].map(d => {
                     const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
                     const mo = (d.duree || 1) * TAUX
@@ -1660,7 +1753,15 @@ export default function Admin() {
                             })
                           }
                         }}
-                        style={{ alignItems: 'flex-start', cursor: 'pointer', gap: '10px' }}
+                        style={{
+                          alignItems: 'flex-start',
+                          cursor: 'pointer',
+                          gap: '10px',
+                          padding: '12px',
+                          borderRadius: '14px',
+                          border: '1px solid #EEF2F7',
+                          background: '#FBFCFE'
+                        }}
                       >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>

@@ -68,6 +68,28 @@ export async function uploadRapportPhotos({
   }
 }
 
+export async function deleteRapportPhoto(photo) {
+  if (!photo?.id || !photo?.storage_path) {
+    throw new Error('invalid_rapport_photo')
+  }
+
+  const bucket = photo.storage_bucket || RAPPORT_PHOTOS_BUCKET
+
+  const { error: storageError } = await supabase
+    .storage
+    .from(bucket)
+    .remove([photo.storage_path])
+
+  if (storageError) throw storageError
+
+  const { error: deleteError } = await supabase
+    .from('rapport_photos')
+    .delete()
+    .eq('id', photo.id)
+
+  if (deleteError) throw deleteError
+}
+
 export async function withSignedPhotoUrls(photos, expiresIn = 3600) {
   const list = Array.from(photos || []).filter(photo => photo?.storage_path)
   if (list.length === 0) return []
@@ -88,7 +110,7 @@ export async function withSignedPhotoUrls(photos, expiresIn = 3600) {
 
 export function buildPhotoPreviewItems(files) {
   return Array.from(files || []).map((file, index) => ({
-    id: `${file.name || 'photo'}-${index}-${file.size || 0}`,
+    id: buildLocalPhotoId(file, index),
     file,
     previewUrl: typeof URL !== 'undefined' ? URL.createObjectURL(file) : '',
     label: file.name || `Photo ${index + 1}`
@@ -129,4 +151,18 @@ function slugify(value) {
 function getExtension(fileName) {
   const match = String(fileName || '').match(/(\.[a-z0-9]+)$/i)
   return match ? match[1].toLowerCase() : '.jpg'
+}
+
+function buildLocalPhotoId(file, index) {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return [
+    file?.name || 'photo',
+    index,
+    file?.size || 0,
+    Date.now(),
+    Math.random().toString(36).slice(2, 8)
+  ].join('-')
 }

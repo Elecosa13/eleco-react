@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
+import { useAuth } from '../lib/auth-context'
+import { safeConfirm } from '../lib/safe-browser'
+import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '../services/rapportPhotos.service'
 
 const STATUT_A_TRAITER = 'À traiter'
 const STATUT_PRIS = 'Pris'
@@ -103,6 +105,7 @@ export default function DepannageDetail() {
   const navigate = useNavigate()
   const location = useLocation()
   const { id } = useParams()
+  const { profile: user } = useAuth()
   const [depannage, setDepannage] = useState(null)
   const [rapportLie, setRapportLie] = useState(null)
   const [regies, setRegies] = useState([])
@@ -117,6 +120,7 @@ export default function DepannageDetail() {
   const [saveSuccess, setSaveSuccess] = useState('')
   const [regiesError, setRegiesError] = useState('')
   const [statutSaving, setStatutSaving] = useState(false)
+  const [photoSaving, setPhotoSaving] = useState(false)
 
   useEffect(() => {
     chargerDepannage()
@@ -182,6 +186,17 @@ export default function DepannageDetail() {
       console.error('Erreur chargement photos rapport lie depannage', error)
       setRapportLieErreur("Le rapport lie est charge sans ses photos pour l'instant.")
       return { ...data, rapport_photos: [] }
+    }
+  }
+
+  async function rechargerRapportLie() {
+    try {
+      setRapportLie(await chargerRapportLie())
+      setRapportLieErreur('')
+    } catch (error) {
+      console.error('Erreur rechargement rapport lie depannage', error)
+      setRapportLie(null)
+      setRapportLieErreur("Le rapport lie n'a pas pu etre recharge pour l'instant.")
     }
   }
 
@@ -322,6 +337,61 @@ export default function DepannageDetail() {
       setSaveError("Impossible de mettre à jour le statut. Réessaie dans un instant.")
     } finally {
       setStatutSaving(false)
+    }
+  }
+
+  async function ajouterPhotosAdmin(event) {
+    const files = Array.from(event.target.files || []).filter(Boolean)
+    event.target.value = ''
+    if (!rapportLie || files.length === 0 || photoSaving) return
+
+    const sousDossierId = rapportLie.sous_dossiers?.id || rapportLie.sous_dossier_id || null
+    const chantierId = rapportLie.sous_dossiers?.chantier_id || rapportLie.sous_dossiers?.chantiers?.id || depannage?.chantier?.id || depannage?.chantier_id || null
+
+    if (!sousDossierId || !chantierId) {
+      setRapportLieErreur("Impossible d'ajouter des photos sans dossier chantier rattache au rapport.")
+      return
+    }
+
+    setPhotoSaving(true)
+    setRapportLieErreur('')
+
+    try {
+      await uploadRapportPhotos({
+        rapportId: rapportLie.id,
+        depannageId: rapportLie.depannage_id || depannage?.id || id,
+        chantierId,
+        sousDossierId,
+        files,
+        userId: user?.id || null
+      })
+      await rechargerRapportLie()
+      setSaveSuccess('Photos ajoutees au rapport.')
+    } catch (error) {
+      console.error('Erreur ajout photos admin depannage', error)
+      setRapportLieErreur("Impossible d'ajouter les photos pour l'instant.")
+    } finally {
+      setPhotoSaving(false)
+    }
+  }
+
+  async function supprimerPhotoAdmin(photo) {
+    if (!photo?.id || photoSaving) return
+    const confirmed = await safeConfirm('Supprimer cette photo du rapport ?')
+    if (!confirmed) return
+
+    setPhotoSaving(true)
+    setRapportLieErreur('')
+
+    try {
+      await deleteRapportPhoto(photo)
+      await rechargerRapportLie()
+      setSaveSuccess('Photo supprimee du rapport.')
+    } catch (error) {
+      console.error('Erreur suppression photo admin depannage', error)
+      setRapportLieErreur("Impossible de supprimer cette photo pour l'instant.")
+    } finally {
+      setPhotoSaving(false)
     }
   }
 
@@ -529,17 +599,33 @@ export default function DepannageDetail() {
 
                 {rapportLie && (
                   <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ fontWeight: 600, fontSize: '14px' }}>Photos du rapport</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px' }}>Photos du rapport</div>
+                      <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: photoSaving ? 'default' : 'pointer', opacity: photoSaving ? 0.7 : 1 }}>
+                        {photoSaving ? 'Traitement...' : '+ Ajouter des photos'}
+                        <input type="file" accept="image/*" multiple onChange={ajouterPhotosAdmin} disabled={photoSaving} style={{ display: 'none' }} />
+                      </label>
+                    </div>
                     {(rapportLie.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
                     {(rapportLie.rapport_photos || []).length > 0 && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
                         {(rapportLie.rapport_photos || []).map(photo => (
-                          <a key={photo.id} href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                          <div key={photo.id} style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                            <a href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
                               {photo.signed_url && <img src={photo.signed_url} alt={photo.file_name} style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />}
-                              <div style={{ padding: '8px', fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                            </a>
+                            <div style={{ padding: '8px', display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                              <div style={{ fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                              <button
+                                type="button"
+                                onClick={() => supprimerPhotoAdmin(photo)}
+                                disabled={photoSaving}
+                                style={{ border: '1px solid #f09595', background: 'white', color: '#A32D2D', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', flexShrink: 0, cursor: photoSaving ? 'default' : 'pointer' }}
+                              >
+                                Supprimer
+                              </button>
                             </div>
-                          </a>
+                          </div>
                         ))}
                       </div>
                     )}

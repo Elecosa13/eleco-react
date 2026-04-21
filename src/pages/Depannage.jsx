@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
-import { usePageRefresh } from '../lib/refresh'
 import { safeLocalStorage } from '../lib/safe-browser'
 import {
   ensureDepannageSousDossier,
@@ -72,13 +71,11 @@ export default function Depannage() {
 
   useEffect(() => () => releasePhotoPreviews(photosRef.current), [])
 
-  usePageRefresh(async () => {
-    try {
-      await chargerCredit(date)
-    } catch (error) {
+  useEffect(() => {
+    chargerCredit(date).catch(error => {
       console.error('Erreur chargement credit depannage', error)
       setErreur('Impossible de charger les données. Réessaie dans un instant.')
-    }
+    })
   }, [date, user?.id])
 
   async function charger() {
@@ -648,11 +645,18 @@ export default function Depannage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</span>
-              <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
-                + Ajouter
-                <input type="file" accept="image/*" capture="environment" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
-              </label>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                  Camera
+                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} style={{ display: 'none' }} />
+                </label>
+                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                  Galerie
+                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
+                </label>
+              </div>
             </div>
+            <div style={{ fontSize: '11px', color: '#888' }}>Les photos ajoutees restent en attente ici tant que le rapport n'est pas envoye.</div>
             {photosExistantes.length === 0 && photos.length === 0 && (
               <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>
             )}

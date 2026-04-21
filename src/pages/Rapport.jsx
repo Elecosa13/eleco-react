@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
-import { usePageRefresh } from '../lib/refresh'
 import { safeLocalStorage } from '../lib/safe-browser'
 import {
   buildPhotoPreviewItems,
@@ -54,8 +53,6 @@ export default function Rapport() {
   }, [photos])
 
   useEffect(() => () => releasePhotoPreviews(photosRef.current), [])
-
-  usePageRefresh(() => charger(), [id, date, user?.id])
 
   async function charger() {
     setLoading(true)
@@ -407,11 +404,18 @@ export default function Rapport() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</span>
-              <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
-                + Ajouter
-                <input type="file" accept="image/*" capture="environment" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
-              </label>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                  Camera
+                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} style={{ display: 'none' }} />
+                </label>
+                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                  Galerie
+                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
+                </label>
+              </div>
             </div>
+            <div style={{ fontSize: '11px', color: '#888' }}>Les photos restent visibles ici jusqu'a l'envoi du rapport ou leur suppression manuelle.</div>
             {photos.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
             {photos.length > 0 && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>

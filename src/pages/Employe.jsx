@@ -410,6 +410,11 @@ export default function Employe() {
     }
   }
 
+  function ouvrirDepannage(depannage) {
+    if (!depannage?.id) return
+    navigate(`/employe/depannage?depannageId=${depannage.id}`)
+  }
+
   const creditRestant = CREDIT_JOUR - creditUtilise
   const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
   const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
@@ -836,6 +841,7 @@ export default function Employe() {
               currentUserId={user?.id}
               onAction={agirSurDepannage}
               actionLoading={depannageActionLoading}
+              onClick={ouvrirDepannage}
             />
           ))}
         </>}

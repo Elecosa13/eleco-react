@@ -109,6 +109,7 @@ export default function DepannageDetail() {
   const [chantiers, setChantiers] = useState([])
   const [loading, setLoading] = useState(true)
   const [erreur, setErreur] = useState('')
+  const [rapportLieErreur, setRapportLieErreur] = useState('')
   const [edition, setEdition] = useState(false)
   const [form, setForm] = useState(buildForm(null))
   const [saving, setSaving] = useState(false)
@@ -136,12 +137,24 @@ export default function DepannageDetail() {
   async function chargerDepannage() {
     setLoading(true)
     setErreur('')
+    setRapportLieErreur('')
 
     try {
       const data = await lireDepannage()
       setDepannage(data || null)
       setForm(buildForm(data))
-      setRapportLie(await chargerRapportLie())
+      if (!data) {
+        setRapportLie(null)
+        return
+      }
+
+      try {
+        setRapportLie(await chargerRapportLie())
+      } catch (error) {
+        console.error('Erreur chargement rapport lie depannage', error)
+        setRapportLie(null)
+        setRapportLieErreur("Le rapport lie n'a pas pu etre charge pour l'instant.")
+      }
     } catch (error) {
       console.error('Erreur chargement detail depannage', error)
       setErreur("Impossible de charger ce dépannage. Réessaie dans un instant.")
@@ -162,8 +175,14 @@ export default function DepannageDetail() {
     if (error) throw error
     if (!data) return null
 
-    const photos = await withSignedPhotoUrls(data.rapport_photos || [])
-    return { ...data, rapport_photos: photos }
+    try {
+      const photos = await withSignedPhotoUrls(data.rapport_photos || [])
+      return { ...data, rapport_photos: photos }
+    } catch (error) {
+      console.error('Erreur chargement photos rapport lie depannage', error)
+      setRapportLieErreur("Le rapport lie est charge sans ses photos pour l'instant.")
+      return { ...data, rapport_photos: [] }
+    }
   }
 
   async function chargerReferentiels() {
@@ -365,6 +384,7 @@ export default function DepannageDetail() {
             {saveSuccess && <div style={{ color: '#3B6D11', fontSize: '13px' }}>{saveSuccess}</div>}
             {saveError && <div style={{ color: '#A32D2D', fontSize: '13px' }}>{saveError}</div>}
             {regiesError && <div style={{ color: '#A32D2D', background: '#FCEBEB', border: '1px solid #f4c7c7', borderRadius: '8px', padding: '8px 10px', fontSize: '12px' }}>{regiesError}</div>}
+            {rapportLieErreur && <div style={{ color: '#8A5A10', background: '#FAEEDA', border: '1px solid #efd19c', borderRadius: '8px', padding: '8px 10px', fontSize: '12px' }}>{rapportLieErreur}</div>}
 
             {edition ? (
               <form onSubmit={enregistrerDepannage} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

@@ -58,6 +58,7 @@ export default function Depannage() {
   const [photos, setPhotos] = useState([])
   const [photosExistantes, setPhotosExistantes] = useState([])
   const [erreur, setErreur] = useState('')
+  const [rapportErreur, setRapportErreur] = useState('')
   const [loading, setLoading] = useState(true)
   const photosRef = useRef([])
 
@@ -83,6 +84,7 @@ export default function Depannage() {
   async function charger() {
     setLoading(true)
     setErreur('')
+    setRapportErreur('')
 
     try {
       const [regiesResult, catalogueResult, chantiersResult] = await Promise.all([
@@ -139,31 +141,46 @@ export default function Depannage() {
     setRegieId(depannage.regie_id || regieNonAssigneeId || '')
     setChantierId(depannage.chantier_id || '')
 
-    const { data: rapport, error: rapportError } = await supabase
-      .from('rapports')
-      .select('id, sous_dossier_id, date_travail, remarques, rapport_materiaux(*), rapport_photos(*)')
-      .eq('depannage_id', depannageId)
-      .maybeSingle()
+    try {
+      const { data: rapport, error: rapportError } = await supabase
+        .from('rapports')
+        .select('id, sous_dossier_id, date_travail, remarques, rapport_materiaux(*), rapport_photos(*)')
+        .eq('depannage_id', depannageId)
+        .maybeSingle()
 
-    if (rapportError) throw rapportError
+      if (rapportError) throw rapportError
 
-    if (rapport) {
-      setRapportExistantId(rapport.id)
-      setDate(rapport.date_travail || depannage.date_travail || '')
-      setRemarques(rapport.remarques || depannage.remarques || '')
-      setMateriaux((rapport.rapport_materiaux || []).map(mapRapportMateriauToUi))
-      setPhotosExistantes(await withSignedPhotoUrls(rapport.rapport_photos || []))
-      return
+      if (rapport) {
+        setRapportExistantId(rapport.id)
+        setDate(rapport.date_travail || depannage.date_travail || '')
+        setRemarques(rapport.remarques || depannage.remarques || '')
+        setMateriaux((rapport.rapport_materiaux || []).map(mapRapportMateriauToUi))
+
+        try {
+          setPhotosExistantes(await withSignedPhotoUrls(rapport.rapport_photos || []))
+        } catch (error) {
+          console.error('Erreur chargement photos rapport depannage', error)
+          setPhotosExistantes([])
+          setRapportErreur("Le rapport existant est charge sans ses photos pour l'instant.")
+        }
+        return
+      }
+
+      const { data: legacyMateriaux, error: legacyMateriauxError } = await supabase
+        .from('rapport_materiaux')
+        .select('*')
+        .eq('rapport_id', depannageId)
+
+      if (legacyMateriauxError) throw legacyMateriauxError
+      setMateriaux((legacyMateriaux || []).map(mapRapportMateriauToUi))
+      setPhotosExistantes([])
+    } catch (error) {
+      console.error('Erreur chargement rapport depannage existant', error)
+      setRapportExistantId('')
+      setMateriaux([])
+      setPhotosExistantes([])
+      setRapportErreur("Le rapport existant n'a pas pu etre charge pour l'instant.")
     }
-
-    const { data: legacyMateriaux, error: legacyMateriauxError } = await supabase
-      .from('rapport_materiaux')
-      .select('*')
-      .eq('rapport_id', depannageId)
-
-    if (legacyMateriauxError) throw legacyMateriauxError
-    setMateriaux((legacyMateriaux || []).map(mapRapportMateriauToUi))
-    setPhotosExistantes([])
   }
 
   async function chargerCredit(nextDate = date) {
@@ -523,6 +540,11 @@ export default function Depannage() {
           {erreur && (
             <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
               {erreur}
+            </div>
+          )}
+          {rapportErreur && (
+            <div style={{ background: '#FAEEDA', border: '1px solid #efd19c', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#8A5A10' }}>
+              {rapportErreur}
             </div>
           )}
           {soumissionVerrouillee && (

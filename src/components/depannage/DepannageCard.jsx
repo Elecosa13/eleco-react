@@ -21,7 +21,7 @@ const ACTION_STYLE = {
   fontWeight: 700
 }
 
-export default function DepannageCard({ depannage, currentUserId, onAction, actionLoading }) {
+export default function DepannageCard({ depannage, currentUserId, onAction, actionLoading, onClick }) {
   const [planOpen, setPlanOpen] = useState(false)
   const [planDate, setPlanDate] = useState(depannage.date_planifiee || depannage.date_travail || '')
   const [planTime, setPlanTime] = useState(String(depannage.heure_planifiee || '').slice(0, 5))
@@ -55,32 +55,18 @@ export default function DepannageCard({ depannage, currentUserId, onAction, acti
     event.stopPropagation()
   }
 
-  function handlePrimaryAction() {
-    if (isCurrentAction) return
-    if (peutPlanifier) {
-      setPlanOpen(current => !current)
-      return
-    }
-    if (peutFaireRapport) {
-      onAction('rapport', depannage)
-      return
-    }
-    if (peutRejoindre) {
-      onAction('rejoindre', depannage)
-    }
-  }
-
-  function handleCardClick() {
-    handlePrimaryAction()
+  function handleCardClick(event) {
+    if (!cardClickable) return
+    onClick(depannage, event)
   }
 
   function handleCardKeyDown(event) {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
-    handlePrimaryAction()
+    handleCardClick(event)
   }
 
-  const cardClickable = peutPlanifier || peutFaireRapport || peutRejoindre
+  const cardClickable = typeof onClick === 'function'
 
   return (
     <article

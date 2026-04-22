@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import PhotoDropZone from '../components/PhotoDropZone'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeConfirm } from '../lib/safe-browser'
 import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '../services/rapportPhotos.service'
+import { fetchLinkedTimeEntry } from '../services/timeEntries.service'
 
 const STATUT_A_TRAITER = 'À traiter'
 const STATUT_PRIS = 'Pris'
@@ -135,7 +137,29 @@ export default function DepannageDetail() {
       .maybeSingle()
 
     if (error) throw error
-    return data || null
+    return hydraterDepannageDuree(data || null)
+  }
+
+  async function hydraterDepannageDuree(data) {
+    if (!data?.id) return data || null
+
+    try {
+      const timeEntry = await fetchLinkedTimeEntry({
+        type: 'depannage',
+        referenceId: data.id
+      })
+
+      return {
+        ...data,
+        _duree: Number(timeEntry?.duree) || 0
+      }
+    } catch (error) {
+      console.error('Erreur chargement time_entry detail depannage', error)
+      return {
+        ...data,
+        _duree: 0
+      }
+    }
   }
 
   async function chargerDepannage() {
@@ -340,9 +364,8 @@ export default function DepannageDetail() {
     }
   }
 
-  async function ajouterPhotosAdmin(event) {
-    const files = Array.from(event.target.files || []).filter(Boolean)
-    event.target.value = ''
+  async function traiterAjoutPhotosAdmin(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean)
     if (!rapportLie || files.length === 0 || photoSaving) return
 
     const sousDossierId = rapportLie.sous_dossiers?.id || rapportLie.sous_dossier_id || null
@@ -373,6 +396,11 @@ export default function DepannageDetail() {
     } finally {
       setPhotoSaving(false)
     }
+  }
+
+  async function ajouterPhotosAdmin(event) {
+    await traiterAjoutPhotosAdmin(event.target.files)
+    event.target.value = ''
   }
 
   async function supprimerPhotoAdmin(photo) {
@@ -406,7 +434,7 @@ export default function DepannageDetail() {
     description: firstValue(depannage.objet, depannage.titre, depannage.description, depannage.remarques),
     statut: firstValue(depannage.statut, depannage.status, STATUT_A_TRAITER),
     intervenant: firstValue(fullName(depannage.employe), depannage.intervenant, depannage.intervenant_nom),
-    duree: depannage.duree ? `${depannage.duree} h` : '',
+    duree: `${Number(depannage._duree) || 0} h`,
     contact: firstValue(depannage.contact, depannage.telephone, depannage.email),
     reference: firstValue(depannage.numero_bon, depannage.reference, depannage.ref),
     creeLe: formatDateTime(depannage.created_at),
@@ -606,6 +634,13 @@ export default function DepannageDetail() {
                         <input type="file" accept="image/*" multiple onChange={ajouterPhotosAdmin} disabled={photoSaving} style={{ display: 'none' }} />
                       </label>
                     </div>
+                    <PhotoDropZone
+                      onFilesSelected={traiterAjoutPhotosAdmin}
+                      disabled={photoSaving}
+                      title="Glisser-deposer des photos ici"
+                      hint="ou cliquer pour selectionner plusieurs fichiers"
+                      note={photoSaving ? 'Ajout en cours...' : 'Sur desktop, le depot ou le clic ajoutent directement les photos au rapport.'}
+                    />
                     {(rapportLie.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
                     {(rapportLie.rapport_photos || []).length > 0 && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>

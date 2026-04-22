@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
+import PhotoDropZone from '../components/PhotoDropZone'
+import { upsertLinkedTimeEntry } from '../services/timeEntries.service'
 import {
   buildPhotoPreviewItems,
   releasePhotoPreviews,
@@ -42,11 +44,16 @@ export default function Rapport() {
   const [succes, setSucces] = useState(false)
   const [loading, setLoading] = useState(true)
   const [creditUtilise, setCreditUtilise] = useState(0)
+  const [rapportExistant, setRapportExistant] = useState(null)
   const photosRef = useRef([])
 
   useEffect(() => {
     charger()
   }, [id])
+
+  useEffect(() => {
+    verifierRapportExistant(date)
+  }, [date, id, user?.id])
 
   useEffect(() => {
     photosRef.current = photos
@@ -78,6 +85,29 @@ export default function Rapport() {
       chargerCredit(date)
     ])
     setLoading(false)
+  }
+
+  async function verifierRapportExistant(dateTravail) {
+    if (!id || !user?.id || !dateTravail) {
+      setRapportExistant(null)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('rapports')
+      .select('id, valide')
+      .eq('sous_dossier_id', id)
+      .eq('employe_id', user.id)
+      .eq('date_travail', dateTravail)
+      .is('deleted_at', null)
+      .maybeSingle()
+
+    if (error) {
+      console.error('Erreur verification rapport chantier existant', error)
+      return
+    }
+
+    setRapportExistant(data || null)
   }
 
   async function chargerCredit(dateTravail) {
@@ -141,10 +171,14 @@ export default function Rapport() {
     )
   }
 
-  function ajouterPhotos(event) {
-    const files = Array.from(event.target.files || [])
+  function ajouterPhotosDepuisListe(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean)
     if (files.length === 0) return
     setPhotos(current => [...current, ...buildPhotoPreviewItems(files)])
+  }
+
+  function ajouterPhotos(event) {
+    ajouterPhotosDepuisListe(event.target.files)
     event.target.value = ''
   }
 
@@ -159,6 +193,7 @@ export default function Rapport() {
   async function envoyer(event) {
     event.preventDefault()
     if (!user || !sd) return
+    if (rapportExistant?.id) return
     setEnvoi(true)
 
     try {
@@ -178,19 +213,14 @@ export default function Rapport() {
       )
 
       if (rapport) {
-        const { data: existingEntry } = await supabase.from('time_entries')
-          .select('id').eq('reference_id', rapport.id).eq('type', 'chantier').maybeSingle()
-        if (!existingEntry) {
-          await supabaseSafe(
-            supabase.from('time_entries').insert({
-              employe_id: user.id,
-              date_travail: date,
-              type: 'chantier',
-              reference_id: rapport.id,
-              duree
-            })
-          )
-        }
+        await upsertLinkedTimeEntry({
+          employeId: user.id,
+          type: 'chantier',
+          referenceId: rapport.id,
+          dateTravail: date,
+          duree,
+          chantierId: sd.chantier_id
+        })
 
         if (materiaux.length > 0) {
           await supabaseSafe(
@@ -221,7 +251,12 @@ export default function Rapport() {
       setSucces(true)
       setTimeout(() => navigate(`/employe/chantier/${sd.chantier_id}`), 2000)
     } catch (error) {
-      alert("Erreur lors de l'envoi du rapport. Veuillez réessayer.")
+      if (error?.code === '23505' || String(error?.message || '').includes('duplicate_chantier_rapport')) {
+        await verifierRapportExistant(date)
+        alert("Un rapport existe deja pour cette date dans ce sous-dossier.")
+      } else {
+        alert("Erreur lors de l'envoi du rapport. Veuillez réessayer.")
+      }
     } finally {
       setEnvoi(false)
     }
@@ -355,6 +390,21 @@ export default function Rapport() {
             {depasse ? `Dépassement — crédit restant : ${creditRestant.toFixed(1)}h` : `Crédit restant aujourd'hui : ${creditRestant.toFixed(1)}h`}
           </div>
 
+          {rapportExistant?.id && (
+            <div style={{
+              background: rapportExistant.valide ? '#FAEEDA' : '#FCEBEB',
+              border: `1px solid ${rapportExistant.valide ? '#efd19c' : '#f09595'}`,
+              borderRadius: '8px',
+              padding: '10px 14px',
+              fontSize: '12px',
+              color: rapportExistant.valide ? '#8A5A10' : '#A32D2D'
+            }}>
+              {rapportExistant.valide
+                ? "Un rapport valide existe deja pour cette date. Les heures sont verrouillees."
+                : "Un rapport existe deja pour cette date. La recreation est bloquee pour eviter un double comptage."}
+            </div>
+          )}
+
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Heures travaillées</div>
             <div className="form-group">
@@ -420,6 +470,12 @@ export default function Rapport() {
               </div>
             </div>
             <div style={{ fontSize: '11px', color: '#888' }}>Les photos restent visibles ici jusqu'a l'envoi du rapport ou leur suppression manuelle.</div>
+            <PhotoDropZone
+              onFilesSelected={ajouterPhotosDepuisListe}
+              title="Glisser-deposer des photos ici"
+              hint="ou cliquer pour selectionner dans vos fichiers"
+              note="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
+            />
             {photos.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
             {photos.length > 0 && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
@@ -441,7 +497,7 @@ export default function Rapport() {
             <textarea placeholder="Observations..." value={remarques} onChange={event => setRemarques(event.target.value)} rows={3} />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={envoi}>{envoi ? 'Envoi...' : '✓ Envoyer le rapport'}</button>
+          <button type="submit" className="btn-primary" disabled={envoi || Boolean(rapportExistant?.id)}>{envoi ? 'Envoi...' : '✓ Envoyer le rapport'}</button>
         </div>
       </form>
     </div>

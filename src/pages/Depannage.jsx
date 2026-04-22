@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
+import PhotoDropZone from '../components/PhotoDropZone'
+import { fetchLinkedTimeEntry, upsertLinkedTimeEntry } from '../services/timeEntries.service'
 import {
   ensureDepannageSousDossier,
   STATUT_INTERVENTION_FAITE,
@@ -54,6 +56,7 @@ export default function Depannage() {
   const [chantiers, setChantiers] = useState([])
   const [chantierId, setChantierId] = useState('')
   const [rapportExistantId, setRapportExistantId] = useState('')
+  const [rapportValide, setRapportValide] = useState(false)
   const [photos, setPhotos] = useState([])
   const [photosExistantes, setPhotosExistantes] = useState([])
   const [erreur, setErreur] = useState('')
@@ -132,16 +135,29 @@ export default function Depannage() {
     if (!depannage) throw new Error('depannage_introuvable')
 
     setAdresse(depannage.adresse || '')
-    setDuree(Number(depannage.duree) || 1)
+    setDuree(1)
     setRemarques(depannage.remarques || '')
     setDate(depannage.date_travail || new Date().toISOString().split('T')[0])
     setRegieId(depannage.regie_id || regieNonAssigneeId || '')
     setChantierId(depannage.chantier_id || '')
 
     try {
+      const timeEntry = await fetchLinkedTimeEntry({
+        type: 'depannage',
+        referenceId: depannageId,
+        employeId: user?.id
+      })
+      if (timeEntry?.duree !== undefined && timeEntry?.duree !== null) {
+        setDuree(Number(timeEntry.duree) || 1)
+      }
+    } catch (error) {
+      console.error('Erreur chargement time_entry depannage', error)
+    }
+
+    try {
       const { data: rapport, error: rapportError } = await supabase
         .from('rapports')
-        .select('id, sous_dossier_id, date_travail, remarques, rapport_materiaux(*), rapport_photos(*)')
+        .select('id, sous_dossier_id, date_travail, remarques, valide, rapport_materiaux(*), rapport_photos(*)')
         .eq('depannage_id', depannageId)
         .maybeSingle()
 
@@ -149,6 +165,7 @@ export default function Depannage() {
 
       if (rapport) {
         setRapportExistantId(rapport.id)
+        setRapportValide(Boolean(rapport.valide))
         setDate(rapport.date_travail || depannage.date_travail || '')
         setRemarques(rapport.remarques || depannage.remarques || '')
         setMateriaux((rapport.rapport_materiaux || []).map(mapRapportMateriauToUi))
@@ -163,6 +180,8 @@ export default function Depannage() {
         return
       }
 
+      setRapportValide(false)
+
       const { data: legacyMateriaux, error: legacyMateriauxError } = await supabase
         .from('rapport_materiaux')
         .select('*')
@@ -174,6 +193,7 @@ export default function Depannage() {
     } catch (error) {
       console.error('Erreur chargement rapport depannage existant', error)
       setRapportExistantId('')
+      setRapportValide(false)
       setMateriaux([])
       setPhotosExistantes([])
       setRapportErreur("Le rapport existant n'a pas pu etre charge pour l'instant.")
@@ -226,11 +246,15 @@ export default function Depannage() {
     )
   }
 
-  function ajouterPhotos(event) {
-    const files = Array.from(event.target.files || [])
+  function ajouterPhotosDepuisListe(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean)
     if (files.length === 0) return
     const newItems = buildPhotoPreviewItems(files)
     setPhotos(current => [...current, ...newItems])
+  }
+
+  function ajouterPhotos(event) {
+    ajouterPhotosDepuisListe(event.target.files)
     event.target.value = ''
   }
 
@@ -254,6 +278,10 @@ export default function Depannage() {
   async function envoyer(event) {
     event.preventDefault()
     if (envoi || soumissionVerrouillee) return
+    if (rapportValide) {
+      setErreur("Ce rapport est deja valide. Les heures et la recreation sont verrouillees cote employe.")
+      return
+    }
     if (!adresse.trim()) return
     if (!chantierId) {
       setErreur('Sélectionne le chantier lié au dépannage pour classer le rapport dans le bon dossier admin.')
@@ -277,7 +305,6 @@ export default function Depannage() {
         regie_id: regieIdFinal,
         date_travail: date,
         adresse: adresse.trim(),
-        duree,
         remarques: remarques.trim(),
         statut: STATUT_INTERVENTION_FAITE
       }
@@ -367,6 +394,11 @@ export default function Depannage() {
       setTimeout(() => navigate('/employe'), 2000)
     } catch (error) {
       console.error('Erreur enregistrement dépannage', error)
+      if (String(error?.message || '').includes('locked_validated_report')) {
+        setRapportValide(true)
+        setErreur("Ce rapport est deja valide. Les heures et la recreation sont verrouillees cote employe.")
+        return
+      }
       if (depannageSauveId || rapportSauveId) {
         setSoumissionVerrouillee(true)
         setErreur("Le rapport a probablement été enregistré partiellement. Retourne à l'accueil et laisse l'administration contrôler le dossier avant une nouvelle tentative.")
@@ -379,39 +411,14 @@ export default function Depannage() {
   }
 
   async function sauvegarderTimeEntry(depannageSauveId) {
-    const basePayload = {
-      employe_id: user.id,
-      date_travail: date,
+    await upsertLinkedTimeEntry({
+      employeId: user.id,
       type: 'depannage',
-      reference_id: depannageSauveId,
-      duree
-    }
-
-    const { data: existingEntry, error: existingEntryError } = await supabase
-      .from('time_entries')
-      .select('id')
-      .eq('employe_id', user.id)
-      .eq('type', 'depannage')
-      .eq('reference_id', depannageSauveId)
-      .maybeSingle()
-
-    if (existingEntryError) throw existingEntryError
-
-    if (existingEntry?.id) {
-      const { error: updateError } = await supabase
-        .from('time_entries')
-        .update(basePayload)
-        .eq('id', existingEntry.id)
-
-      if (updateError) throw updateError
-      return
-    }
-
-    const { error: insertError } = await supabase
-      .from('time_entries')
-      .insert(basePayload)
-
-    if (insertError) throw insertError
+      referenceId: depannageSauveId,
+      dateTravail: date,
+      duree,
+      chantierId
+    })
   }
 
   async function sauvegarderMateriaux(rapportId) {
@@ -439,6 +446,7 @@ export default function Depannage() {
 
   const creditRestant = CREDIT_JOUR - creditUtilise
   const depasse = creditUtilise + duree > CREDIT_JOUR
+  const rapportEmployeVerrouille = soumissionVerrouillee || rapportValide
 
   if (succes) {
     return (
@@ -544,6 +552,11 @@ export default function Depannage() {
               {rapportErreur}
             </div>
           )}
+          {rapportValide && (
+            <div style={{ background: '#FAEEDA', border: '1px solid #efd19c', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#8A5A10' }}>
+              Ce rapport est deja valide. Les heures et la recreation sont verrouillees cote employe.
+            </div>
+          )}
           {soumissionVerrouillee && (
             <button type="button" className="btn-primary" onClick={() => navigate('/employe')}>
               Retour à l'accueil
@@ -592,7 +605,7 @@ export default function Depannage() {
                   console.error('Erreur chargement credit depannage', error)
                   setErreur('Impossible de charger les données. Réessaie dans un instant.')
                 }
-              }} required />
+              }} required disabled={rapportEmployeVerrouille} />
             </div>
             <div className="form-group">
               <label>Adresse *</label>
@@ -605,16 +618,18 @@ export default function Depannage() {
                   <button
                     key={valeur}
                     type="button"
+                    disabled={rapportEmployeVerrouille}
                     onClick={() => setDuree(valeur)}
                     style={{
                       padding: '8px 14px',
                       borderRadius: '20px',
                       fontSize: '13px',
                       fontWeight: 500,
-                      cursor: 'pointer',
+                      cursor: rapportEmployeVerrouille ? 'default' : 'pointer',
                       border: duree === valeur ? 'none' : '1px solid #ddd',
                       background: duree === valeur ? '#185FA5' : 'white',
-                      color: duree === valeur ? 'white' : '#333'
+                      color: duree === valeur ? 'white' : '#333',
+                      opacity: rapportEmployeVerrouille ? 0.6 : 1
                     }}
                   >
                     {valeur % 1 === 0 ? `${valeur}h` : `${Math.floor(valeur)}h30`}
@@ -627,7 +642,7 @@ export default function Depannage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
-              <button type="button" className="btn-primary btn-sm" disabled={soumissionVerrouillee} style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
+              <button type="button" className="btn-primary btn-sm" disabled={rapportEmployeVerrouille} style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
             </div>
             {materiaux.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun article</div>}
             {materiaux.map(item => (
@@ -646,17 +661,24 @@ export default function Depannage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</span>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: rapportEmployeVerrouille ? 'default' : 'pointer', opacity: rapportEmployeVerrouille ? 0.7 : 1 }}>
                   Camera
-                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} style={{ display: 'none' }} />
+                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} disabled={rapportEmployeVerrouille} style={{ display: 'none' }} />
                 </label>
-                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
+                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: rapportEmployeVerrouille ? 'default' : 'pointer', opacity: rapportEmployeVerrouille ? 0.7 : 1 }}>
                   Galerie
-                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
+                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} disabled={rapportEmployeVerrouille} style={{ display: 'none' }} />
                 </label>
               </div>
             </div>
             <div style={{ fontSize: '11px', color: '#888' }}>Les photos ajoutees restent en attente ici tant que le rapport n'est pas envoye.</div>
+            <PhotoDropZone
+              onFilesSelected={ajouterPhotosDepuisListe}
+              disabled={rapportEmployeVerrouille}
+              title="Glisser-deposer des photos ici"
+              hint="ou cliquer pour selectionner dans vos fichiers"
+              note="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
+            />
             {photosExistantes.length === 0 && photos.length === 0 && (
               <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>
             )}
@@ -689,10 +711,10 @@ export default function Depannage() {
 
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Remarques</div>
-            <textarea placeholder="Observations, client, travaux effectués..." value={remarques} onChange={event => setRemarques(event.target.value)} rows={4} />
+            <textarea placeholder="Observations, client, travaux effectués..." value={remarques} onChange={event => setRemarques(event.target.value)} rows={4} disabled={rapportEmployeVerrouille} />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={envoi || soumissionVerrouillee}>
+          <button type="submit" className="btn-primary" disabled={envoi || rapportEmployeVerrouille}>
             {envoi ? 'Envoi...' : '⚡ Envoyer le rapport dépannage'}
           </button>
         </div>

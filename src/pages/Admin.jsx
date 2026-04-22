@@ -7,6 +7,7 @@ import { usePageRefresh } from '../lib/refresh'
 import { safeConfirm } from '../lib/safe-browser'
 import { getInitiales } from '../services/depannages.service'
 import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
+import { fetchTimeEntryDurationsMap } from '../services/timeEntries.service'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -85,6 +86,42 @@ async function hydraterRapportsPhotos(rapports) {
     console.error('Erreur signature photos rapports admin', error)
     return list
   }
+}
+
+async function hydraterRapportsDurees(rapports, employeId = null, dateFrom = null, dateTo = null) {
+  const list = Array.from(rapports || [])
+  if (list.length === 0) return list
+
+  const byRapportId = await fetchTimeEntryDurationsMap({
+    type: 'chantier',
+    referenceIds: list.map(rapport => rapport.id),
+    employeId,
+    dateFrom,
+    dateTo
+  })
+
+  return list.map(rapport => ({
+    ...rapport,
+    _duree: byRapportId[String(rapport.id)] ?? 0
+  }))
+}
+
+async function hydraterDepannagesDurees(depannages, employeId = null, dateFrom = null, dateTo = null) {
+  const list = Array.from(depannages || [])
+  if (list.length === 0) return list
+
+  const byDepannageId = await fetchTimeEntryDurationsMap({
+    type: 'depannage',
+    referenceIds: list.map(depannage => depannage.id),
+    employeId,
+    dateFrom,
+    dateTo
+  })
+
+  return list.map(depannage => ({
+    ...depannage,
+    _duree: byDepannageId[String(depannage.id)] ?? 0
+  }))
 }
 
 function countJoursOuvrables(dateDebut, dateFin) {
@@ -248,6 +285,9 @@ export default function Admin() {
       let materiauxByDepannage = {}
       let linkedRapportsByDepannage = {}
       const ids = (data || []).map(d => d.id).filter(Boolean)
+      const depannageDurees = ids.length > 0
+        ? await fetchTimeEntryDurationsMap({ type: 'depannage', referenceIds: ids })
+        : {}
       if (ids.length > 0) {
         const [{ data: mats, error: matsError }, { data: linkedRapports, error: linkedRapportsError }] = await Promise.all([
           supabase
@@ -304,6 +344,7 @@ export default function Admin() {
 
       setDepannages((data || []).map(depannage => ({
         ...depannage,
+        _duree: depannageDurees[String(depannage.id)] ?? 0,
         regie: depannage.regie || (depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null),
         rapport_lie: linkedRapportsByDepannage[String(depannage.id)] || null,
         rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
@@ -337,13 +378,8 @@ export default function Admin() {
         .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
-        const rapEnt = await supabaseSafe(supabase.from('time_entries')
-          .select('reference_id, duree').eq('type', 'chantier')
-          .in('reference_id', rap.map(r => r.id)))
-        const byRap = {}
-        for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
         const rapportsHydrates = await hydraterRapportsPhotos(rap)
-        setRapportsEnAttente(rapportsHydrates.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+        setRapportsEnAttente(await hydraterRapportsDurees(rapportsHydrates))
       } else {
         setRapportsEnAttente(rap || [])
       }
@@ -520,12 +556,7 @@ export default function Admin() {
     if (!data) { setRapports([]); return }
     const rapportsHydrates = await hydraterRapportsPhotos(data)
     if (rapportsHydrates.length > 0) {
-      const { data: rapEnt } = await supabase.from('time_entries')
-        .select('reference_id, duree').eq('type', 'chantier')
-        .in('reference_id', rapportsHydrates.map(r => r.id))
-      const byRap = {}
-      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-      setRapports(rapportsHydrates.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
+      setRapports(await hydraterRapportsDurees(rapportsHydrates))
     } else {
       setRapports([])
     }
@@ -541,7 +572,7 @@ export default function Admin() {
     const { data: deps } = await supabase.from('depannages')
       .select('*, employe:employe_id(id, prenom)')
       .gte('date_travail', debut).lte('date_travail', fin)
-    if (deps) setCalDepannages(deps)
+    if (deps) setCalDepannages(await hydraterDepannagesDurees(deps, null, debut, fin))
   }
 
   function changerMois(delta) {
@@ -600,12 +631,7 @@ export default function Admin() {
       .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null).order('date_travail')
 
     if (raps && raps.length > 0) {
-      const { data: rapEnt } = await supabase.from('time_entries')
-        .select('reference_id, duree').eq('type', 'chantier').eq('employe_id', empId)
-        .gte('date_travail', debut).lte('date_travail', fin)
-      const byRap = {}
-      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-      setEmpDetailRapports(raps.map(r => ({ ...r, _duree: byRap[r.id] || 0 })))
+      setEmpDetailRapports(await hydraterRapportsDurees(raps, empId, debut, fin))
     } else {
       setEmpDetailRapports(raps || [])
     }
@@ -613,7 +639,7 @@ export default function Admin() {
     const { data: deps } = await supabase.from('depannages')
       .select('*').eq('employe_id', empId)
       .gte('date_travail', debut).lte('date_travail', fin).order('date_travail')
-    if (deps) setEmpDetailDepannages(deps)
+    if (deps) setEmpDetailDepannages(await hydraterDepannagesDurees(deps, empId, debut, fin))
 
     // Absences
     const { data: abs } = await supabase.from('absences')
@@ -678,7 +704,7 @@ export default function Admin() {
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
         .is('deleted_at', null).order('date_travail'),
       supabase.from('depannages')
-        .select('id, date_travail, adresse, duree')
+        .select('id, date_travail, adresse')
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
         .order('date_travail'),
       supabase.from('time_entries')
@@ -688,15 +714,8 @@ export default function Admin() {
     ])
 
     // Merge des durées rapports via time_entries
-    const rapsAvecDuree = raps || []
-    if (rapsAvecDuree.length > 0) {
-      const { data: rapEnt } = await supabase.from('time_entries')
-        .select('reference_id, duree').eq('type', 'chantier').eq('employe_id', empId)
-        .gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
-      const byRap = {}
-      for (const e of rapEnt || []) byRap[e.reference_id] = Number(e.duree)
-      rapsAvecDuree.forEach(r => { r._duree = byRap[r.id] || 0 })
-    }
+    const rapsAvecDuree = await hydraterRapportsDurees(raps || [], empId, lundiStr, dimancheStr)
+    const depsAvecDuree = await hydraterDepannagesDurees(deps || [], empId, lundiStr, dimancheStr)
 
     const { data: sigData } = await supabase.from('signatures')
       .select('signature_base64').eq('employe_id', empId).maybeSingle()
@@ -727,7 +746,7 @@ export default function Admin() {
       const isWeekend = wd >= 5
 
       const dayRaps = rapsAvecDuree.filter(r => r.date_travail === dateStr)
-      const dayDeps = (deps || []).filter(dep => dep.date_travail === dateStr)
+      const dayDeps = depsAvecDuree.filter(dep => dep.date_travail === dateStr)
       const daySupp = (suppEntries || []).filter(s => s.date_travail === dateStr)
       const isEmpty = dayRaps.length === 0 && dayDeps.length === 0 && daySupp.length === 0
 
@@ -769,7 +788,7 @@ export default function Admin() {
         }
 
         for (const dep of dayDeps) {
-          const duree = Number(dep.duree) || 1
+          const duree = Number(dep._duree) || 0
           totalH += duree
           const label = `⚡  Dépannage — ${dep.adresse}  (Bon #${dep.id})`
           const lines = doc.splitTextToSize(label, 130)
@@ -898,6 +917,11 @@ export default function Admin() {
 
   async function supprimerSousDossier(sd) {
     const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
+    if ((raps || []).length > 0) {
+      alert('Suppression bloquee: ce sous-dossier contient deja des rapports.')
+      setConfirm(null)
+      return
+    }
     try {
       await supabaseSafe(supabase.from('sous_dossiers').delete().eq('id', sd.id))
       setCorbeille(prev => [...prev, { type: 'sous_dossier', label: sd.nom, data: sd, enfants: raps || [] }])
@@ -992,10 +1016,7 @@ export default function Admin() {
         .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
         .eq('id', rapportId).single()
       if (updatedR) {
-        const { data: rapEnt } = await supabase.from('time_entries')
-          .select('reference_id, duree').eq('type', 'chantier').eq('reference_id', rapportId)
-        const duree = rapEnt?.[0] ? Number(rapEnt[0].duree) : calcDuree(updatedR.heure_debut, updatedR.heure_fin)
-        const [rapportHydrate] = await hydraterRapportsPhotos([{ ...updatedR, _duree: duree }])
+        const [rapportHydrate] = await hydraterRapportsDurees(await hydraterRapportsPhotos([updatedR]))
         setRapportDetail(rapportHydrate)
       }
       setEditMateriaux(null); setAjoutArticleVue(false)
@@ -1026,7 +1047,7 @@ export default function Admin() {
 
   function totaux(r) {
     const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-    const duree = r._duree !== undefined ? r._duree : calcDuree(r.heure_debut, r.heure_fin)
+    const duree = r._duree !== undefined ? r._duree : 0
     const mo = duree * TAUX
     const ht = mat + mo
     return { duree, mat, mo, ht, tva: ht * 0.081, ttc: ht * 1.081 }
@@ -1735,7 +1756,7 @@ export default function Admin() {
                   </div>
                   {groupe.mois[mois].map(d => {
                     const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-                    const mo = (d.duree || 1) * TAUX
+                    const mo = (d._duree || 0) * TAUX
                     const ttc = (mat + mo) * 1.081
                     const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
                     const statut = depannageStatut(d)
@@ -1786,7 +1807,7 @@ export default function Admin() {
                           <div style={{ fontSize: '13px', fontWeight: 600 }}>{depannageClientAdresse(d)}</div>
                           <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>
                           <div style={{ fontSize: '11px', color: '#888' }}>
-                            {d.employe?.prenom || 'Employé non défini'} · {fmtDuree(Number(d.duree) || 1)} · Bon #{d.id}
+                            {d.employe?.prenom || 'Employé non défini'} · {fmtDuree(Number(d._duree) || 0)} · Bon #{d.id}
                           </div>
                           <div style={{ fontSize: '11px', color: '#555' }}>
                             Statut : {statut} · Resp. : {responsable} · Intervenants : {intervenantsCount}
@@ -1890,7 +1911,7 @@ export default function Admin() {
                     <span className="badge badge-amber" style={{ fontSize: '10px' }}>Dépannage</span>
                   </div>
                   <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{d.adresse}</div>
-                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{fmtDuree(Number(d.duree) || 1)}</div>
+                  <div style={{ fontSize: '11px', color: '#888', paddingLeft: '14px' }}>{fmtDuree(Number(d._duree) || 0)}</div>
                 </div>
               ))}
             </div>
@@ -2076,7 +2097,7 @@ export default function Admin() {
     const TABS = ['Heures', 'Feuille hebdo', 'Charte', 'Absences']
 
     const totalRapports = empDetailRapports.reduce((s, r) => s + (r._duree || 0), 0)
-    const totalDeps = empDetailDepannages.reduce((s, d) => s + Number(d.duree || 1), 0)
+    const totalDeps = empDetailDepannages.reduce((s, d) => s + Number(d._duree || 0), 0)
     const totalGeneral = totalRapports + totalDeps
 
     const parChantier = {}
@@ -2174,7 +2195,7 @@ export default function Admin() {
                       {new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
                       {d.adresse && <span style={{ color: '#999', marginLeft: '6px' }}>· {d.adresse}</span>}
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{fmtDuree(Number(d.duree) || 1)}</span>
+                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{fmtDuree(Number(d._duree) || 0)}</span>
                   </div>
                 ))}
               </div>

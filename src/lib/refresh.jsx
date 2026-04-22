@@ -1,6 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { addDocumentListener, addWindowListener, getScrollY, getVisibilityState } from './safe-browser'
-import { diag } from './diagnostics'
+import { addWindowListener, getScrollY } from './safe-browser'
 
 const RefreshContext = createContext({
   refreshing: false,
@@ -92,28 +91,6 @@ export function RefreshProvider({ children }) {
       cleanupCancel()
     }
   }, [pullDistance, refresh, refreshing])
-
-  useEffect(() => {
-    let lastRun = 0
-    const refreshIfActive = () => {
-      if (getVisibilityState() === 'hidden') return
-      const now = Date.now()
-      if (now - lastRun < 1500) return
-      lastRun = now
-      refresh().catch(error => {
-        diag('refresh', 'page refresh failed', error, 'warn')
-      })
-    }
-
-    const cleanupVisibility = addDocumentListener('visibilitychange', refreshIfActive)
-    const cleanupFocus = addWindowListener('focus', refreshIfActive)
-    const cleanupPageShow = addWindowListener('pageshow', refreshIfActive)
-    return () => {
-      cleanupVisibility()
-      cleanupFocus()
-      cleanupPageShow()
-    }
-  }, [refresh])
 
   const shown = refreshing || pullDistance > 0
   const progress = refreshing ? 1 : Math.min(1, pullDistance / 58)

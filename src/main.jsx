@@ -5,6 +5,7 @@ import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 import { AuthProvider } from './context/AuthContext'
 import { diag } from './lib/diagnostics'
+import { RefreshProvider } from './lib/refresh'
 import { getRootElement, runSafeFeatureAsync } from './lib/safe-browser'
 import './index.css'
 
@@ -25,9 +26,11 @@ if (!rootElement) {
         <BrowserRouter>
           <ErrorBoundary scope="auth" title="Erreur de session">
             <AuthProvider>
-              <ErrorBoundary scope="app-layout" title="Erreur de l'application">
-                <App />
-              </ErrorBoundary>
+              <RefreshProvider>
+                <ErrorBoundary scope="app-layout" title="Erreur de l'application">
+                  <App />
+                </ErrorBoundary>
+              </RefreshProvider>
             </AuthProvider>
           </ErrorBoundary>
         </BrowserRouter>

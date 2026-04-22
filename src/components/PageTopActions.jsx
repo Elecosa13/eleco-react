@@ -27,18 +27,26 @@ export function navigateBackWithFallback(navigate, fallbackPath) {
   navigate(fallbackPath, { replace: true })
 }
 
-export default function PageTopActions({ navigate, fallbackPath, onRefresh, refreshing = false }) {
+export default function PageTopActions({
+  navigate,
+  fallbackPath,
+  onRefresh,
+  refreshing = false,
+  showBack = true
+}) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
-      <button
-        type="button"
-        aria-label="Retour"
-        title="Retour"
-        onClick={() => navigateBackWithFallback(navigate, fallbackPath)}
-        style={iconButtonStyle}
-      >
-        <span aria-hidden="true">←</span>
-      </button>
+      {showBack && (
+        <button
+          type="button"
+          aria-label="Retour"
+          title="Retour"
+          onClick={() => navigateBackWithFallback(navigate, fallbackPath)}
+          style={iconButtonStyle}
+        >
+          <span aria-hidden="true">&larr;</span>
+        </button>
+      )}
       {onRefresh && (
         <button
           type="button"

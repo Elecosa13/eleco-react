@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import PageTopActions from '../components/PageTopActions'
+import PhotoInputPanel from '../components/PhotoInputPanel'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import { safeConfirm } from '../lib/safe-browser'
 import { getInitiales } from '../services/depannages.service'
-import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
+import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '../services/rapportPhotos.service'
 import { fetchTimeEntryDurationsMap } from '../services/timeEntries.service'
 import {
   CHANTIER_STATUT_A_CONFIRMER,
@@ -239,17 +241,25 @@ export default function Admin() {
   const [pdfSemaine, setPdfSemaine] = useState('')
   const [pdfAnnee, setPdfAnnee] = useState(new Date().getFullYear())
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [refreshingData, setRefreshingData] = useState(false)
+  const [adminPhotoSaving, setAdminPhotoSaving] = useState(false)
 
   useEffect(() => { chargerTout() }, [])
 
-  usePageRefresh(async () => {
-    if (vue === 'calendrier') return chargerCalendrier(calMois)
-    if (vue === 'vacances') return chargerVacancesAdmin()
-    if (vue === 'employes') return chargerStatsEmployes()
-    if (vue === 'employe_detail' && empDetail) return chargerDetailEmploye(empDetail.id, empDetailMois)
-    if (vue === 'sous_dossiers' && chantierActif) return chargerSousDossiers(chantierActif.id)
-    if (vue === 'rapports' && sousDossierActif) return chargerRapports(sousDossierActif.id)
-    return chargerTout()
+  const refreshPage = usePageRefresh(async () => {
+    setRefreshingData(true)
+    try {
+      if (vue === 'calendrier') return await chargerCalendrier(calMois)
+      if (vue === 'vacances') return await chargerVacancesAdmin()
+      if (vue === 'employes') return await chargerStatsEmployes()
+      if (vue === 'employe_detail' && empDetail) return await chargerDetailEmploye(empDetail.id, empDetailMois)
+      if (rapportDetail?.id) return await rechargerRapportDetail(rapportDetail.id)
+      if (vue === 'sous_dossiers' && chantierActif) return await chargerSousDossiers(chantierActif.id)
+      if (vue === 'rapports' && sousDossierActif) return await chargerRapports(sousDossierActif.id)
+      return await chargerTout()
+    } finally {
+      setRefreshingData(false)
+    }
   }, [vue, calMois, empDetail, empDetailMois, chantierActif, sousDossierActif])
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -382,7 +392,7 @@ export default function Admin() {
     setAdminError('')
     try {
       const rap = await supabaseSafe(supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*), rapport_photos(*)')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
@@ -562,7 +572,7 @@ export default function Admin() {
 
   async function chargerRapports(sdId) {
     const { data } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
+      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
       .eq('sous_dossier_id', sdId).is('deleted_at', null).order('date_travail', { ascending: false })
     if (!data) { setRapports([]); return }
     const rapportsHydrates = await hydraterRapportsPhotos(data)
@@ -1023,13 +1033,7 @@ export default function Admin() {
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
       chargerTout()
       // Recharger le rapportDetail avec les nouvelles données
-      const { data: updatedR } = await supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
-        .eq('id', rapportId).single()
-      if (updatedR) {
-        const [rapportHydrate] = await hydraterRapportsDurees(await hydraterRapportsPhotos([updatedR]))
-        setRapportDetail(rapportHydrate)
-      }
+      await rechargerRapportDetail(rapportId)
       setEditMateriaux(null); setAjoutArticleVue(false)
       setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 })
     } catch (error) {
@@ -1055,6 +1059,103 @@ export default function Admin() {
   // ──────────────────────────────────────────────────────────────────────────
   // HELPERS
   // ──────────────────────────────────────────────────────────────────────────
+
+  async function rechargerRapportDetail(rapportId = rapportDetail?.id) {
+    if (!rapportId) return null
+
+    const updatedR = await supabaseSafe(
+      supabase
+        .from('rapports')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+        .eq('id', rapportId)
+        .single()
+    )
+
+    if (!updatedR) {
+      setRapportDetail(null)
+      return null
+    }
+
+    const [rapportHydrate] = await hydraterRapportsDurees(await hydraterRapportsPhotos([updatedR]))
+    setRapportDetail(rapportHydrate || null)
+    if (sousDossierActif?.id) await chargerRapports(sousDossierActif.id)
+    return rapportHydrate || null
+  }
+
+  async function ajouterPhotosRapportAdmin(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean)
+    if (!rapportDetail?.id || files.length === 0 || adminPhotoSaving) return
+
+    const sousDossierId = rapportDetail.sous_dossiers?.id || rapportDetail.sous_dossier_id || sousDossierActif?.id || null
+    const chantierId = rapportDetail.sous_dossiers?.chantier_id || rapportDetail.sous_dossiers?.chantiers?.id || chantierActif?.id || null
+
+    if (!sousDossierId || !chantierId) {
+      alert("Impossible d'ajouter des photos sans dossier chantier rattache au rapport.")
+      return
+    }
+
+    setAdminPhotoSaving(true)
+    try {
+      await uploadRapportPhotos({
+        rapportId: rapportDetail.id,
+        depannageId: rapportDetail.depannage_id || null,
+        chantierId,
+        sousDossierId,
+        files,
+        userId: user?.id || null
+      })
+      await rechargerRapportDetail(rapportDetail.id)
+      chargerTout()
+    } catch (error) {
+      console.error('Erreur ajout photos admin rapport', error)
+      alert("Impossible d'ajouter les photos pour l'instant.")
+    } finally {
+      setAdminPhotoSaving(false)
+    }
+  }
+
+  async function supprimerPhotoRapportAdmin(photo) {
+    if (!photo?.id || adminPhotoSaving) return
+    const confirmed = await safeConfirm('Supprimer cette photo du rapport ?')
+    if (!confirmed) return
+
+    setAdminPhotoSaving(true)
+    try {
+      await deleteRapportPhoto(photo)
+      await rechargerRapportDetail(rapportDetail?.id)
+      chargerTout()
+    } catch (error) {
+      console.error('Erreur suppression photo admin rapport', error)
+      alert("Impossible de supprimer cette photo pour l'instant.")
+    } finally {
+      setAdminPhotoSaving(false)
+    }
+  }
+
+  async function basculerVisibiliteDocuments(chantier) {
+    if (!chantier?.id) return
+
+    const nextVisibilite = chantier.documents_visibilite_employe === 'complet' ? 'sans_prix' : 'complet'
+
+    try {
+      const updated = await supabaseSafe(
+        supabase
+          .from('chantiers')
+          .update({ documents_visibilite_employe: nextVisibilite })
+          .eq('id', chantier.id)
+          .select()
+          .single()
+      )
+
+      if (!updated) throw new Error('chantier_documents_visibility_update_empty')
+
+      setChantiers(prev => prev.map(item => item.id === updated.id ? updated : item))
+      if (chantierActif?.id === updated.id) setChantierActif(updated)
+    } catch (error) {
+      console.error('Erreur mise a jour visibilite documents chantier', error)
+      alert("Impossible de modifier la visibilite des documents pour l'instant.")
+    }
+  }
 
   function totaux(r) {
     const mat = (r.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
@@ -1399,6 +1500,7 @@ export default function Admin() {
             <div style={{ fontSize: '11px', color: '#888' }}>{rapportDetail.employe?.prenom} · {new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
           </div>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
             {!editRapportMode && (
               <button onClick={() => { setEditRapportMode(true); setEditRapportDate(rapportDetail.date_travail); setEditRapportRemarques(rapportDetail.remarques || '') }}
                 style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
@@ -1450,18 +1552,31 @@ export default function Admin() {
             ))}
           </div>
 
-          <div className="card">
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>Photos terrain</div>
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</div>
+              <span style={{ fontSize: '11px', color: '#888' }}>{adminPhotoSaving ? 'Mise a jour en cours...' : 'Admin: ajout et suppression actifs'}</span>
+            </div>
+            <PhotoInputPanel
+              onFilesSelected={ajouterPhotosRapportAdmin}
+              disabled={adminPhotoSaving}
+              dropTitle="Glisser-deposer des photos ici"
+              dropHint="ou cliquer pour selectionner plusieurs fichiers"
+              dropNote={adminPhotoSaving ? 'Traitement en cours...' : 'Camera, galerie et depot utilisent le meme flux admin.'}
+            />
             {(rapportDetail.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
             {(rapportDetail.rapport_photos || []).length > 0 && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
                 {(rapportDetail.rapport_photos || []).map(photo => (
-                  <a key={photo.id} href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                  <div key={photo.id} style={{ border: '1px solid #e6e6e6', borderRadius: '8px', overflow: 'hidden', background: '#fafafa' }}>
+                    <a href={photo.signed_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
                       {photo.signed_url && <img src={photo.signed_url} alt={photo.file_name} style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />}
-                      <div style={{ padding: '8px', fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                    </a>
+                    <div style={{ padding: '8px', display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ fontSize: '11px', color: '#555', wordBreak: 'break-word' }}>{photo.file_name}</div>
+                      <button type="button" onClick={() => supprimerPhotoRapportAdmin(photo)} disabled={adminPhotoSaving} style={{ border: '1px solid #f09595', background: 'white', color: '#A32D2D', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', flexShrink: 0, cursor: adminPhotoSaving ? 'default' : 'pointer' }}>Supprimer</button>
                     </div>
-                  </a>
+                  </div>
                 ))}
               </div>
             )}
@@ -1504,6 +1619,7 @@ export default function Admin() {
           <div style={{ fontSize: '11px', color: '#888' }}>{getChantierClientLabel(chantierActif)} · {chantierActif.adresse || '—'}</div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
+          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
           <button onClick={() => { setRenommerItem({ type: 'chantier', data: chantierActif }); setNouveauNom(chantierActif.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
           <button onClick={() => setConfirm({ type: 'chantier', data: chantierActif })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
         </div>
@@ -1600,9 +1716,9 @@ export default function Admin() {
                   <div className="row-item">
                     <div>
                       <div style={{ fontWeight: 500, fontSize: '12px' }}>Documents</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>Accès admin complet, employé sans prix plus tard</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>Visibilite employe: {chantierActif.documents_visibilite_employe === 'complet' ? 'complet' : 'sans prix'}</div>
                     </div>
-                    <span style={{ fontSize: '11px', color: '#888' }}>Préparé</span>
+                    <button type="button" className="btn-outline btn-sm" style={{ width: 'auto' }} onClick={() => basculerVisibiliteDocuments(chantierActif)}>Modifier</button>
                   </div>
                 </div>
               </div>
@@ -1620,6 +1736,7 @@ export default function Admin() {
           <button onClick={() => { setVue('sous_dossiers'); setSousDossierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{sousDossierActif.nom}</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
       <div className="page-content">
         <div className="card">
@@ -1663,7 +1780,10 @@ export default function Admin() {
           <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chantiers</div>
         </div>
-        <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutChantier(true)}>+ Nouveau</button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+          <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutChantier(true)}>+ Nouveau</button>
+        </div>
       </div>
       <div className="page-content">
         {ajoutChantier && (
@@ -1746,6 +1866,7 @@ export default function Admin() {
           <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Dépannages</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
       <div className="page-content">
         <input
@@ -1957,9 +2078,10 @@ export default function Admin() {
         <div className="top-bar">
           <div>
             <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Calendrier</div>
-          </div>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Calendrier</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+      </div>
         <div className="page-content">
           <select value={calEmployeFiltre} onChange={e => { setCalEmployeFiltre(e.target.value); setCalJour(null) }}
             style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e2e2', fontSize: '13px', background: 'white' }}>
@@ -2045,6 +2167,7 @@ export default function Admin() {
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Vacances</div>
           <div style={{ fontSize: '11px', color: '#888' }}>Demandes, quotas et périodes spéciales</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
       <div className="page-content">
         {vacancesError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{vacancesError}</div>}
@@ -2161,6 +2284,7 @@ export default function Admin() {
           <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Employés</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
       <div className="page-content">
         {empLoading && (
@@ -2227,8 +2351,11 @@ export default function Admin() {
             <button onClick={() => setVue('employes')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
             <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{empDetail.prenom}</div>
           </div>
-          <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#E6F1FB', color: '#185FA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
-            {empDetail.initiales || empDetail.prenom?.slice(0, 2).toUpperCase()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#E6F1FB', color: '#185FA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
+              {empDetail.initiales || empDetail.prenom?.slice(0, 2).toUpperCase()}
+            </div>
           </div>
         </div>
 
@@ -2467,6 +2594,7 @@ export default function Admin() {
           <div style={{ fontSize: '11px', color: '#888' }}>Tableau de bord admin</div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
           {corbeille.length > 0 && (
             <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
               🗑️ {corbeille.length}

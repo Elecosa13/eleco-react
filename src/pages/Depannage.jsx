@@ -1,11 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PageTopActions from '../components/PageTopActions'
+import PhotoInputPanel from '../components/PhotoInputPanel'
+import { useDraftPhotos } from '../lib/photo-drafts'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
 import { usePageRefresh } from '../lib/refresh'
-import PhotoDropZone from '../components/PhotoDropZone'
 import { fetchLinkedTimeEntry, upsertLinkedTimeEntry } from '../services/timeEntries.service'
 import {
   ensureDepannageSousDossier,
@@ -13,8 +14,6 @@ import {
   STATUT_RAPPORT_RECU
 } from '../services/depannages.service'
 import {
-  buildPhotoPreviewItems,
-  releasePhotoPreviews,
   uploadRapportPhotos,
   withSignedPhotoUrls
 } from '../services/rapportPhotos.service'
@@ -59,23 +58,16 @@ export default function Depannage() {
   const [chantierId, setChantierId] = useState('')
   const [rapportExistantId, setRapportExistantId] = useState('')
   const [rapportValide, setRapportValide] = useState(false)
-  const [photos, setPhotos] = useState([])
   const [photosExistantes, setPhotosExistantes] = useState([])
   const [erreur, setErreur] = useState('')
   const [rapportErreur, setRapportErreur] = useState('')
   const [loading, setLoading] = useState(true)
-  const photosRef = useRef([])
+  const { photos, addFiles, removePhoto, clearPhotos } = useDraftPhotos(`depannage-draft:${user?.id || 'anon'}:${depannageId || 'new'}`)
   const refreshPage = usePageRefresh(() => charger(), [depannageId, user?.id])
 
   useEffect(() => {
     charger()
   }, [depannageId])
-
-  useEffect(() => {
-    photosRef.current = photos
-  }, [photos])
-
-  useEffect(() => () => releasePhotoPreviews(photosRef.current), [])
 
   useEffect(() => {
     chargerCredit(date).catch(error => {
@@ -249,25 +241,17 @@ export default function Depannage() {
     )
   }
 
-  function ajouterPhotosDepuisListe(fileList) {
-    const files = Array.from(fileList || []).filter(Boolean)
-    if (files.length === 0) return
-    const newItems = buildPhotoPreviewItems(files)
-    setPhotos(current => [...current, ...newItems])
-  }
-
-  function ajouterPhotos(event) {
-    ajouterPhotosDepuisListe(event.target.files)
-    event.target.value = ''
+  async function ajouterPhotosDepuisListe(fileList) {
+    try {
+      await addFiles(fileList)
+    } catch (error) {
+      console.error('Erreur preparation photos depannage', error)
+      setRapportErreur("Impossible d'ajouter cette photo pour l'instant.")
+    }
   }
 
   function retirerPhoto(photoId) {
-    setPhotos(current => {
-      const next = current.filter(item => item.id !== photoId)
-      const removed = current.find(item => item.id === photoId)
-      if (removed) releasePhotoPreviews([removed])
-      return next
-    })
+    removePhoto(photoId)
   }
 
   const articlesFiltres = (() => {
@@ -393,6 +377,7 @@ export default function Depannage() {
 
       if (statutError) throw statutError
 
+      clearPhotos()
       setSucces(true)
       setTimeout(() => navigate('/employe'), 2000)
     } catch (error) {
@@ -665,24 +650,14 @@ export default function Depannage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</span>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: rapportEmployeVerrouille ? 'default' : 'pointer', opacity: rapportEmployeVerrouille ? 0.7 : 1 }}>
-                  Camera
-                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} disabled={rapportEmployeVerrouille} style={{ display: 'none' }} />
-                </label>
-                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: rapportEmployeVerrouille ? 'default' : 'pointer', opacity: rapportEmployeVerrouille ? 0.7 : 1 }}>
-                  Galerie
-                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} disabled={rapportEmployeVerrouille} style={{ display: 'none' }} />
-                </label>
-              </div>
             </div>
             <div style={{ fontSize: '11px', color: '#888' }}>Les photos ajoutees restent en attente ici tant que le rapport n'est pas envoye.</div>
-            <PhotoDropZone
+            <PhotoInputPanel
               onFilesSelected={ajouterPhotosDepuisListe}
               disabled={rapportEmployeVerrouille}
-              title="Glisser-deposer des photos ici"
-              hint="ou cliquer pour selectionner dans vos fichiers"
-              note="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
+              dropTitle="Glisser-deposer des photos ici"
+              dropHint="ou cliquer pour selectionner dans vos fichiers"
+              dropNote="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
             />
             {photosExistantes.length === 0 && photos.length === 0 && (
               <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>

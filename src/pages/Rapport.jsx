@@ -1,18 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PageTopActions from '../components/PageTopActions'
+import PhotoInputPanel from '../components/PhotoInputPanel'
+import { useDraftPhotos } from '../lib/photo-drafts'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
 import { usePageRefresh } from '../lib/refresh'
-import PhotoDropZone from '../components/PhotoDropZone'
 import { upsertLinkedTimeEntry } from '../services/timeEntries.service'
-import {
-  buildPhotoPreviewItems,
-  releasePhotoPreviews,
-  uploadRapportPhotos
-} from '../services/rapportPhotos.service'
+import { uploadRapportPhotos } from '../services/rapportPhotos.service'
 import { isChantierVisibleToEmployees } from '../services/chantiers.service'
 
 const FAVORIS_KEY = 'eleco_favoris'
@@ -42,13 +39,12 @@ export default function Rapport() {
   const [catFiltre, setCatFiltre] = useState('Favoris')
   const [favoris, setFavoris] = useState(loadFavoris)
   const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1, pu: '0' })
-  const [photos, setPhotos] = useState([])
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
   const [loading, setLoading] = useState(true)
   const [creditUtilise, setCreditUtilise] = useState(0)
   const [rapportExistant, setRapportExistant] = useState(null)
-  const photosRef = useRef([])
+  const { photos, addFiles, removePhoto, clearPhotos } = useDraftPhotos(`rapport-draft:${user?.id || 'anon'}:${id || 'unknown'}`)
   const refreshPage = usePageRefresh(() => charger(), [id, user?.id])
 
   useEffect(() => {
@@ -58,12 +54,6 @@ export default function Rapport() {
   useEffect(() => {
     verifierRapportExistant(date)
   }, [date, id, user?.id])
-
-  useEffect(() => {
-    photosRef.current = photos
-  }, [photos])
-
-  useEffect(() => () => releasePhotoPreviews(photosRef.current), [])
 
   async function charger() {
     setLoading(true)
@@ -181,23 +171,17 @@ export default function Rapport() {
     )
   }
 
-  function ajouterPhotosDepuisListe(fileList) {
-    const files = Array.from(fileList || []).filter(Boolean)
-    if (files.length === 0) return
-    setPhotos(current => [...current, ...buildPhotoPreviewItems(files)])
-  }
-
-  function ajouterPhotos(event) {
-    ajouterPhotosDepuisListe(event.target.files)
-    event.target.value = ''
+  async function ajouterPhotosDepuisListe(fileList) {
+    try {
+      await addFiles(fileList)
+    } catch (error) {
+      console.error('Erreur preparation photos rapport', error)
+      alert("Impossible d'ajouter cette photo pour l'instant.")
+    }
   }
 
   function retirerPhoto(photoId) {
-    setPhotos(current => {
-      const removed = current.find(photo => photo.id === photoId)
-      if (removed) releasePhotoPreviews([removed])
-      return current.filter(photo => photo.id !== photoId)
-    })
+    removePhoto(photoId)
   }
 
   async function envoyer(event) {
@@ -258,6 +242,7 @@ export default function Rapport() {
         }
       }
 
+      clearPhotos()
       setSucces(true)
       setTimeout(() => navigate(`/employe/chantier/${sd.chantier_id}`), 2000)
     } catch (error) {
@@ -470,23 +455,13 @@ export default function Rapport() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Photos terrain</span>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
-                  Camera
-                  <input type="file" accept="image/*" capture="environment" onChange={ajouterPhotos} style={{ display: 'none' }} />
-                </label>
-                <label className="btn-outline btn-sm" style={{ width: 'auto', cursor: 'pointer' }}>
-                  Galerie
-                  <input type="file" accept="image/*" multiple onChange={ajouterPhotos} style={{ display: 'none' }} />
-                </label>
-              </div>
             </div>
             <div style={{ fontSize: '11px', color: '#888' }}>Les photos restent visibles ici jusqu'a l'envoi du rapport ou leur suppression manuelle.</div>
-            <PhotoDropZone
+            <PhotoInputPanel
               onFilesSelected={ajouterPhotosDepuisListe}
-              title="Glisser-deposer des photos ici"
-              hint="ou cliquer pour selectionner dans vos fichiers"
-              note="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
+              dropTitle="Glisser-deposer des photos ici"
+              dropHint="ou cliquer pour selectionner dans vos fichiers"
+              dropNote="Ajout multiple sur ordinateur, sans changer le flux Camera ou Galerie."
             />
             {photos.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
             {photos.length > 0 && (

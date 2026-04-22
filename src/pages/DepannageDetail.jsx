@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PageTopActions from '../components/PageTopActions'
-import PhotoDropZone from '../components/PhotoDropZone'
+import PhotoInputPanel from '../components/PhotoInputPanel'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeConfirm } from '../lib/safe-browser'
@@ -393,11 +393,6 @@ export default function DepannageDetail() {
     }
   }
 
-  async function ajouterPhotosAdmin(event) {
-    await traiterAjoutPhotosAdmin(event.target.files)
-    event.target.value = ''
-  }
-
   async function supprimerPhotoAdmin(photo) {
     if (!photo?.id || photoSaving) return
     const confirmed = await safeConfirm('Supprimer cette photo du rapport ?')
@@ -619,17 +614,13 @@ export default function DepannageDetail() {
                   <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <div style={{ fontWeight: 600, fontSize: '14px' }}>Photos du rapport</div>
-                      <label className="btn-primary btn-sm" style={{ width: 'auto', cursor: photoSaving ? 'default' : 'pointer', opacity: photoSaving ? 0.7 : 1 }}>
-                        {photoSaving ? 'Traitement...' : '+ Ajouter des photos'}
-                        <input type="file" accept="image/*" multiple onChange={ajouterPhotosAdmin} disabled={photoSaving} style={{ display: 'none' }} />
-                      </label>
                     </div>
-                    <PhotoDropZone
+                    <PhotoInputPanel
                       onFilesSelected={traiterAjoutPhotosAdmin}
                       disabled={photoSaving}
-                      title="Glisser-deposer des photos ici"
-                      hint="ou cliquer pour selectionner plusieurs fichiers"
-                      note={photoSaving ? 'Ajout en cours...' : 'Sur desktop, le depot ou le clic ajoutent directement les photos au rapport.'}
+                      dropTitle="Glisser-deposer des photos ici"
+                      dropHint="ou cliquer pour selectionner plusieurs fichiers"
+                      dropNote={photoSaving ? 'Ajout en cours...' : 'Camera, galerie et depot utilisent maintenant le meme flux.'}
                     />
                     {(rapportLie.rapport_photos || []).length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucune photo</div>}
                     {(rapportLie.rapport_photos || []).length > 0 && (

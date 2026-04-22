@@ -1,5 +1,5 @@
 # ROADMAP — Eleco SA
-> Mis à jour — 19 Avril 2026
+> Mis à jour — 22 Avril 2026
 
 ---
 
@@ -37,6 +37,18 @@
 - [x] Guards propres sur toutes les routes (PrivateRoute + CharteGuard)
 - [x] Blocage total accès admin côté employé
 - [ ] Valider en test réel avec comptes Supabase Auth
+
+---
+
+## Fix critique — Corbeille rapports & heures (2026-04-22) ✅
+
+- [x] Migration `20260422000000_soft_delete_rapports.sql` — colonne `deleted_at` sur `rapports`
+- [x] `supprimerRapport` → soft delete (`UPDATE deleted_at = now()`) — UUID préservé
+- [x] `restaurerCorbeille` rapport → `UPDATE deleted_at = null` — plus de re-INSERT / nouvel UUID
+- [x] Corbeille rechargée depuis DB au démarrage (survive au refresh de page)
+- [x] Toutes les queries rapports filtrent `deleted_at IS NULL` (chargerTout, chargerRapports, chargerCalendrier, chargerDetailEmploye mensuel + PDF semaine)
+- [x] `chargerStatsEmployes` exclut les time_entries liées aux rapports soft-deleted
+- [x] `Rapport.jsx` — idempotence time_entries (check before insert, pas de doublon)
 
 ---
 

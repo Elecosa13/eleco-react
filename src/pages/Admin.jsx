@@ -334,7 +334,7 @@ export default function Admin() {
     try {
       const rap = await supabaseSafe(supabase.from('rapports')
         .select('*, employe:employe_id(prenom), sous_dossiers(nom, chantiers(nom)), rapport_materiaux(*), rapport_photos(*)')
-        .eq('valide', false).order('created_at', { ascending: false }))
+        .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
         const rapEnt = await supabaseSafe(supabase.from('time_entries')
@@ -346,6 +346,22 @@ export default function Admin() {
         setRapportsEnAttente(rapportsHydrates.map(r => ({ ...r, _duree: byRap[r.id] ?? calcDuree(r.heure_debut, r.heure_fin) })))
       } else {
         setRapportsEnAttente(rap || [])
+      }
+
+      // Recharge la corbeille rapports depuis la DB (survive au rechargement de page)
+      const rapsSupprimes = await supabaseSafe(supabase.from('rapports')
+        .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
+        .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }))
+      if (rapsSupprimes && rapsSupprimes.length > 0) {
+        setCorbeille(prev => {
+          const existingIds = new Set(prev.filter(i => i.type === 'rapport').map(i => i.data.id))
+          const newItems = rapsSupprimes
+            .filter(r => !existingIds.has(r.id))
+            .map(r => ({ type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }))
+          return [...prev.filter(i => i.type !== 'rapport'), ...newItems]
+        })
+      } else {
+        setCorbeille(prev => prev.filter(i => i.type !== 'rapport'))
       }
 
       const ch = await supabaseSafe(supabase.from('chantiers').select('*').eq('actif', true).order('nom'))
@@ -500,7 +516,7 @@ export default function Admin() {
   async function chargerRapports(sdId) {
     const { data } = await supabase.from('rapports')
       .select('*, employe:employe_id(prenom), rapport_materiaux(*), rapport_photos(*)')
-      .eq('sous_dossier_id', sdId).order('date_travail', { ascending: false })
+      .eq('sous_dossier_id', sdId).is('deleted_at', null).order('date_travail', { ascending: false })
     if (!data) { setRapports([]); return }
     const rapportsHydrates = await hydraterRapportsPhotos(data)
     if (rapportsHydrates.length > 0) {
@@ -520,7 +536,7 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
     const { data: raps } = await supabase.from('rapports')
       .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
-      .gte('date_travail', debut).lte('date_travail', fin)
+      .gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null)
     if (raps) setCalRapports(raps)
     const { data: deps } = await supabase.from('depannages')
       .select('*, employe:employe_id(id, prenom)')
@@ -546,17 +562,25 @@ export default function Admin() {
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const { debut: debutPrev, fin: finPrev } = debutFin(prevDate.getFullYear(), prevDate.getMonth())
 
-    const [{ data: entMois }, { data: entPrev }] = await Promise.all([
-      supabase.from('time_entries').select('employe_id, duree, chantier_id')
+    const [{ data: entMois }, { data: entPrev }, { data: delRapsMois }, { data: delRapsPrev }] = await Promise.all([
+      supabase.from('time_entries').select('employe_id, duree, type, reference_id, chantier_id')
         .gte('date_travail', debutMois).lte('date_travail', finMois),
-      supabase.from('time_entries').select('employe_id, duree')
+      supabase.from('time_entries').select('employe_id, duree, type, reference_id')
+        .gte('date_travail', debutPrev).lte('date_travail', finPrev),
+      supabase.from('rapports').select('id').not('deleted_at', 'is', null)
+        .gte('date_travail', debutMois).lte('date_travail', finMois),
+      supabase.from('rapports').select('id').not('deleted_at', 'is', null)
         .gte('date_travail', debutPrev).lte('date_travail', finPrev)
     ])
+    const deletedMoisIds = new Set((delRapsMois || []).map(r => r.id))
+    const deletedPrevIds = new Set((delRapsPrev || []).map(r => r.id))
+    const filteredMois = (entMois || []).filter(e => !(e.type === 'chantier' && e.reference_id && deletedMoisIds.has(e.reference_id)))
+    const filteredPrev = (entPrev || []).filter(e => !(e.type === 'chantier' && e.reference_id && deletedPrevIds.has(e.reference_id)))
 
     const stats = {}
     for (const emp of listeEmp) {
-      const moisEmp = (entMois || []).filter(e => String(e.employe_id) === String(emp.id))
-      const prevEmp = (entPrev || []).filter(e => String(e.employe_id) === String(emp.id))
+      const moisEmp = filteredMois.filter(e => String(e.employe_id) === String(emp.id))
+      const prevEmp = filteredPrev.filter(e => String(e.employe_id) === String(emp.id))
       stats[emp.id] = {
         heureMois: moisEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
         heurePrev: prevEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
@@ -573,7 +597,7 @@ export default function Admin() {
 
     const { data: raps } = await supabase.from('rapports')
       .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom))')
-      .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).order('date_travail')
+      .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null).order('date_travail')
 
     if (raps && raps.length > 0) {
       const { data: rapEnt } = await supabase.from('time_entries')
@@ -652,7 +676,7 @@ export default function Admin() {
       supabase.from('rapports')
         .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse))')
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
-        .order('date_travail'),
+        .is('deleted_at', null).order('date_travail'),
       supabase.from('depannages')
         .select('id, date_travail, adresse, duree')
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
@@ -885,8 +909,8 @@ export default function Admin() {
 
   async function supprimerRapport(r) {
     try {
-      await supabaseSafe(supabase.from('rapports').delete().eq('id', r.id))
-    setCorbeille(prev => [...prev, { type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }])
+      await supabaseSafe(supabase.from('rapports').update({ deleted_at: new Date().toISOString() }).eq('id', r.id))
+      setCorbeille(prev => [...prev, { type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }])
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
       setRapportDetail(null); setConfirm(null)
     } catch (error) {
@@ -901,16 +925,7 @@ export default function Admin() {
     } else if (item.type === 'sous_dossier') {
       await supabaseSafe(supabase.from('sous_dossiers').insert({ chantier_id: item.data.chantier_id, nom: item.data.nom }))
     } else if (item.type === 'rapport') {
-      const newR = await supabaseSafe(supabase.from('rapports').insert({
-        sous_dossier_id: item.data.sous_dossier_id, employe_id: item.data.employe_id,
-        date_travail: item.data.date_travail, heure_debut: item.data.heure_debut,
-        heure_fin: item.data.heure_fin, remarques: item.data.remarques, valide: item.data.valide
-      }).select().single())
-      if (newR && item.data.rapport_materiaux?.length > 0) {
-        await supabaseSafe(supabase.from('rapport_materiaux').insert(
-          item.data.rapport_materiaux.map(m => ({ rapport_id: newR.id, ref_article: m.ref_article, designation: m.designation, unite: m.unite, quantite: m.quantite, prix_net: m.prix_net }))
-        ))
-      }
+      await supabaseSafe(supabase.from('rapports').update({ deleted_at: null }).eq('id', item.data.id))
     }
     setCorbeille(prev => prev.filter(i => i !== item))
     chargerTout()

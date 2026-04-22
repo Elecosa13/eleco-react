@@ -178,15 +178,19 @@ export default function Rapport() {
       )
 
       if (rapport) {
-        await supabaseSafe(
-          supabase.from('time_entries').insert({
-            employe_id: user.id,
-            date_travail: date,
-            type: 'chantier',
-            reference_id: rapport.id,
-            duree
-          })
-        )
+        const { data: existingEntry } = await supabase.from('time_entries')
+          .select('id').eq('reference_id', rapport.id).eq('type', 'chantier').maybeSingle()
+        if (!existingEntry) {
+          await supabaseSafe(
+            supabase.from('time_entries').insert({
+              employe_id: user.id,
+              date_travail: date,
+              type: 'chantier',
+              reference_id: rapport.id,
+              duree
+            })
+          )
+        }
 
         if (materiaux.length > 0) {
           await supabaseSafe(

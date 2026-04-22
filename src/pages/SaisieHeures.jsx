@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import PageTopActions from '../components/PageTopActions'
+import { usePageRefresh } from '../lib/refresh'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
+import { isChantierVisibleToEmployees } from '../services/chantiers.service'
 
 function getISOWeek(dateStr) {
   const d = new Date(dateStr + 'T12:00:00')
@@ -32,12 +35,25 @@ export default function SaisieHeures() {
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
   const [entries, setEntries] = useState([])
+  const [refreshingData, setRefreshingData] = useState(false)
+  const refreshPage = usePageRefresh(async () => {
+    setRefreshingData(true)
+    try {
+      await Promise.all([chargerChantiers(), chargerEntries()])
+    } finally {
+      setRefreshingData(false)
+    }
+  }, [user?.id])
 
   useEffect(() => {
-    supabase.from('chantiers').select('id, nom').eq('actif', true).order('nom')
-      .then(({ data }) => { if (data) setChantiers(data) })
+    chargerChantiers()
     chargerEntries()
   }, [])
+
+  async function chargerChantiers() {
+    const { data } = await supabase.from('chantiers').select('id, nom, statut').eq('actif', true).order('nom')
+    if (data) setChantiers(data.filter(isChantierVisibleToEmployees))
+  }
 
   async function chargerEntries() {
     const { data } = await supabase
@@ -91,8 +107,8 @@ export default function SaisieHeures() {
 
   if (succes) return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
-      <div style={{ fontSize: '48px' }}>✅</div>
-      <div style={{ fontWeight: 600, fontSize: '16px' }}>Heures enregistrées !</div>
+      <div style={{ fontSize: '48px' }}>OK</div>
+      <div style={{ fontWeight: 600, fontSize: '16px' }}>Heures enregistrees !</div>
     </div>
   )
 
@@ -100,9 +116,9 @@ export default function SaisieHeures() {
     <div>
       <div className="top-bar">
         <div>
-          <button onClick={() => navigate('/employe')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Mes heures</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={refreshingData} />
       </div>
 
       <form onSubmit={envoyer}>
@@ -113,7 +129,7 @@ export default function SaisieHeures() {
             <div className="form-group">
               <label>Chantier *</label>
               <select value={chantierId} onChange={e => setChantierId(e.target.value)} required>
-                <option value="">Sélectionner un chantier...</option>
+                <option value="">Selectionner un chantier...</option>
                 {chantiers.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
               </select>
             </div>
@@ -125,7 +141,7 @@ export default function SaisieHeures() {
 
             <div className="grid2">
               <div className="form-group">
-                <label>Heure début</label>
+                <label>Heure debut</label>
                 <input type="time" value={heureDebut} onChange={e => setHeureDebut(e.target.value)} required />
               </div>
               <div className="form-group">
@@ -162,19 +178,19 @@ export default function SaisieHeures() {
           </div>
 
           <button type="submit" className="btn-primary" disabled={envoi || !chantierId}>
-            {envoi ? 'Enregistrement...' : '✓ Enregistrer'}
+            {envoi ? 'Enregistrement...' : 'Enregistrer'}
           </button>
 
           {entries.length > 0 && (
             <div className="card">
-              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>Historique récent</div>
+              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '10px' }}>Historique recent</div>
               {entries.map((e, i) => (
                 <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < entries.length - 1 ? '1px solid #eee' : 'none' }}>
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{e.chantiers?.nom || '—'}</div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{e.chantiers?.nom || '-'}</div>
                     <div style={{ fontSize: '11px', color: '#888' }}>
                       {new Date(e.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
-                      {e.heure_debut && e.heure_fin ? ` · ${e.heure_debut.slice(0, 5)}–${e.heure_fin.slice(0, 5)}` : ''}
+                      {e.heure_debut && e.heure_fin ? ` · ${e.heure_debut.slice(0, 5)}-${e.heure_fin.slice(0, 5)}` : ''}
                       {e.pause_minutes ? ` · pause ${e.pause_minutes}min` : ''}
                     </div>
                     {e.commentaire && <div style={{ fontSize: '11px', color: '#999', fontStyle: 'italic' }}>{e.commentaire}</div>}

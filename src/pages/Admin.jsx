@@ -8,6 +8,13 @@ import { safeConfirm } from '../lib/safe-browser'
 import { getInitiales } from '../services/depannages.service'
 import { withSignedPhotoUrls } from '../services/rapportPhotos.service'
 import { fetchTimeEntryDurationsMap } from '../services/timeEntries.service'
+import {
+  CHANTIER_STATUT_A_CONFIRMER,
+  getChantierClientLabel,
+  getChantierStatusBadgeStyle,
+  getNextChantierStatusAction,
+  groupChantiersByClient
+} from '../services/chantiers.service'
 
 const TAUX = 115
 const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
@@ -189,6 +196,7 @@ export default function Admin() {
   const [renommerItem, setRenommerItem] = useState(null)
   const [nouveauNom, setNouveauNom] = useState('')
   const [nouveauNomChantier, setNouveauNomChantier] = useState('')
+  const [nouveauClientNom, setNouveauClientNom] = useState('')
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
   const [nouveauSd, setNouveauSd] = useState(false)
@@ -545,7 +553,10 @@ export default function Admin() {
   }
 
   async function chargerSousDossiers(chantierId) {
-    const { data } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', chantierId).order('created_at')
+    const { data } = await supabase.from('sous_dossiers')
+      .select('*, rapports(id, rapport_photos(id))')
+      .eq('chantier_id', chantierId)
+      .order('created_at')
     if (data) setSousDossiers(data)
   }
 
@@ -1105,6 +1116,29 @@ export default function Admin() {
     return (depannage.depannage_intervenants || []).length
   }
 
+  async function mettreAJourStatutChantier(chantier, nextStatus) {
+    if (!chantier?.id || !nextStatus) return
+
+    try {
+      const updated = await supabaseSafe(
+        supabase
+          .from('chantiers')
+          .update({ statut: nextStatus })
+          .eq('id', chantier.id)
+          .select()
+          .single()
+      )
+
+      if (!updated) throw new Error('chantier_status_update_empty')
+
+      setChantiers(prev => prev.map(item => item.id === updated.id ? updated : item))
+      if (chantierActif?.id === updated.id) setChantierActif(updated)
+    } catch (error) {
+      console.error('Erreur mise a jour statut chantier', error)
+      alert("Impossible de mettre a jour le statut du chantier. Veuillez reessayer.")
+    }
+  }
+
   function depannageTimestamp(depannage) {
     const value = depannage.date_travail || depannage.created_at
     if (!value) return 0
@@ -1116,6 +1150,8 @@ export default function Admin() {
   function comparerDepannagesRecent(a, b) {
     return depannageTimestamp(b) - depannageTimestamp(a)
   }
+
+  const chantiersGroupes = useMemo(() => groupChantiersByClient(chantiers), [chantiers])
 
   function normalizeDepannageSearchValue(value) {
     return String(value || '')
@@ -1465,7 +1501,7 @@ export default function Admin() {
         <div>
           <button onClick={() => { setVue('chantiers'); setChantierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{chantierActif.nom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>{chantierActif.adresse}</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>{getChantierClientLabel(chantierActif)} · {chantierActif.adresse || '—'}</div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           <button onClick={() => { setRenommerItem({ type: 'chantier', data: chantierActif }); setNouveauNom(chantierActif.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
@@ -1473,6 +1509,29 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>Chantier</div>
+              <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>Documents employé prévus en mode sans prix</div>
+            </div>
+            <span style={{ ...getChantierStatusBadgeStyle(chantierActif.statut), borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER}
+            </span>
+          </div>
+          {getNextChantierStatusAction(chantierActif.statut) && (
+            <button
+              className="btn-outline btn-sm"
+              style={{ width: 'auto', alignSelf: 'flex-start' }}
+              onClick={() => {
+                const nextAction = getNextChantierStatusAction(chantierActif.statut)
+                if (nextAction) mettreAJourStatutChantier(chantierActif, nextAction.nextStatus)
+              }}
+            >
+              {getNextChantierStatusAction(chantierActif.statut)?.label}
+            </button>
+          )}
+        </div>
         <div className="card">
           {false && !depannagesLoading && !depannagesError && depannages.length > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '4px 2px 0', flexWrap: 'wrap' }}>
@@ -1508,18 +1567,47 @@ export default function Admin() {
             </div>
           )}
           {sousDossiers.length === 0 && !nouveauSd && <div style={{ fontSize: '13px', color: '#888' }}>Aucun sous-dossier</div>}
-          {sousDossiers.map(sd => (
-            <div key={sd.id} className="row-item">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setSousDossierActif(sd); chargerRapports(sd.id); setVue('rapports') }}>
-                <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📁</div>
-                <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
+          {sousDossiers.map(sd => {
+            const rapportsCount = (sd.rapports || []).length
+            const photosCount = (sd.rapports || []).reduce((sum, rapport) => sum + (rapport.rapport_photos || []).length, 0)
+            return (
+              <div key={sd.id} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
+                <div className="row-item" style={{ marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📁</div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button onClick={() => { setRenommerItem({ type: 'sous_dossier', data: sd }); setNouveauNom(sd.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
+                    <button onClick={() => setConfirm({ type: 'sous_dossier', data: sd })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  <button type="button" className="row-item" style={{ background: '#fff', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => { setSousDossierActif(sd); chargerRapports(sd.id); setVue('rapports') }}>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Rapports</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>{rapportsCount} rapport(s)</div>
+                    </div>
+                    <span style={{ color: '#185FA5' }}>›</span>
+                  </button>
+                  <div className="row-item">
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Photos</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>{photosCount} photo(s)</div>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#888' }}>Depuis rapports</span>
+                  </div>
+                  <div className="row-item">
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Documents</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>Accès admin complet, employé sans prix plus tard</div>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#888' }}>Préparé</span>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button onClick={() => { setRenommerItem({ type: 'sous_dossier', data: sd }); setNouveauNom(sd.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
-                <button onClick={() => setConfirm({ type: 'sous_dossier', data: sd })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>
@@ -1581,19 +1669,27 @@ export default function Admin() {
         {ajoutChantier && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
+            <input placeholder="Régie / client" value={nouveauClientNom} onChange={e => setNouveauClientNom(e.target.value)}
+              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauClientNom(''); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
               <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
                 if (!nouveauNomChantier.trim()) return
                 const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
                 if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
                 try {
-                  await supabaseSafe(supabase.from('chantiers').insert({ nom: nouveauNomChantier, adresse: nouvelleAdresse }))
-                  setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
+                  await supabaseSafe(supabase.from('chantiers').insert({
+                    client_nom: nouveauClientNom.trim() || null,
+                    nom: nouveauNomChantier,
+                    adresse: nouvelleAdresse,
+                    statut: CHANTIER_STATUT_A_CONFIRMER,
+                    documents_visibilite_employe: 'sans_prix'
+                  }))
+                  setAjoutChantier(false); setNouveauClientNom(''); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
                 } catch (error) {
                   alert('Erreur lors de la création du chantier. Veuillez réessayer.')
                 }
@@ -1603,19 +1699,36 @@ export default function Admin() {
         )}
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
-          {chantiers.map(c => (
-            <div key={c.id} className="row-item">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
-                <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
-                <button onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
-              </div>
+          {chantiersGroupes.map(group => (
+            <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>
+              {group.items.map(c => {
+                const badgeStyle = getChantierStatusBadgeStyle(c.statut)
+                const nextAction = getNextChantierStatusAction(c.statut)
+                return (
+                  <div key={c.id} className="row-item">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
+                      <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
+                        <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {c.statut || CHANTIER_STATUT_A_CONFIRMER}
+                      </span>
+                      {nextAction && (
+                        <button className="btn-outline btn-sm" style={{ width: 'auto' }} onClick={() => mettreAJourStatutChantier(c, nextAction.nextStatus)}>
+                          {nextAction.label}
+                        </button>
+                      )}
+                      <button onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
+                      <button onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           ))}
         </div>

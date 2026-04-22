@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+import PageTopActions from '../components/PageTopActions'
 import PhotoDropZone from '../components/PhotoDropZone'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeConfirm } from '../lib/safe-browser'
+import { usePageRefresh } from '../lib/refresh'
 import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '../services/rapportPhotos.service'
 import { fetchLinkedTimeEntry } from '../services/timeEntries.service'
 
@@ -105,7 +107,6 @@ function buildForm(depannage) {
 
 export default function DepannageDetail() {
   const navigate = useNavigate()
-  const location = useLocation()
   const { id } = useParams()
   const { profile: user } = useAuth()
   const [depannage, setDepannage] = useState(null)
@@ -123,6 +124,9 @@ export default function DepannageDetail() {
   const [regiesError, setRegiesError] = useState('')
   const [statutSaving, setStatutSaving] = useState(false)
   const [photoSaving, setPhotoSaving] = useState(false)
+  const refreshPage = usePageRefresh(async () => {
+    await Promise.all([chargerDepannage(), chargerReferentiels()])
+  }, [id])
 
   useEffect(() => {
     chargerDepannage()
@@ -310,16 +314,7 @@ export default function DepannageDetail() {
     }
   }
 
-  function retourListe() {
-    navigate('/admin', {
-      state: {
-        vue: 'depannages',
-        depannagesSearch: location.state?.depannagesSearch || '',
-        depannagesRegieFilter: location.state?.depannagesRegieFilter || '',
-        depannagesDateFilter: location.state?.depannagesDateFilter || ''
-      }
-    })
-  }
+
 
   function prochainStatutAdmin(statut) {
     if (statut === STATUT_INTERVENTION_FAITE) {
@@ -447,15 +442,10 @@ export default function DepannageDetail() {
     <div>
       <div className="top-bar">
         <div>
-          <button
-            onClick={retourListe}
-            style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}
-          >
-            Retour liste
-          </button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Détail dépannage</div>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>D??tail d??pannage</div>
           <div style={{ fontSize: '11px', color: '#888' }}>Bon #{id}</div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={loading} />
       </div>
 
       <div className="page-content">

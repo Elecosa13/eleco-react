@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import PageTopActions from '../components/PageTopActions'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
+import { usePageRefresh } from '../lib/refresh'
 import PhotoDropZone from '../components/PhotoDropZone'
 import { fetchLinkedTimeEntry, upsertLinkedTimeEntry } from '../services/timeEntries.service'
 import {
@@ -63,6 +65,7 @@ export default function Depannage() {
   const [rapportErreur, setRapportErreur] = useState('')
   const [loading, setLoading] = useState(true)
   const photosRef = useRef([])
+  const refreshPage = usePageRefresh(() => charger(), [depannageId, user?.id])
 
   useEffect(() => {
     charger()
@@ -462,10 +465,12 @@ export default function Depannage() {
       <div>
         <div className="top-bar">
           <div>
-            <button onClick={() => setCatalogueVue(false)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
             <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Catalogue</div>
           </div>
-          {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span>}
+            <PageTopActions navigate={navigate} fallbackPath="/employe/depannage" />
+          </div>
         </div>
         <div className="page-content">
           {erreur && (
@@ -533,11 +538,11 @@ export default function Depannage() {
     <div>
       <div className="top-bar">
         <div>
-          <button onClick={() => navigate('/employe')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>
-            {depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
+            {depannageId ? 'Rapport d??pannage' : 'Nouveau d??pannage'}
           </div>
         </div>
+        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} />
       </div>
 
       <form onSubmit={envoyer}>

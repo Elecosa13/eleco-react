@@ -15,6 +15,12 @@ import {
   quitterDepannage,
   rejoindreDepannage
 } from '../services/depannages.service'
+import {
+  getChantierClientLabel,
+  getChantierStatusBadgeStyle,
+  groupChantiersByClient,
+  isChantierVisibleToEmployees
+} from '../services/chantiers.service'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
@@ -118,7 +124,7 @@ export default function Employe() {
 
   async function charger() {
     const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
-    if (ch) setChantiers(ch)
+    if (ch) setChantiers(ch.filter(isChantierVisibleToEmployees))
 
     const aujourdHui = new Date().toISOString().split('T')[0]
     const { data: entries } = await supabase
@@ -212,7 +218,11 @@ export default function Employe() {
       if (existe) { setConfirmDoublon(existe); return }
     }
     try {
-      await supabaseSafe(supabase.from('chantiers').insert({ nom: nouveauNom, adresse: nouvelleAdresse }))
+      await supabaseSafe(supabase.from('chantiers').insert({
+        nom: nouveauNom,
+        adresse: nouvelleAdresse,
+        statut: 'A confirmer'
+      }))
       setNouveauNom('')
       setNouvelleAdresse('')
       setAjoutChantier(false)
@@ -420,8 +430,10 @@ export default function Employe() {
   const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
   const chantiersFiltres = chantiers.filter(c =>
     c.nom.toLowerCase().includes(recherche.toLowerCase()) ||
-    (c.adresse || '').toLowerCase().includes(recherche.toLowerCase())
+    (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()) ||
+    getChantierClientLabel(c).toLowerCase().includes(recherche.toLowerCase())
   )
+  const chantiersGroupes = useMemo(() => groupChantiersByClient(chantiersFiltres), [chantiersFiltres])
   const depannagesFiltres = useMemo(() => {
     const term = normaliserRecherche(depannagesRecherche)
     if (!term) return depannagesTerrain
@@ -774,40 +786,40 @@ export default function Employe() {
         {vue === 'chantiers' && <>
           <input
             type="search"
-            placeholder="🔍 Rechercher un chantier..."
+            placeholder="🔍 Rechercher une regie, un client ou un chantier..."
             value={recherche}
             onChange={e => setRecherche(e.target.value)}
             style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
           />
-          {ajoutChantier && (
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
-              <input placeholder="Nom *" value={nouveauNom} onChange={e => setNouveauNom(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
-              <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauNom(''); setNouvelleAdresse('') }}>Annuler</button>
-                <button className="btn-primary" style={{ flex: 1 }} onClick={() => creerChantier(false)}>Créer</button>
-              </div>
-            </div>
-          )}
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Chantiers actifs</span>
-              {!ajoutChantier && (
-                <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutChantier(true)}>+ Nouveau</button>
-              )}
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>Régie / client</span>
+              <span style={{ fontSize: '11px', color: '#888' }}>Chantiers envoyés ou actifs</span>
             </div>
-            {chantiersFiltres.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier trouvé</div>}
-            {chantiersFiltres.map(c => (
-              <div key={c.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employe/chantier/${c.id}`)}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
-                  </div>
-                </div>
-                <span style={{ color: '#185FA5' }}>›</span>
+            {chantiersGroupes.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier trouvé</div>}
+            {chantiersGroupes.map(group => (
+              <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>
+                {group.items.map(c => {
+                  const badgeStyle = getChantierStatusBadgeStyle(c.statut)
+                  return (
+                    <div key={c.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employe/chantier/${c.id}`)}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
+                        <div>
+                          <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
+                          <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          {c.statut || 'A confirmer'}
+                        </span>
+                        <span style={{ color: '#185FA5' }}>›</span>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             ))}
           </div>

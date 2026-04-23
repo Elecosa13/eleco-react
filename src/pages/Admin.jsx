@@ -210,6 +210,7 @@ export default function Admin() {
   const [adminError, setAdminError] = useState('')
   const [search, setSearch] = useState(adminNavigationState.depannagesSearch || '')
   const [regies, setRegies] = useState([])
+  const [intermediaires, setIntermediaires] = useState([])
   const [regieFilter, setRegieFilter] = useState(adminNavigationState.depannagesRegieFilter || '')
   const [regieFilterAvailable, setRegieFilterAvailable] = useState(true)
   const [dateFilter, setDateFilter] = useState(adminNavigationState.depannagesDateFilter || '')
@@ -238,6 +239,7 @@ export default function Admin() {
   const [nouveauNom, setNouveauNom] = useState('')
   const [nouveauNomChantier, setNouveauNomChantier] = useState('')
   const [nouveauClientNom, setNouveauClientNom] = useState('')
+  const [nouvelIntermediaireId, setNouvelIntermediaireId] = useState('')
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
   const [nouveauSd, setNouveauSd] = useState(false)
@@ -478,6 +480,8 @@ export default function Admin() {
       } catch {
         intermediairesListe = []
       }
+
+      setIntermediaires(intermediairesListe || [])
 
       const intermediairesById = new Map(
         intermediairesListe.map(item => [String(item.id), item])
@@ -1903,16 +1907,25 @@ export default function Admin() {
         {ajoutChantier && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
-            <input placeholder="Régie / client" value={nouveauClientNom} onChange={e => setNouveauClientNom(e.target.value)}
-              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            <select value={nouvelIntermediaireId} onChange={e => setNouvelIntermediaireId(e.target.value)}
+              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', background: '#fff' }}>
+              <option value="">Sélectionner un intermédiaire *</option>
+              {intermediaires.map(item => (
+                <option key={item.id} value={item.id}>{item.nom}</option>
+              ))}
+            </select>
             <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauClientNom(''); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauClientNom(''); setNouvelIntermediaireId(''); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
               <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
                 if (!nouveauNomChantier.trim()) return
+                if (!nouvelIntermediaireId) {
+                  alert("Sélectionne un intermédiaire.")
+                  return
+                }
                 const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
                 if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
                 try {
@@ -1920,12 +1933,12 @@ export default function Admin() {
                     nom: nouveauNomChantier.trim(),
                     adresse: nouvelleAdresse.trim() || null
                   }
-                  if (chantierSchema.clientNom) payload.client_nom = nouveauClientNom.trim() || null
+                  payload.intermediaire_id = Number(nouvelIntermediaireId)
                   if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
                   if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
 
                   await supabaseSafe(supabase.from('chantiers').insert(payload))
-                  setAjoutChantier(false); setNouveauClientNom(''); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
+                  setAjoutChantier(false); setNouveauClientNom(''); setNouvelIntermediaireId(''); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
                 } catch (error) {
                   console.error('Erreur creation chantier', error)
                   alert(`Erreur lors de la creation du chantier. ${chantierSchemaErrorMessage(error)}`)
@@ -1938,7 +1951,40 @@ export default function Admin() {
           {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
           {chantiersGroupes.map(group => (
             <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Intermédiaire
+                  </div>
+                  <div
+                    title={group.clientLabel}
+                    style={{
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      color: '#1F2937',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {group.clientLabel}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    flexShrink: 0,
+                    fontSize: '11px',
+                    color: '#475569',
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: '999px',
+                    padding: '4px 8px'
+                  }}
+                >
+                  {group.items.length} chantier{group.items.length > 1 ? 's' : ''}
+                </div>
+              </div>
+
               {group.items.map(c => {
                 const chantierStatut = c.statut || CHANTIER_STATUT_A_CONFIRMER
                 const badgeStyle = getChantierStatusBadgeStyle(chantierStatut)

@@ -240,8 +240,10 @@ export default function Admin() {
   const [nouveauNomChantier, setNouveauNomChantier] = useState('')
   const [nouveauClientNom, setNouveauClientNom] = useState('')
   const [nouvelIntermediaireId, setNouvelIntermediaireId] = useState('')
+  const [nouvelIntermediaireNom, setNouvelIntermediaireNom] = useState('')
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
+  const [ajoutIntermediaire, setAjoutIntermediaire] = useState(false)
   const [nouveauSd, setNouveauSd] = useState(false)
   const [nouveauSdNom, setNouveauSdNom] = useState('')
 
@@ -1914,6 +1916,64 @@ export default function Admin() {
                 <option key={item.id} value={item.id}>{item.nom}</option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => setAjoutIntermediaire(prev => !prev)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#185FA5',
+                fontSize: '12px',
+                cursor: 'pointer',
+                padding: 0,
+                textAlign: 'left'
+              }}
+            >
+              + Ajouter un intermédiaire
+            </button>
+            {ajoutIntermediaire && (
+              <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                <input
+                  placeholder="Nom de l’intermédiaire"
+                  value={nouvelIntermediaireNom}
+                  onChange={e => setNouvelIntermediaireNom(e.target.value)}
+                  style={{ flex: 1, padding: '6px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '12px' }}
+                />
+                <button
+                  type="button"
+                  className="btn-outline btn-sm"
+                  onClick={async () => {
+                    if (!nouvelIntermediaireNom.trim()) return
+
+                    try {
+                      const { data, error } = await supabase
+                        .from('intermediaires')
+                        .insert({ nom: nouvelIntermediaireNom.trim() })
+                        .select()
+                        .single()
+
+                      if (error) throw error
+
+                      // mettre à jour la liste locale
+                      setIntermediaires(prev => [...prev, data])
+
+                      // sélectionner automatiquement
+                      setNouvelIntermediaireId(String(data.id))
+
+                      // reset
+                      setNouvelIntermediaireNom('')
+                      setAjoutIntermediaire(false)
+
+                    } catch (err) {
+                      console.error('Erreur création intermédiaire', err)
+                      alert("Erreur lors de la création de l’intermédiaire")
+                    }
+                  }}
+                >
+                  OK
+                </button>
+              </div>
+            )}
             <input placeholder="Nom *" value={nouveauNomChantier} onChange={e => setNouveauNomChantier(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)}

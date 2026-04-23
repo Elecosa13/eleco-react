@@ -466,8 +466,31 @@ export default function Admin() {
         setCorbeille(prev => prev.filter(i => i.type !== 'rapport'))
       }
 
-      const ch = await supabaseSafe(supabase.from('chantiers').select('*').eq('actif', true).order('nom'))
-      setChantiers(ch || [])
+      const ch = await supabaseSafe(
+        supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+      )
+
+      let intermediairesListe = []
+      try {
+        intermediairesListe = await supabaseSafe(
+          supabase.from('intermediaires').select('id, nom').order('nom')
+        ) || []
+      } catch {
+        intermediairesListe = []
+      }
+
+      const intermediairesById = new Map(
+        intermediairesListe.map(item => [String(item.id), item])
+      )
+
+      const chantiersHydrates = (ch || []).map(chantier => ({
+        ...chantier,
+        intermediaire: chantier?.intermediaire_id != null
+          ? (intermediairesById.get(String(chantier.intermediaire_id)) || null)
+          : null
+      }))
+
+      setChantiers(chantiersHydrates)
 
       let regs = null
       try {

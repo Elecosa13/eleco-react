@@ -12,8 +12,16 @@ export const CHANTIER_EMPLOYEE_VISIBLE_STATUSES = [
 ]
 
 export function getChantierClientLabel(chantier) {
-  const value = String(chantier?.client_nom || '').trim()
-  return value || 'Client / regie non defini'
+  const intermediaireNom = String(
+    chantier?.intermediaire?.nom ||
+    chantier?.intermediaires?.nom ||
+    chantier?.intermediaire_nom ||
+    ''
+  ).trim()
+
+  const legacyClientNom = String(chantier?.client_nom || '').trim()
+
+  return intermediaireNom || legacyClientNom || 'Intermédiaire non défini'
 }
 
 export function isChantierVisibleToEmployees(chantierOrStatus) {

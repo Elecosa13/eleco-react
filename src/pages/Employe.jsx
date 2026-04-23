@@ -450,6 +450,13 @@ export default function Employe() {
   const absStatutColor = { en_attente: '#BA7517', approuve: '#3B6D11', refuse: '#A32D2D' }
   const absStatutBg = { en_attente: '#FAEEDA', approuve: '#EAF3DE', refuse: '#FCEBEB' }
   const absTypeLabel = { maladie: 'Maladie', accident: 'Accident', autre: 'Autre' }
+  const titrePage = vue === 'accueil'
+    ? `Bonjour, ${user?.prenom}`
+    : vue === 'depannages'
+      ? 'Dépannages'
+      : vue === 'autres'
+        ? 'Autres'
+        : 'Chantiers actifs'
 
   if (modalSupp) {
     if (suppSucces) return (
@@ -651,13 +658,13 @@ export default function Employe() {
       <div className="top-bar">
         <div>
           <div style={{ fontWeight: 600, fontSize: '15px' }}>
-            {vue === 'accueil' ? `Bonjour, ${user?.prenom}` : vue === 'depannages' ? 'Dépannages' : 'Chantiers actifs'}
+            {titrePage}
           </div>
           <div style={{ fontSize: '11px', color: '#888' }}>Espace employé</div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {vue !== 'accueil' && (
-            <button className="btn-outline btn-sm" onClick={() => { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) }}>← Retour</button>
+            <button className="btn-outline btn-sm" onClick={() => { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) }}>Retour ←</button>
           )}
           <button className="avatar" onClick={deconnecter}>{user?.initiales}</button>
         </div>
@@ -665,7 +672,7 @@ export default function Employe() {
 
       <div className="page-content">
         {vue === 'accueil' && <>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Crédit heures aujourd'hui</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -703,18 +710,34 @@ export default function Employe() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <button onClick={() => setVue('chantiers')} style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => setVue('chantiers')} style={{ position: 'relative', background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>🏗️</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantier</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier en cours</span>
+              <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantiers</span>
+              <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier</span>
+              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#185FA5', fontSize: '18px' }}>›</span>
             </button>
-            <button onClick={() => setVue('depannages')} style={{ background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => setVue('depannages')} style={{ position: 'relative', background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>⚡</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannage</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>Intervention rapide</span>
+              <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
+              <span style={{ fontSize: '11px', color: '#666' }}>Interventions rapides</span>
+              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#d68910', fontSize: '18px' }}>›</span>
+            </button>
+            <button onClick={() => navigate('/employe/devis')} style={{ position: 'relative', background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '28px' }}>📄</span>
+              <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Devis à faire</span>
+              <span style={{ fontSize: '11px', color: '#666' }}>À venir</span>
+              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#3B6D11', fontSize: '18px' }}>›</span>
+            </button>
+            <button onClick={() => setVue('autres')} style={{ position: 'relative', background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '28px' }}>☰</span>
+              <span style={{ fontWeight: 600, fontSize: '14px', color: '#4B5563' }}>Autres</span>
+              <span style={{ fontSize: '11px', color: '#666' }}>Vacances, absences</span>
+              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#4B5563', fontSize: '18px' }}>›</span>
             </button>
           </div>
+        </>}
 
+        {vue === 'autres' && <>
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>🏖️ Vacances {new Date().getFullYear()}</span>
@@ -796,7 +819,7 @@ export default function Employe() {
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Régie / client</span>
               <span style={{ fontSize: '11px', color: '#888' }}>Chantiers envoyés ou actifs</span>
             </div>
-            {chantiersGroupes.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier trouvé</div>}
+            {chantiersGroupes.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier envoyé aux employés pour l'instant.</div>}
             {chantiersGroupes.map(group => (
               <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>

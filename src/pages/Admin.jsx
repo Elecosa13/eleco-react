@@ -26,6 +26,15 @@ const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
 const STATUT_FACTURE_PRETE = 'Facture prête'
+const ADMIN_VUES_OUVERTES = ['chantiers', 'depannages', 'a_verifier', 'calendrier', 'vacances', 'employes']
+
+function getAdminVueInitiale(location) {
+  if (ADMIN_VUES_OUVERTES.includes(location.state?.vue)) return location.state.vue
+  if (location.pathname.endsWith('/a-verifier')) return 'a_verifier'
+  if (location.pathname.endsWith('/calendrier')) return 'calendrier'
+  if (location.pathname.endsWith('/employes')) return 'employes'
+  return 'accueil'
+}
 
 // Clauses de la charte (identiques à Charte.jsx) — nécessaires pour régénérer le PDF côté admin
 const CLAUSES_CHARTE = [
@@ -160,7 +169,7 @@ export default function Admin() {
   const depannagesRequestRef = useRef(0)
 
   // Navigation
-  const [vue, setVue] = useState(location.state?.vue === 'depannages' ? 'depannages' : 'accueil')
+  const [vue, setVue] = useState(() => getAdminVueInitiale(location))
 
   // Données globales
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
@@ -245,6 +254,12 @@ export default function Admin() {
   const [adminPhotoSaving, setAdminPhotoSaving] = useState(false)
 
   useEffect(() => { chargerTout() }, [])
+
+  useEffect(() => {
+    if (vue === 'calendrier') chargerCalendrier(calMois)
+    if (vue === 'vacances') chargerVacancesAdmin()
+    if (vue === 'employes') chargerStatsEmployes()
+  }, [])
 
   const refreshPage = usePageRefresh(async () => {
     setRefreshingData(true)
@@ -600,6 +615,13 @@ export default function Admin() {
     const d = new Date(calMois.year, calMois.month + delta, 1)
     const newMois = { year: d.getFullYear(), month: d.getMonth() }
     setCalMois(newMois); setCalJour(null); chargerCalendrier(newMois)
+  }
+
+  function ouvrirVueAdmin(prochaineVue) {
+    setVue(prochaineVue)
+    if (prochaineVue === 'calendrier') chargerCalendrier(calMois)
+    if (prochaineVue === 'vacances') chargerVacancesAdmin()
+    if (prochaineVue === 'employes') chargerStatsEmployes()
   }
 
   async function chargerStatsEmployes() {
@@ -2064,6 +2086,46 @@ export default function Admin() {
   )
   }
 
+  if (vue === 'a_verifier') {
+    return (
+      <div>
+        <div className="top-bar">
+          <div>
+            <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>À vérifier</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>Rapports et validations en attente</div>
+          </div>
+          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+        </div>
+        <div className="page-content">
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>Rapports à valider</span>
+              <span className="badge badge-amber">{rapportsEnAttente.length}</span>
+            </div>
+            {rapportsEnAttente.length === 0 && (
+              <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>
+                Aucun rapport en attente de validation.
+              </div>
+            )}
+            {rapportsEnAttente.map(r => {
+              const t = totaux(r)
+              return (
+                <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
+                  </div>
+                  <span style={{ color: '#185FA5' }}>›</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (vue === 'calendrier') {
     const { year, month } = calMois
     const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -2163,7 +2225,7 @@ export default function Admin() {
     <div>
       <div className="top-bar">
         <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <button onClick={() => ouvrirVueAdmin('employes')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour employés</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Vacances</div>
           <div style={{ fontSize: '11px', color: '#888' }}>Demandes, quotas et périodes spéciales</div>
         </div>
@@ -2283,10 +2345,20 @@ export default function Admin() {
         <div>
           <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Employés</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>Fiches, heures et vacances</div>
         </div>
         <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
       <div className="page-content">
+        <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '14px' }}>Vacances</div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>Demandes, quotas et périodes spéciales des employés</div>
+          </div>
+          <button className="btn-outline btn-sm" style={{ width: 'auto', flexShrink: 0 }} onClick={() => ouvrirVueAdmin('vacances')}>
+            Ouvrir
+          </button>
+        </div>
         {empLoading && (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <div style={{ fontSize: '13px', color: '#888' }}>Chargement…</div>
@@ -2638,23 +2710,23 @@ export default function Admin() {
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
           </button>
-          <button onClick={() => { setVue('calendrier'); chargerCalendrier() }}
-            style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>📅</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Calendrier</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>Activité mensuelle</span>
-          </button>
-          <button onClick={() => { setVue('vacances'); chargerVacancesAdmin() }}
+          <button onClick={() => setVue('a_verifier')}
             style={{ background: '#E8F5F2', border: '1px solid #157A6E', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>🏖️</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#157A6E' }}>Vacances</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>Périodes et demandes</span>
+            <span style={{ fontSize: '28px' }}>✓</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#157A6E' }}>À vérifier</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>{rapportsEnAttente.length} validation(s)</span>
           </button>
-          <button onClick={() => { setVue('employes'); chargerStatsEmployes() }}
-            style={{ background: '#F3EEFB', border: '1px solid #7D3C98', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>👷</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#7D3C98' }}>Employés</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>{employes.length} actifs</span>
+          <button onClick={() => ouvrirVueAdmin('employes')}
+            style={{ background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '28px' }}>☰</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#4B5563' }}>Autres</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>Employés et vacances</span>
+          </button>
+          <button onClick={() => ouvrirVueAdmin('calendrier')}
+            style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: '28px' }}>📅</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Calendrier du mois</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>Chantiers, dépannages, absences</span>
           </button>
         </div>
       </div>

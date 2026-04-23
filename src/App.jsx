@@ -14,6 +14,7 @@ import Admin from './pages/Admin'
 import Depannage from './pages/Depannage'
 import DepannageDetail from './pages/DepannageDetail'
 import Charte from './pages/Charte'
+import Devis from './pages/Devis'
 
 function GuardFallback({ title = 'Chargement', message = 'Verification en cours...', action }) {
   return (
@@ -176,9 +177,25 @@ export default function App() {
           'route:employe-depannage',
           <PrivateRoute requiredRole="employe"><CharteGuard><Depannage /></CharteGuard></PrivateRoute>
         )} />
+        <Route path="/employe/devis" element={guardedPage(
+          'route:employe-devis',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Devis /></CharteGuard></PrivateRoute>
+        )} />
 
         <Route path="/admin" element={guardedPage(
           'route:admin',
+          <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
+        )} />
+        <Route path="/admin/a-verifier" element={guardedPage(
+          'route:admin-a-verifier',
+          <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
+        )} />
+        <Route path="/admin/employes" element={guardedPage(
+          'route:admin-employes',
+          <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
+        )} />
+        <Route path="/admin/calendrier" element={guardedPage(
+          'route:admin-calendrier',
           <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
         )} />
         <Route path="/admin/depannage/:id" element={guardedPage(

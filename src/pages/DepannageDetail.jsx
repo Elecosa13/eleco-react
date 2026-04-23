@@ -437,7 +437,7 @@ export default function DepannageDetail() {
     <div>
       <div className="top-bar">
         <div>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>D??tail d??pannage</div>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Détail dépannage</div>
           <div style={{ fontSize: '11px', color: '#888' }}>Bon #{id}</div>
         </div>
         <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={loading} />

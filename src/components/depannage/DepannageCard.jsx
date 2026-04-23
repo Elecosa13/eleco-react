@@ -92,6 +92,7 @@ export default function DepannageCard({ depannage, currentUserId, onAction, acti
             {depannage.adresse || 'Adresse non définie'}
           </div>
         </div>
+        {cardClickable && <span style={{ color: '#185FA5', fontSize: '18px', lineHeight: 1, flexShrink: 0 }}>›</span>}
       </div>
 
       <DepannageStatusBadge

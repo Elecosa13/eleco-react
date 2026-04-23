@@ -524,7 +524,7 @@ export default function Depannage() {
       <div className="top-bar">
         <div>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>
-            {depannageId ? 'Rapport d??pannage' : 'Nouveau d??pannage'}
+            {depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
           </div>
         </div>
         <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} />

@@ -12,8 +12,8 @@
 -- - 20260422170000_chantiers_statuts_visibility.sql deja applique de preference
 --
 -- Note:
--- - depannages.numero_bon existe deja dans le schema baseline.
---   Cette migration ne le recree pas.
+-- - depannages.numero_bon existe dans le schema baseline local, mais peut manquer
+--   sur une base distante partiellement migree. On l'ajoute donc de facon additive.
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -672,6 +672,7 @@ COMMENT ON TABLE public.documents
 
 ALTER TABLE public.depannages
   ADD COLUMN IF NOT EXISTS date_reception_bon date,
+  ADD COLUMN IF NOT EXISTS numero_bon text,
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'manuel',
   ADD COLUMN IF NOT EXISTS ia_confidence numeric(5,4),
   ADD COLUMN IF NOT EXISTS ia_reviewed boolean NOT NULL DEFAULT false;
@@ -714,7 +715,7 @@ COMMENT ON COLUMN public.depannages.date_reception_bon
   IS 'Date de reception du bon de regie. Base du futur classement Regie -> Annee -> Mois -> Depannage date.';
 
 COMMENT ON COLUMN public.depannages.numero_bon
-  IS 'Numero du bon de regie existant dans le schema baseline. Conserve tel quel.';
+  IS 'Numero du bon de regie. Champ additif pour aligner la base distante avec le schema metier.';
 
 COMMENT ON COLUMN public.depannages.source
   IS 'Origine de creation ou detection du depannage: manuel, email, import_pdf, ia, autre.';

@@ -14,6 +14,7 @@ import {
   CHANTIER_STATUT_A_CONFIRMER,
   getChantierClientLabel,
   getChantierStatusBadgeStyle,
+  getChantierStatusLabel,
   getNextChantierStatusAction,
   groupChantiersByClient
 } from '../services/chantiers.service'
@@ -161,6 +162,30 @@ function datesSeChevauchent(debutA, finA, debutB, finB) {
   return debutA <= finB && finA >= debutB
 }
 
+function isMissingChantierColumnError(error, column) {
+  const message = String(error?.message || '')
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    message.includes(`chantiers.${column}`) ||
+    message.includes(`'${column}' column`) ||
+    message.includes(`column chantiers.${column} does not exist`)
+  )
+}
+
+function chantierSchemaErrorMessage(error) {
+  if (isMissingChantierColumnError(error, 'statut')) {
+    return "La colonne chantiers.statut est absente dans la base Supabase."
+  }
+  if (isMissingChantierColumnError(error, 'client_nom')) {
+    return "La colonne chantiers.client_nom est absente dans la base Supabase."
+  }
+  if (isMissingChantierColumnError(error, 'documents_visibilite_employe')) {
+    return "La colonne chantiers.documents_visibilite_employe est absente dans la base Supabase."
+  }
+  return error?.message || 'Erreur Supabase inconnue.'
+}
+
 export default function Admin() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -174,6 +199,11 @@ export default function Admin() {
   // Données globales
   const [rapportsEnAttente, setRapportsEnAttente] = useState([])
   const [chantiers, setChantiers] = useState([])
+  const [chantierSchema, setChantierSchema] = useState({
+    statut: true,
+    clientNom: true,
+    documentsVisibiliteEmploye: true
+  })
   const [depannages, setDepannages] = useState([])
   const [depannagesLoading, setDepannagesLoading] = useState(false)
   const [depannagesError, setDepannagesError] = useState('')
@@ -406,6 +436,9 @@ export default function Admin() {
   async function chargerTout() {
     setAdminError('')
     try {
+      const chantierColumns = await verifierColonnesChantiers()
+      setChantierSchema(chantierColumns)
+
       const rap = await supabaseSafe(supabase.from('rapports')
         .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
@@ -475,6 +508,24 @@ export default function Admin() {
       console.error('Erreur chargement admin', error)
       setAdminError("Impossible de charger le tableau de bord admin. Réessaie dans un instant.")
     }
+  }
+
+  async function verifierColonneChantier(column) {
+    const { error } = await supabase.from('chantiers').select(column).limit(1)
+    if (!error) return true
+    if (isMissingChantierColumnError(error, column)) return false
+    console.error(`Erreur verification colonne chantiers.${column}`, error)
+    return true
+  }
+
+  async function verifierColonnesChantiers() {
+    const [statut, clientNom, documentsVisibiliteEmploye] = await Promise.all([
+      verifierColonneChantier('statut'),
+      verifierColonneChantier('client_nom'),
+      verifierColonneChantier('documents_visibilite_employe')
+    ])
+
+    return { statut, clientNom, documentsVisibiliteEmploye }
   }
 
   async function chargerVacancesAdmin() {
@@ -1242,6 +1293,11 @@ export default function Admin() {
   async function mettreAJourStatutChantier(chantier, nextStatus) {
     if (!chantier?.id || !nextStatus) return
 
+    if (!chantierSchema.statut) {
+      alert("Impossible de mettre a jour le statut : la colonne chantiers.statut est absente dans la base Supabase. La migration des statuts chantier doit etre appliquee.")
+      return
+    }
+
     try {
       const updated = await supabaseSafe(
         supabase
@@ -1256,9 +1312,14 @@ export default function Admin() {
 
       setChantiers(prev => prev.map(item => item.id === updated.id ? updated : item))
       if (chantierActif?.id === updated.id) setChantierActif(updated)
+      await chargerTout()
     } catch (error) {
-      console.error('Erreur mise a jour statut chantier', error)
-      alert("Impossible de mettre a jour le statut du chantier. Veuillez reessayer.")
+      console.error('Erreur mise a jour statut chantier', {
+        chantierId: chantier.id,
+        nextStatus,
+        error
+      })
+      alert(`Impossible de mettre a jour le statut du chantier. ${chantierSchemaErrorMessage(error)}`)
     }
   }
 
@@ -1653,20 +1714,20 @@ export default function Admin() {
               <div style={{ fontWeight: 600, fontSize: '14px' }}>Chantier</div>
               <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>Documents employé prévus en mode sans prix</div>
             </div>
-            <span style={{ ...getChantierStatusBadgeStyle(chantierActif.statut), borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-              {chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER}
+            <span style={{ ...getChantierStatusBadgeStyle(chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER), borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {getChantierStatusLabel(chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER)}
             </span>
           </div>
-          {getNextChantierStatusAction(chantierActif.statut) && (
+          {chantierSchema.statut && getNextChantierStatusAction(chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER) && (
             <button
               className="btn-outline btn-sm"
               style={{ width: 'auto', alignSelf: 'flex-start' }}
               onClick={() => {
-                const nextAction = getNextChantierStatusAction(chantierActif.statut)
+                const nextAction = getNextChantierStatusAction(chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER)
                 if (nextAction) mettreAJourStatutChantier(chantierActif, nextAction.nextStatus)
               }}
             >
-              {getNextChantierStatusAction(chantierActif.statut)?.label}
+              {getNextChantierStatusAction(chantierActif.statut || CHANTIER_STATUT_A_CONFIRMER)?.label}
             </button>
           )}
         </div>
@@ -1808,6 +1869,14 @@ export default function Admin() {
         </div>
       </div>
       <div className="page-content">
+        <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#475569' }}>
+          Les chantiers en statut 'A confirmer' ne sont pas visibles par les employés.
+        </div>
+        {!chantierSchema.statut && (
+          <div style={{ background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#9A3412' }}>
+            Statuts chantier indisponibles : la colonne chantiers.statut est absente dans la base Supabase.
+          </div>
+        )}
         {ajoutChantier && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
@@ -1824,16 +1893,19 @@ export default function Admin() {
                 const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
                 if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
                 try {
-                  await supabaseSafe(supabase.from('chantiers').insert({
-                    client_nom: nouveauClientNom.trim() || null,
-                    nom: nouveauNomChantier,
-                    adresse: nouvelleAdresse,
-                    statut: CHANTIER_STATUT_A_CONFIRMER,
-                    documents_visibilite_employe: 'sans_prix'
-                  }))
+                  const payload = {
+                    nom: nouveauNomChantier.trim(),
+                    adresse: nouvelleAdresse.trim() || null
+                  }
+                  if (chantierSchema.clientNom) payload.client_nom = nouveauClientNom.trim() || null
+                  if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
+                  if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
+
+                  await supabaseSafe(supabase.from('chantiers').insert(payload))
                   setAjoutChantier(false); setNouveauClientNom(''); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
                 } catch (error) {
-                  alert('Erreur lors de la création du chantier. Veuillez réessayer.')
+                  console.error('Erreur creation chantier', error)
+                  alert(`Erreur lors de la creation du chantier. ${chantierSchemaErrorMessage(error)}`)
                 }
               }}>Créer</button>
             </div>
@@ -1845,28 +1917,31 @@ export default function Admin() {
             <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>
               {group.items.map(c => {
-                const badgeStyle = getChantierStatusBadgeStyle(c.statut)
-                const nextAction = getNextChantierStatusAction(c.statut)
+                const chantierStatut = c.statut || CHANTIER_STATUT_A_CONFIRMER
+                const badgeStyle = getChantierStatusBadgeStyle(chantierStatut)
+                const nextAction = chantierSchema.statut ? getNextChantierStatusAction(chantierStatut) : null
                 return (
-                  <div key={c.id} className="row-item">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
+                  <div key={c.id} className="row-item" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 336px', alignItems: 'center', gap: '12px', minHeight: '54px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr)', alignItems: 'center', gap: '10px', minWidth: 0, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
                       <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                      <div>
-                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
-                        <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div title={c.nom} style={{ fontWeight: 500, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nom}</div>
+                        <div title={c.adresse || ''} style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.adresse || '—'}</div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                        {c.statut || CHANTIER_STATUT_A_CONFIRMER}
+                    <div style={{ display: 'grid', gridTemplateColumns: '118px 150px 30px 30px', gap: '6px', alignItems: 'center', justifyContent: 'end' }}>
+                      <span title={getChantierStatusLabel(chantierStatut)} style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', height: '28px', lineHeight: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {getChantierStatusLabel(chantierStatut)}
                       </span>
-                      {nextAction && (
-                        <button className="btn-outline btn-sm" style={{ width: 'auto' }} onClick={() => mettreAJourStatutChantier(c, nextAction.nextStatus)}>
+                      {nextAction ? (
+                        <button className="btn-outline btn-sm" style={{ width: '150px', height: '30px', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => mettreAJourStatutChantier(c, nextAction.nextStatus)}>
                           {nextAction.label}
                         </button>
+                      ) : (
+                        <span aria-hidden="true" style={{ width: '150px', height: '30px' }} />
                       )}
-                      <button onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
-                      <button onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+                      <button title="Renommer" onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ width: '30px', height: '30px', background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: 0, fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
+                      <button title="Supprimer" onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ width: '30px', height: '30px', background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: 0, fontSize: '13px', cursor: 'pointer', color: '#A32D2D', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>🗑️</button>
                     </div>
                   </div>
                 )

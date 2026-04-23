@@ -25,36 +25,37 @@ export function isChantierVisibleToEmployees(chantierOrStatus) {
 }
 
 export function getChantierStatusBadgeStyle(statut) {
+  if (statut === CHANTIER_STATUT_A_CONFIRMER) {
+    return { background: '#F3F4F6', color: '#9A5B00', border: '1px solid #F0B75A' }
+  }
+
+  if (statut === CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES) {
+    return { background: '#E6F1FB', color: '#185FA5', border: '1px solid #c5daee' }
+  }
+
+  if (statut === CHANTIER_STATUT_EN_COURS) {
+    return { background: '#E7F6EA', color: '#247A35', border: '1px solid #B9DFC1' }
+  }
+
   if (statut === CHANTIER_STATUT_FINI) {
-    return { background: '#EAF3DE', color: '#3B6D11', border: '1px solid #cfe2b5' }
+    return { background: '#E5E7EB', color: '#374151', border: '1px solid #9CA3AF' }
   }
 
   if (statut === CHANTIER_STATUT_A_FACTURER) {
-    return { background: '#FFF1E2', color: '#AF5E12', border: '1px solid #f0c48d' }
-  }
-
-  if ([CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES, CHANTIER_STATUT_EN_COURS].includes(statut)) {
-    return { background: '#E6F1FB', color: '#185FA5', border: '1px solid #c5daee' }
+    return { background: '#F1E9FF', color: '#6B3FA0', border: '1px solid #C9B3F2' }
   }
 
   return { background: '#FAEEDA', color: '#8A5A10', border: '1px solid #efd19c' }
 }
 
+export function getChantierStatusLabel(statut) {
+  if (statut === CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES) return 'Envoyé aux employés'
+  return statut || CHANTIER_STATUT_A_CONFIRMER
+}
+
 export function getNextChantierStatusAction(statut) {
   if (statut === CHANTIER_STATUT_A_CONFIRMER) {
-    return { nextStatus: CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES, label: 'Envoyer aux employes' }
-  }
-
-  if (statut === CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES) {
-    return { nextStatus: CHANTIER_STATUT_EN_COURS, label: 'Passer en cours' }
-  }
-
-  if (statut === CHANTIER_STATUT_EN_COURS) {
-    return { nextStatus: CHANTIER_STATUT_A_FACTURER, label: 'Passer a facturer' }
-  }
-
-  if (statut === CHANTIER_STATUT_A_FACTURER) {
-    return { nextStatus: CHANTIER_STATUT_FINI, label: 'Marquer fini' }
+    return { nextStatus: CHANTIER_STATUT_ENVOYE_AUX_EMPLOYES, label: 'Envoyer aux employés' }
   }
 
   return null

@@ -444,7 +444,7 @@ export default function Admin() {
       setChantierSchema(chantierColumns)
 
       const rap = await supabaseSafe(supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
@@ -658,17 +658,46 @@ export default function Admin() {
   }
 
   async function chargerSousDossiers(chantierId) {
-    const { data } = await supabase.from('sous_dossiers')
-      .select('*, rapports(id, rapport_photos(id))')
-      .eq('chantier_id', chantierId)
-      .order('created_at')
-    if (data) setSousDossiers(data)
+    let data = []
+
+    try {
+      const { data: affairesData, error } = await supabase
+        .from('affaires')
+        .select('*, rapports(id, rapport_photos(id))')
+        .eq('chantier_id', chantierId)
+
+      if (!error && affairesData && affairesData.length > 0) {
+        data = affairesData.map(a => ({
+          ...a,
+          nom: a.nom,
+          isAffaire: true
+        }))
+      } else {
+        throw new Error('fallback')
+      }
+    } catch {
+      const { data: sousDossiersData } = await supabase
+        .from('sous_dossiers')
+        .select('*, rapports(id, rapport_photos(id))')
+        .eq('chantier_id', chantierId)
+
+      data = (sousDossiersData || []).map(sd => ({
+        ...sd,
+        nom: sd.nom,
+        isAffaire: false
+      }))
+    }
+
+    setSousDossiers(data || [])
   }
 
   async function chargerRapports(sdId) {
+    const sourceItem = sousDossiers.find(item => item.id === sdId) || sousDossierActif
+    const foreignKey = sourceItem?.isAffaire ? 'affaire_id' : 'sous_dossier_id'
+
     const { data } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
-      .eq('sous_dossier_id', sdId).is('deleted_at', null).order('date_travail', { ascending: false })
+      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+      .eq(foreignKey, sdId).is('deleted_at', null).order('date_travail', { ascending: false })
     if (!data) { setRapports([]); return }
     const rapportsHydrates = await hydraterRapportsPhotos(data)
     if (rapportsHydrates.length > 0) {
@@ -682,7 +711,7 @@ export default function Admin() {
     const m = mois || calMois
     const { debut, fin } = debutFin(m.year, m.month)
     const { data: raps } = await supabase.from('rapports')
-      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
+      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom)), affaires(nom, chantier_id, chantiers(nom))')
       .gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null)
     if (raps) setCalRapports(raps)
     const { data: deps } = await supabase.from('depannages')
@@ -750,7 +779,7 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
 
     const { data: raps } = await supabase.from('rapports')
-      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom))')
+      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom)), affaires(nom, chantier_id, chantiers(nom))')
       .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null).order('date_travail')
 
     if (raps && raps.length > 0) {
@@ -823,7 +852,7 @@ export default function Admin() {
     // Rapports + time_entries pour les durées correctes
     const [{ data: raps }, { data: deps }, { data: suppEntries }] = await Promise.all([
       supabase.from('rapports')
-        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse))')
+        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse)), affaires(nom, chantier_id, chantiers(nom, adresse))')
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
         .is('deleted_at', null).order('date_travail'),
       supabase.from('depannages')
@@ -899,8 +928,8 @@ export default function Admin() {
         doc.setFontSize(9)
 
         for (const r of dayRaps) {
-          const nomChantier = r.sous_dossiers?.chantiers?.nom || '—'
-          const nomSd = r.sous_dossiers?.nom || ''
+          const nomChantier = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'
+          const nomSd = r.sous_dossiers?.nom || r.affaires?.nom || ''
           const duree = Number(r._duree) || 0
           totalH += duree
           const label = `🏗  ${nomChantier}${nomSd ? ' › ' + nomSd : ''}`
@@ -1028,10 +1057,17 @@ export default function Admin() {
   async function deconnecter() { await signOut(); navigate('/login') }
 
   async function supprimerChantier(c) {
-    const { data: sds } = await supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id)
+    const [{ data: sds }, { data: affaires }] = await Promise.all([
+      supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id),
+      supabase.from('affaires').select('*').eq('chantier_id', c.id)
+    ])
+    const enfants = [
+      ...((sds || []).map(item => ({ ...item, isAffaire: false }))),
+      ...((affaires || []).map(item => ({ ...item, isAffaire: true })))
+    ]
     try {
       await supabaseSafe(supabase.from('chantiers').update({ actif: false }).eq('id', c.id))
-      setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants: sds || [] }])
+      setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants }])
       chargerTout(); setConfirm(null); setVue('chantiers'); setChantierActif(null)
     } catch (error) {
       alert('Erreur lors de la suppression du chantier. Veuillez réessayer.')
@@ -1168,7 +1204,7 @@ export default function Admin() {
     const updatedR = await supabaseSafe(
       supabase
         .from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('id', rapportId)
         .single()
     )
@@ -1188,10 +1224,12 @@ export default function Admin() {
     const files = Array.from(fileList || []).filter(Boolean)
     if (!rapportDetail?.id || files.length === 0 || adminPhotoSaving) return
 
-    const sousDossierId = rapportDetail.sous_dossiers?.id || rapportDetail.sous_dossier_id || sousDossierActif?.id || null
-    const chantierId = rapportDetail.sous_dossiers?.chantier_id || rapportDetail.sous_dossiers?.chantiers?.id || chantierActif?.id || null
+    const sourceItem = sousDossiers.find(item => item.id === sousDossierActif?.id) || sousDossierActif
+    const affaireId = rapportDetail.affaire_id || (sourceItem?.isAffaire ? sourceItem.id : null) || null
+    const sousDossierId = rapportDetail.sous_dossiers?.id || rapportDetail.sous_dossier_id || (!sourceItem?.isAffaire ? sousDossierActif?.id : null) || null
+    const chantierId = rapportDetail.sous_dossiers?.chantier_id || rapportDetail.sous_dossiers?.chantiers?.id || rapportDetail.affaires?.chantier_id || sourceItem?.chantier_id || chantierActif?.id || null
 
-    if (!sousDossierId || !chantierId) {
+    if ((!sousDossierId && !affaireId) || !chantierId) {
       alert("Impossible d'ajouter des photos sans dossier chantier rattache au rapport.")
       return
     }
@@ -1202,6 +1240,7 @@ export default function Admin() {
         rapportId: rapportDetail.id,
         depannageId: rapportDetail.depannage_id || null,
         chantierId,
+        affaireId,
         sousDossierId,
         files,
         userId: user?.id || null
@@ -1438,6 +1477,13 @@ export default function Admin() {
             <div>
               <div style={{ fontSize: '12px', color: '#888', textTransform: 'uppercase' }}>{item.type}</div>
               <div style={{ fontWeight: 500, fontSize: '13px' }}>{item.label}</div>
+              {item.type === 'chantier' && (item.enfants || []).length > 0 && (
+                <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                  {(item.enfants || []).length} élément(s) lié(s)
+                  {item.enfants.some(enfant => enfant.isAffaire) && ` · ${(item.enfants || []).filter(enfant => enfant.isAffaire).length} affaire(s)`}
+                  {item.enfants.some(enfant => !enfant.isAffaire) && ` · ${(item.enfants || []).filter(enfant => !enfant.isAffaire).length} sous-dossier(s)`}
+                </div>
+              )}
             </div>
             <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => restaurerCorbeille(item)}>↩ Restaurer</button>
           </div>
@@ -1722,6 +1768,8 @@ export default function Admin() {
     )
   }
 
+  const utiliseAffaires = sousDossiers.some(item => item.isAffaire)
+
   if (vue === 'sous_dossiers' && chantierActif) return (
     <div>
       <div className="top-bar">
@@ -1774,8 +1822,10 @@ export default function Admin() {
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontWeight: 600, fontSize: '14px' }}>Sous-dossiers</span>
-            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setNouveauSd(true)}>+ Nouveau</button>
+            <span style={{ fontWeight: 600, fontSize: '14px' }}>{utiliseAffaires ? 'Affaires' : 'Sous-dossiers'}</span>
+            {!utiliseAffaires && (
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setNouveauSd(true)}>+ Nouveau</button>
+            )}
           </div>
           {nouveauSd && (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -1794,7 +1844,7 @@ export default function Admin() {
               }}>OK</button>
             </div>
           )}
-          {sousDossiers.length === 0 && !nouveauSd && <div style={{ fontSize: '13px', color: '#888' }}>Aucun sous-dossier</div>}
+          {sousDossiers.length === 0 && !nouveauSd && <div style={{ fontSize: '13px', color: '#888' }}>{utiliseAffaires ? 'Aucune affaire' : 'Aucun sous-dossier'}</div>}
           {sousDossiers.map(sd => {
             const rapportsCount = (sd.rapports || []).length
             const photosCount = (sd.rapports || []).reduce((sum, rapport) => sum + (rapport.rapport_photos || []).length, 0)
@@ -1805,10 +1855,12 @@ export default function Admin() {
                     <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📁</div>
                     <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
                   </div>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button onClick={() => { setRenommerItem({ type: 'sous_dossier', data: sd }); setNouveauNom(sd.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
-                    <button onClick={() => setConfirm({ type: 'sous_dossier', data: sd })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
-                  </div>
+                  {!sd.isAffaire && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button onClick={() => { setRenommerItem({ type: 'sous_dossier', data: sd }); setNouveauNom(sd.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer' }}>✏️</button>
+                      <button onClick={() => setConfirm({ type: 'sous_dossier', data: sd })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'grid', gap: '8px' }}>
                   <button type="button" className="row-item" style={{ background: '#fff', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => { setSousDossierActif(sd); chargerRapports(sd.id); setVue('rapports') }}>
@@ -1847,6 +1899,7 @@ export default function Admin() {
         <div>
           <button onClick={() => { setVue('sous_dossiers'); setSousDossierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{sousDossierActif.nom}</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>{sousDossierActif.isAffaire ? 'Affaire' : 'Sous-dossier'}</div>
         </div>
         <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
       </div>
@@ -2314,10 +2367,12 @@ export default function Admin() {
             )}
             {rapportsEnAttente.map(r => {
               const t = totaux(r)
+              const nomChantier = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'
+              const nomDossier = r.sous_dossiers?.nom || r.affaires?.nom || ''
               return (
                 <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                   <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{nomChantier}{nomDossier ? ` › ${nomDossier}` : ''}</div>
                     <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
                   </div>
                   <span style={{ color: '#185FA5' }}>›</span>
@@ -2401,7 +2456,7 @@ export default function Admin() {
                     <span style={{ fontSize: '13px', fontWeight: 500 }}>{r.employe?.prenom}</span>
                     <span className="badge badge-blue" style={{ fontSize: '10px' }}>Chantier</span>
                   </div>
-                  <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{r.sous_dossiers?.chantiers?.nom}{r.sous_dossiers?.nom ? ` › ${r.sous_dossiers.nom}` : ''}</div>
+                  <div style={{ fontSize: '12px', color: '#555', paddingLeft: '14px' }}>{r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'}{(r.sous_dossiers?.nom || r.affaires?.nom) ? ` › ${r.sous_dossiers?.nom || r.affaires?.nom}` : ''}</div>
                 </div>
               ))}
               {depsJour.map(d => (
@@ -2615,7 +2670,7 @@ export default function Admin() {
 
     const parChantier = {}
     for (const r of empDetailRapports) {
-      const nom = r.sous_dossiers?.chantiers?.nom || 'Chantier inconnu'
+      const nom = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || 'Chantier inconnu'
       if (!parChantier[nom]) parChantier[nom] = []
       parChantier[nom].push(r)
     }
@@ -2687,7 +2742,7 @@ export default function Admin() {
                     <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: i === 0 ? '1px solid #eee' : '1px solid #f5f5f5' }}>
                       <div style={{ fontSize: '12px', color: '#555' }}>
                         {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'short' })}
-                        {r.sous_dossiers?.nom && <span style={{ color: '#999', marginLeft: '6px' }}>· {r.sous_dossiers.nom}</span>}
+                        {(r.sous_dossiers?.nom || r.affaires?.nom) && <span style={{ color: '#999', marginLeft: '6px' }}>· {r.sous_dossiers?.nom || r.affaires?.nom}</span>}
                       </div>
                       <span style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>{fmtDuree(r._duree || 0)}</span>
                     </div>
@@ -2890,10 +2945,12 @@ export default function Admin() {
             </div>
             {rapportsEnAttente.map(r => {
               const t = totaux(r)
+              const nomChantier = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'
+              const nomDossier = r.sous_dossiers?.nom || r.affaires?.nom || ''
               return (
                 <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
                   <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{r.sous_dossiers?.chantiers?.nom} › {r.sous_dossiers?.nom}</div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{nomChantier}{nomDossier ? ` › ${nomDossier}` : ''}</div>
                     <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
                   </div>
                   <span style={{ color: '#185FA5' }}>›</span>

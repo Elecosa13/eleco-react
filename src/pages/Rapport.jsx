@@ -28,6 +28,7 @@ export default function Rapport() {
   const { id } = useParams()
   const { profile: user } = useAuth()
   const [sd, setSd] = useState(null)
+  const [isAffaire, setIsAffaire] = useState(false)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [duree, setDuree] = useState(8)
   const [remarques, setRemarques] = useState('')
@@ -53,23 +54,44 @@ export default function Rapport() {
 
   useEffect(() => {
     verifierRapportExistant(date)
-  }, [date, id, user?.id])
+  }, [date, id, user?.id, sd?.id, isAffaire])
 
   async function charger() {
     setLoading(true)
     await Promise.all([
-      supabase
-        .from('sous_dossiers')
-        .select('*, chantiers(id, nom, statut)')
-        .eq('id', id)
-        .single()
-        .then(({ data }) => {
-          if (data && data.chantiers && !isChantierVisibleToEmployees(data.chantiers)) {
-            navigate('/employe')
-            return
+      (async () => {
+        let data = null
+        let loadedIsAffaire = false
+
+        const { data: sousDossierData } = await supabase
+          .from('sous_dossiers')
+          .select('*, chantiers(id, nom, statut)')
+          .eq('id', id)
+          .maybeSingle()
+
+        if (sousDossierData) {
+          data = sousDossierData
+        } else {
+          const { data: affaireData } = await supabase
+            .from('affaires')
+            .select('*, chantiers(id, nom, statut)')
+            .eq('id', id)
+            .maybeSingle()
+
+          if (affaireData) {
+            data = affaireData
+            loadedIsAffaire = true
           }
-          if (data) setSd(data)
-        }),
+        }
+
+        if (data && data.chantiers && !isChantierVisibleToEmployees(data.chantiers)) {
+          navigate('/employe')
+          return
+        }
+
+        setIsAffaire(loadedIsAffaire)
+        setSd(data || null)
+      })(),
       supabase
         .from('catalogue')
         .select('*')
@@ -88,15 +110,17 @@ export default function Rapport() {
   }
 
   async function verifierRapportExistant(dateTravail) {
-    if (!id || !user?.id || !dateTravail) {
+    if (!id || !user?.id || !dateTravail || !sd?.id) {
       setRapportExistant(null)
       return
     }
 
+    const foreignKey = isAffaire ? 'affaire_id' : 'sous_dossier_id'
+
     const { data, error } = await supabase
       .from('rapports')
       .select('id, valide')
-      .eq('sous_dossier_id', id)
+      .eq(foreignKey, id)
       .eq('employe_id', user.id)
       .eq('date_travail', dateTravail)
       .is('deleted_at', null)
@@ -191,17 +215,19 @@ export default function Rapport() {
     setEnvoi(true)
 
     try {
+      const rapportPayload = {
+        employe_id: user.id,
+        date_travail: date,
+        heure_debut: '07:30',
+        heure_fin: '17:00',
+        remarques,
+        ...(isAffaire ? { affaire_id: id } : { sous_dossier_id: id })
+      }
+
       const rapport = await supabaseSafe(
         supabase
           .from('rapports')
-          .insert({
-            sous_dossier_id: id,
-            employe_id: user.id,
-            date_travail: date,
-            heure_debut: '07:30',
-            heure_fin: '17:00',
-            remarques
-          })
+          .insert(rapportPayload)
           .select()
           .single()
       )
@@ -235,7 +261,7 @@ export default function Rapport() {
           await uploadRapportPhotos({
             rapportId: rapport.id,
             chantierId: sd.chantier_id,
-            sousDossierId: id,
+            ...(isAffaire ? { affaireId: id } : { sousDossierId: id }),
             files: photos.map(photo => photo.file),
             userId: user.id
           })
@@ -248,7 +274,7 @@ export default function Rapport() {
     } catch (error) {
       if (error?.code === '23505' || String(error?.message || '').includes('duplicate_chantier_rapport')) {
         await verifierRapportExistant(date)
-        alert("Un rapport existe deja pour cette date dans ce sous-dossier.")
+        alert(`Un rapport existe deja pour cette date dans ${isAffaire ? 'cette affaire' : 'ce sous-dossier'}.`)
       } else {
         alert("Erreur lors de l'envoi du rapport. Veuillez réessayer.")
       }
@@ -398,7 +424,7 @@ export default function Rapport() {
             }}>
               {rapportExistant.valide
                 ? "Un rapport valide existe deja pour cette date. Les heures sont verrouillees."
-                : "Un rapport existe deja pour cette date. La recreation est bloquee pour eviter un double comptage."}
+                : `Un rapport existe deja pour cette date dans ${isAffaire ? 'cette affaire' : 'ce sous-dossier'}. La recreation est bloquee pour eviter un double comptage.`}
             </div>
           )}
 

@@ -6,12 +6,13 @@ export async function uploadRapportPhotos({
   rapportId,
   depannageId = null,
   chantierId,
-  sousDossierId,
+  sousDossierId = null,
+  affaireId = null,
   files,
   userId
 }) {
   const photoFiles = Array.from(files || []).filter(Boolean)
-  if (!rapportId || !chantierId || !sousDossierId || photoFiles.length === 0) return []
+  if (!rapportId || !chantierId || (!sousDossierId && !affaireId) || photoFiles.length === 0) return []
 
   const uploadedObjects = []
 
@@ -20,6 +21,7 @@ export async function uploadRapportPhotos({
       const storagePath = buildStoragePath({
         chantierId,
         sousDossierId,
+        affaireId,
         rapportId,
         fileName: file.name
       })
@@ -39,7 +41,8 @@ export async function uploadRapportPhotos({
         rapport_id: rapportId,
         depannage_id: depannageId,
         chantier_id: chantierId,
-        sous_dossier_id: sousDossierId,
+        ...(affaireId ? { affaire_id: affaireId } : {}),
+        ...(sousDossierId ? { sous_dossier_id: sousDossierId } : {}),
         storage_bucket: RAPPORT_PHOTOS_BUCKET,
         storage_path: storagePath,
         file_name: file.name || 'photo.jpg',
@@ -123,15 +126,18 @@ export function releasePhotoPreviews(items) {
   }
 }
 
-function buildStoragePath({ chantierId, sousDossierId, rapportId, fileName }) {
+function buildStoragePath({ chantierId, sousDossierId, affaireId, rapportId, fileName }) {
   const extension = getExtension(fileName)
   const safeFileName = slugify(fileName || 'photo')
   const uniquePart = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const parentPath = sousDossierId
+    ? ['sous-dossiers', sousDossierId]
+    : ['affaires', affaireId]
+
   return [
     'chantiers',
     chantierId,
-    'sous-dossiers',
-    sousDossierId,
+    ...parentPath,
     'rapports',
     rapportId,
     `${uniquePart}-${safeFileName}${extension}`

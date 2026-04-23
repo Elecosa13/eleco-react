@@ -22,9 +22,9 @@ export default function Chantier() {
   }, [id])
 
   async function charger() {
-    const [{ data: ch }, { data }] = await Promise.all([
+    const [{ data: ch }, { data: affairesData }] = await Promise.all([
       supabase.from('chantiers').select('*').eq('id', id).single(),
-      supabase.from('sous_dossiers')
+      supabase.from('affaires')
         .select('id, nom, rapports(id, rapport_photos(id))')
         .eq('chantier_id', id)
         .order('created_at')
@@ -39,7 +39,18 @@ export default function Chantier() {
 
     setForbidden(false)
     if (ch) setChantier(ch)
-    if (data) setSds(data)
+
+    if (affairesData && affairesData.length > 0) {
+      setSds(affairesData.map(item => ({ ...item, isAffaire: true })))
+      return
+    }
+
+    const { data: sousDossiersData } = await supabase.from('sous_dossiers')
+      .select('id, nom, rapports(id, rapport_photos(id))')
+      .eq('chantier_id', id)
+      .order('created_at')
+
+    if (sousDossiersData) setSds(sousDossiersData.map(item => ({ ...item, isAffaire: false })))
   }
 
   if (forbidden) {
@@ -61,6 +72,7 @@ export default function Chantier() {
   }
 
   const badgeStyle = getChantierStatusBadgeStyle(chantier?.statut)
+  const utiliseAffaires = sds.some(item => item.isAffaire)
 
   return (
     <div>
@@ -89,10 +101,10 @@ export default function Chantier() {
 
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontWeight: 600, fontSize: '14px' }}>Sous-dossiers / parties</span>
+            <span style={{ fontWeight: 600, fontSize: '14px' }}>{utiliseAffaires ? 'Affaires / parties' : 'Sous-dossiers / parties'}</span>
             <span style={{ fontSize: '11px', color: '#888' }}>{sds.length}</span>
           </div>
-          {sds.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun sous-dossier</div>}
+          {sds.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>{utiliseAffaires ? 'Aucune affaire' : 'Aucun sous-dossier'}</div>}
           {sds.map(sd => {
             const rapportsCount = (sd.rapports || []).length
             const photosCount = (sd.rapports || []).reduce((sum, rapport) => sum + (rapport.rapport_photos || []).length, 0)
@@ -100,7 +112,10 @@ export default function Chantier() {
               <div key={sd.id} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                   <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>D</div>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{sd.isAffaire ? 'Affaire' : 'Sous-dossier'}</div>
+                  </div>
                 </div>
 
                 <div style={{ display: 'grid', gap: '8px' }}>

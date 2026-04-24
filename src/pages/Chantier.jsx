@@ -1,157 +1,308 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import PageTopActions from '../components/PageTopActions'
 import { supabase } from '../lib/supabase'
 import { usePageRefresh } from '../lib/refresh'
-import {
-  getChantierClientLabel,
-  getChantierStatusBadgeStyle,
-  isChantierVisibleToEmployees
-} from '../services/chantiers.service'
+
+const SEEDS = [
+  'ABA', 'ALTUN', 'Bonbonnière', 'DS', 'Eyka',
+  'Zimmerman', 'Jonathan / sani Projet', 'Wandrille'
+]
 
 export default function Chantier() {
   const navigate = useNavigate()
-  const { id } = useParams()
-  const [chantier, setChantier] = useState(null)
-  const [sds, setSds] = useState([])
-  const [forbidden, setForbidden] = useState(false)
-  const refreshPage = usePageRefresh(() => charger(), [id])
 
-  useEffect(() => {
-    charger()
-  }, [id])
+  const [niveau, setNiveau] = useState(1)
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedIntermediaire, setSelectedIntermediaire] = useState(null)
+  const [selectedChantier, setSelectedChantier] = useState(null)
+  const [selectedAffaire, setSelectedAffaire] = useState(null)
+
+  const [showForm, setShowForm] = useState(false)
+  const [nomAjout, setNomAjout] = useState('')
+  const [adresseAjout, setAdresseAjout] = useState('')
+  const [numeroAjout, setNumeroAjout] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [erreur, setErreur] = useState(null)
+
+  const refreshPage = usePageRefresh(() => charger(), [])
+
+  useEffect(() => { charger() }, [niveau, selectedIntermediaire?.id, selectedChantier?.id])
 
   async function charger() {
-    const [{ data: ch }, { data: affairesData }] = await Promise.all([
-      supabase.from('chantiers').select('*').eq('id', id).single(),
-      supabase.from('affaires')
-        .select('id, nom, rapports(id, rapport_photos(id))')
-        .eq('chantier_id', id)
-        .order('created_at')
-    ])
-
-    if (ch && !isChantierVisibleToEmployees(ch)) {
-      setForbidden(true)
-      setChantier(null)
-      setSds([])
-      return
+    setLoading(true)
+    setErreur(null)
+    try {
+      if (niveau === 1) {
+        const { data, error } = await supabase
+          .from('intermediaires')
+          .select('id, nom')
+          .eq('actif', true)
+          .order('nom')
+        if (error) throw error
+        if (!data || data.length === 0) {
+          await seederIntermediaires()
+          const { data: seeded } = await supabase
+            .from('intermediaires').select('id, nom').eq('actif', true).order('nom')
+          setItems(seeded || [])
+        } else {
+          setItems(data)
+        }
+      } else if (niveau === 2) {
+        const { data, error } = await supabase
+          .from('chantiers')
+          .select('id, nom, adresse, statut')
+          .eq('intermediaire_id', selectedIntermediaire.id)
+          .eq('actif', true)
+          .order('nom')
+        if (error) throw error
+        setItems(data || [])
+      } else if (niveau === 3) {
+        const { data, error } = await supabase
+          .from('affaires')
+          .select('id, numero, nom, statut')
+          .eq('chantier_id', selectedChantier.id)
+          .eq('actif', true)
+          .order('created_at')
+        if (error) throw error
+        setItems(data || [])
+      }
+    } catch (e) {
+      setErreur(e.message)
+    } finally {
+      setLoading(false)
     }
-
-    setForbidden(false)
-    if (ch) setChantier(ch)
-
-    if (affairesData && affairesData.length > 0) {
-      setSds(affairesData.map(item => ({ ...item, isAffaire: true })))
-      return
-    }
-
-    const { data: sousDossiersData } = await supabase.from('sous_dossiers')
-      .select('id, nom, rapports(id, rapport_photos(id))')
-      .eq('chantier_id', id)
-      .order('created_at')
-
-    if (sousDossiersData) setSds(sousDossiersData.map(item => ({ ...item, isAffaire: false })))
   }
 
-  if (forbidden) {
-    return (
-      <div>
-        <div className="top-bar">
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chantier indisponible</div>
-          </div>
-          <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} />
-        </div>
-        <div className="page-content">
-          <div className="card" style={{ fontSize: '13px', color: '#888' }}>
-            Ce chantier n'a pas encore ete envoye aux employes.
-          </div>
-        </div>
-      </div>
-    )
+  async function seederIntermediaires() {
+    for (const nom of SEEDS) {
+      await supabase.from('intermediaires').insert({ nom, type: 'intermediaire' })
+    }
   }
 
-  const badgeStyle = getChantierStatusBadgeStyle(chantier?.statut)
-  const utiliseAffaires = sds.some(item => item.isAffaire)
+  async function ajouterItem() {
+    setSaving(true)
+    setErreur(null)
+    try {
+      if (niveau === 1) {
+        if (!nomAjout.trim()) { setErreur('Nom requis'); return }
+        const { error } = await supabase.from('intermediaires').insert({ nom: nomAjout.trim(), type: 'intermediaire' })
+        if (error) throw error
+      } else if (niveau === 2) {
+        if (!nomAjout.trim()) { setErreur('Nom requis'); return }
+        const { error } = await supabase.from('chantiers').insert({
+          nom: nomAjout.trim(),
+          adresse: adresseAjout.trim() || null,
+          intermediaire_id: selectedIntermediaire.id
+        })
+        if (error) throw error
+      } else if (niveau === 3) {
+        if (!numeroAjout.trim()) { setErreur('Numéro requis'); return }
+        const { error } = await supabase.from('affaires').insert({
+          chantier_id: selectedChantier.id,
+          numero: numeroAjout.trim(),
+          nom: nomAjout.trim() || null
+        })
+        if (error) throw error
+      }
+      fermerForm()
+      await charger()
+    } catch (e) {
+      setErreur(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function fermerForm() {
+    setShowForm(false)
+    setNomAjout('')
+    setAdresseAjout('')
+    setNumeroAjout('')
+    setErreur(null)
+  }
+
+  function allerVers(n, item) {
+    if (n === 2) setSelectedIntermediaire(item)
+    if (n === 3) setSelectedChantier(item)
+    if (n === 4) setSelectedAffaire(item)
+    setItems([])
+    fermerForm()
+    setNiveau(n)
+  }
+
+  function retour() {
+    fermerForm()
+    if (niveau === 2) { setSelectedIntermediaire(null); setNiveau(1) }
+    else if (niveau === 3) { setSelectedChantier(null); setNiveau(2) }
+    else if (niveau === 4) { setSelectedAffaire(null); setNiveau(3) }
+  }
+
+  function titreTop() {
+    if (niveau === 1) return 'Intermédiaires'
+    if (niveau === 2) return selectedIntermediaire?.nom || 'Chantiers'
+    if (niveau === 3) return selectedChantier?.nom || 'Affaires'
+    return selectedAffaire
+      ? `${selectedAffaire.numero || ''}${selectedAffaire.nom ? ' · ' + selectedAffaire.nom : ''}`
+      : 'Documents'
+  }
+
+  function sousTitreTop() {
+    if (niveau === 2) return 'Intermédiaire'
+    if (niveau === 3) return selectedIntermediaire?.nom
+    if (niveau === 4) return `${selectedChantier?.nom} · Affaire`
+    return null
+  }
+
+  function titreListe() {
+    if (niveau === 1) return 'Intermédiaires'
+    if (niveau === 2) return 'Chantiers'
+    if (niveau === 3) return 'Affaires'
+    return 'Documents'
+  }
 
   return (
     <div>
       <div className="top-bar">
         <div>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{chantier?.nom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>{getChantierClientLabel(chantier)}</div>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{titreTop()}</div>
+          {sousTitreTop() && (
+            <div style={{ fontSize: '11px', color: '#888' }}>{sousTitreTop()}</div>
+          )}
         </div>
         <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} />
       </div>
+
       <div className="page-content">
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '14px' }}>Chantier</div>
-              <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>{chantier?.adresse || '-'}</div>
-            </div>
-            <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-              {chantier?.statut || 'A confirmer'}
-            </span>
-          </div>
-          <div style={{ fontSize: '11px', color: '#888' }}>
-            Documents employe: vue preparee pour les versions sans prix.
-          </div>
-        </div>
 
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontWeight: 600, fontSize: '14px' }}>{utiliseAffaires ? 'Affaires / parties' : 'Sous-dossiers / parties'}</span>
-            <span style={{ fontSize: '11px', color: '#888' }}>{sds.length}</span>
-          </div>
-          {sds.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>{utiliseAffaires ? 'Aucune affaire' : 'Aucun sous-dossier'}</div>}
-          {sds.map(sd => {
-            const rapportsCount = (sd.rapports || []).length
-            const photosCount = (sd.rapports || []).reduce((sum, rapport) => sum + (rapport.rapport_photos || []).length, 0)
-            return (
-              <div key={sd.id} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                  <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>D</div>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{sd.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{sd.isAffaire ? 'Affaire' : 'Sous-dossier'}</div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gap: '8px' }}>
+        {niveau < 4 && (
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {niveau > 1 && (
                   <button
                     type="button"
-                    className="row-item"
-                    style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff' }}
-                    onClick={() => navigate(`/employe/rapport/${sd.id}`)}
+                    onClick={retour}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontSize: '13px', padding: 0 }}
                   >
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Rapports</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>{rapportsCount} rapport(s)</div>
-                    </div>
-                    <span style={{ color: '#185FA5' }}>{'>'}</span>
+                    ← Retour
                   </button>
+                )}
+                <span style={{ fontWeight: 600, fontSize: '14px' }}>{titreListe()}</span>
+                {!loading && <span style={{ fontSize: '11px', color: '#888' }}>{items.length}</span>}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowForm(f => !f); setErreur(null) }}
+                style={{
+                  background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px',
+                  width: '28px', height: '28px', fontSize: '18px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, flexShrink: 0
+                }}
+              >
+                +
+              </button>
+            </div>
 
-                  <div className="row-item">
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Photos</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>{photosCount} photo(s)</div>
-                    </div>
-                    <span style={{ fontSize: '11px', color: '#888' }}>Depuis rapports</span>
-                  </div>
-
-                  <div className="row-item">
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: '12px' }}>Documents</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>Structure prete pour documents sans prix</div>
-                    </div>
-                    <span style={{ fontSize: '11px', color: '#888' }}>Bientot</span>
-                  </div>
+            {showForm && (
+              <div style={{ background: '#F5F8FC', borderRadius: '8px', padding: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {niveau === 3 && (
+                  <input
+                    placeholder="Numéro d'affaire *"
+                    value={numeroAjout}
+                    onChange={e => setNumeroAjout(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+                  />
+                )}
+                <input
+                  placeholder={niveau === 3 ? 'Nom (optionnel)' : 'Nom *'}
+                  value={nomAjout}
+                  onChange={e => setNomAjout(e.target.value)}
+                  style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+                />
+                {niveau === 2 && (
+                  <input
+                    placeholder="Adresse (optionnelle)"
+                    value={adresseAjout}
+                    onChange={e => setAdresseAjout(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+                  />
+                )}
+                {erreur && <div style={{ fontSize: '12px', color: '#c0392b' }}>{erreur}</div>}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={ajouterItem}
+                    disabled={saving}
+                    style={{ flex: 1, background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    {saving ? 'Enregistrement...' : 'Ajouter'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={fermerForm}
+                    style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: '6px', padding: '8px', fontSize: '13px', cursor: 'pointer' }}
+                  >
+                    Annuler
+                  </button>
                 </div>
               </div>
-            )
-          })}
-        </div>
+            )}
+
+            {loading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
+
+            {!loading && !erreur && items.length === 0 && (
+              <div style={{ fontSize: '13px', color: '#888' }}>Aucun élément</div>
+            )}
+
+            {erreur && !showForm && (
+              <div style={{ fontSize: '12px', color: '#c0392b' }}>{erreur}</div>
+            )}
+
+            {!loading && items.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className="row-item"
+                style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff' }}
+                onClick={() => allerVers(niveau + 1, item)}
+              >
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: '13px' }}>
+                    {niveau === 3
+                      ? `${item.numero}${item.nom ? ' · ' + item.nom : ''}`
+                      : item.nom}
+                  </div>
+                  {niveau === 2 && item.adresse && (
+                    <div style={{ fontSize: '11px', color: '#888' }}>{item.adresse}</div>
+                  )}
+                  {niveau === 3 && item.statut && (
+                    <div style={{ fontSize: '11px', color: '#888' }}>{item.statut}</div>
+                  )}
+                </div>
+                <span style={{ color: '#185FA5' }}>{'>'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {niveau === 4 && (
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={retour}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontSize: '13px', padding: 0 }}
+              >
+                ← Retour
+              </button>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>Documents</span>
+            </div>
+            <div style={{ fontSize: '13px', color: '#888' }}>Documents à venir</div>
+          </div>
+        )}
+
       </div>
     </div>
   )

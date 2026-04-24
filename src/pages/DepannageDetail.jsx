@@ -364,9 +364,10 @@ export default function DepannageDetail() {
     if (!rapportLie || files.length === 0 || photoSaving) return
 
     const sousDossierId = rapportLie.sous_dossiers?.id || rapportLie.sous_dossier_id || null
+    const affaireId = rapportLie.affaire_id || depannage?.affaire_id || null
     const chantierId = rapportLie.sous_dossiers?.chantier_id || rapportLie.sous_dossiers?.chantiers?.id || depannage?.chantier?.id || depannage?.chantier_id || null
 
-    if (!sousDossierId || !chantierId) {
+    if ((!sousDossierId && !affaireId) || !chantierId) {
       setRapportLieErreur("Impossible d'ajouter des photos sans dossier chantier rattache au rapport.")
       return
     }
@@ -380,6 +381,7 @@ export default function DepannageDetail() {
         depannageId: rapportLie.depannage_id || depannage?.id || id,
         chantierId,
         sousDossierId,
+        affaireId,
         files,
         userId: user?.id || null
       })

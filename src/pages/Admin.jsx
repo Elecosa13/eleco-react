@@ -207,6 +207,7 @@ export default function Admin() {
   const [depannages, setDepannages] = useState([])
   const [depannagesLoading, setDepannagesLoading] = useState(false)
   const [depannagesError, setDepannagesError] = useState('')
+  const [depannagesOnglet, setDepannagesOnglet] = useState('en_cours')
   const [adminError, setAdminError] = useState('')
   const [search, setSearch] = useState(adminNavigationState.depannagesSearch || '')
   const [regies, setRegies] = useState([])
@@ -1456,7 +1457,18 @@ export default function Admin() {
     [depannages, search]
   )
 
-  const depannagesGroupes = useMemo(() => grouperDepannages(depannagesFiltres), [depannagesFiltres])
+  const ONGLET_STATUTS = {
+    en_cours: ['À faire', 'En cours', 'Planifié', 'Pris', 'À traiter'],
+    a_traiter: ['Intervention faite', 'Rapport reçu', 'Facture à préparer'],
+    archives: ['Facture prête', 'payé', 'clôturé', 'annulé']
+  }
+
+  const depannagesFiltresOnglet = useMemo(() => {
+    const statuts = ONGLET_STATUTS[depannagesOnglet] || []
+    return depannagesFiltres.filter(d => statuts.includes(depannageStatut(d)))
+  }, [depannagesFiltres, depannagesOnglet])
+
+  const depannagesGroupes = useMemo(() => grouperDepannages(depannagesFiltresOnglet), [depannagesFiltresOnglet])
 
   // ──────────────────────────────────────────────────────────────────────────
   // VUES
@@ -2187,6 +2199,23 @@ export default function Admin() {
         >
           Réinitialiser les filtres
         </button>
+        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+          {[
+            { key: 'en_cours', label: 'En cours', statuts: ONGLET_STATUTS.en_cours },
+            { key: 'a_traiter', label: 'À traiter', statuts: ONGLET_STATUTS.a_traiter },
+            { key: 'archives', label: 'Archivés', statuts: ONGLET_STATUTS.archives }
+          ].map(({ key, label, statuts }) => {
+            const count = depannagesFiltres.filter(d => statuts.includes(depannageStatut(d))).length
+            return (
+              <button key={key} onClick={() => setDepannagesOnglet(key)} style={{
+                padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
+                border: depannagesOnglet === key ? 'none' : '1px solid #ddd',
+                background: depannagesOnglet === key ? '#185FA5' : 'white',
+                color: depannagesOnglet === key ? 'white' : '#333', whiteSpace: 'nowrap'
+              }}>{label} ({count})</button>
+            )
+          })}
+        </div>
         <div className="card">
           {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
           {!depannagesLoading && !depannagesError && depannagesGroupes.length > 0 && (

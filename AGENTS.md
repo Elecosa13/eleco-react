@@ -34,7 +34,7 @@ Deux vues sur la même URL, séparées par rôle:
 ## Workflow
 Travaille uniquement sur les fichiers mentionnés. Une tâche à la fois. Confirme avant de passer à la suivante.
 
-## Docs supplémentaires (0 token tant que non demandées)
+## Docs supplémentaires (charger si besoin)
 - `.claude/ROADMAP.md` — phases et priorités
 - `.claude/MISTAKES.md` — bugs déjà corrigés à ne pas reproduire
 - `.claude/ARCHITECTURE.md` — détails techniques complets

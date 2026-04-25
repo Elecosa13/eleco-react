@@ -21,6 +21,7 @@ import {
   groupChantiersByClient,
   isChantierVisibleToEmployees
 } from '../services/chantiers.service'
+import RapportV1 from './RapportV1'
 
 const QUOTA_VACANCES = 20
 const CREDIT_JOUR = 8
@@ -68,6 +69,7 @@ export default function Employe() {
   const [creditUtilise, setCreditUtilise] = useState(0)
   const [recherche, setRecherche] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
+  const [intermediaireSel, setIntermediaireSel] = useState(null)
   const [nouveauNom, setNouveauNom] = useState('')
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [confirmDoublon, setConfirmDoublon] = useState(null)
@@ -123,7 +125,7 @@ export default function Employe() {
   }, [vacDateDebut, vacDateFin])
 
   async function charger() {
-    const { data: ch } = await supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+    const { data: ch } = await supabase.from('chantiers').select('*, intermediaires(id, nom)').eq('actif', true).order('nom')
     if (ch) setChantiers(ch.filter(isChantierVisibleToEmployees))
 
     const aujourdHui = new Date().toISOString().split('T')[0]
@@ -434,6 +436,14 @@ export default function Employe() {
     getChantierClientLabel(c).toLowerCase().includes(recherche.toLowerCase())
   )
   const chantiersGroupes = useMemo(() => groupChantiersByClient(chantiersFiltres), [chantiersFiltres])
+  const intermediaires = useMemo(() => {
+    const map = new Map()
+    chantiers.forEach(c => {
+      if (c.intermediaire_id && c.intermediaires?.nom && !map.has(c.intermediaire_id))
+        map.set(c.intermediaire_id, c.intermediaires.nom)
+    })
+    return [...map.entries()].map(([id, nom]) => ({ id, nom })).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
+  }, [chantiers])
   const depannagesFiltres = useMemo(() => {
     const term = normaliserRecherche(depannagesRecherche)
     if (!term) return depannagesTerrain
@@ -456,7 +466,11 @@ export default function Employe() {
       ? 'Dépannages'
       : vue === 'autres'
         ? 'Autres'
-        : 'Chantiers actifs'
+        : vue === 'testv1'
+          ? 'Rapport V1'
+          : vue === 'chantiers' && intermediaireSel
+            ? (intermediaires.find(i => i.id === intermediaireSel)?.nom || 'Chantiers actifs')
+            : 'Chantiers actifs'
 
   if (modalSupp) {
     if (suppSucces) return (
@@ -664,7 +678,7 @@ export default function Employe() {
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {vue !== 'accueil' && (
-            <button className="btn-outline btn-sm" onClick={() => { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) }}>Retour ←</button>
+            <button className="btn-outline btn-sm" onClick={() => { if (vue === 'chantiers' && intermediaireSel) { setIntermediaireSel(null); setRecherche('') } else { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) } }}>Retour ←</button>
           )}
           <button className="avatar" onClick={deconnecter}>{user?.initiales}</button>
         </div>
@@ -734,6 +748,14 @@ export default function Employe() {
               <span style={{ fontSize: '11px', color: '#666' }}>Vacances, absences</span>
               <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#4B5563', fontSize: '18px' }}>›</span>
             </button>
+            {user?.prenom?.toLowerCase() === 'noylan' && (
+              <button onClick={() => setVue('testv1')} style={{ position: 'relative', background: '#F0E6FB', border: '1px solid #7C3AED', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', gridColumn: '1 / -1' }}>
+                <span style={{ fontSize: '28px' }}>📋</span>
+                <span style={{ fontWeight: 600, fontSize: '14px', color: '#7C3AED' }}>Rapport V1</span>
+                <span style={{ fontSize: '11px', color: '#666' }}>Envoyer un rapport de journée</span>
+                <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#7C3AED', fontSize: '18px' }}>›</span>
+              </button>
+            )}
           </div>
         </>}
 
@@ -807,45 +829,66 @@ export default function Employe() {
         </>}
 
         {vue === 'chantiers' && <>
-          <input
-            type="search"
-            placeholder="🔍 Rechercher une regie, un client ou un chantier..."
-            value={recherche}
-            onChange={e => setRecherche(e.target.value)}
-            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
-          />
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Régie / client</span>
-              <span style={{ fontSize: '11px', color: '#888' }}>Chantiers envoyés ou actifs</span>
-            </div>
-            {chantiersGroupes.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier envoyé aux employés pour l'instant.</div>}
-            {chantiersGroupes.map(group => (
-              <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '12px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#444', marginBottom: '10px' }}>{group.clientLabel}</div>
-                {group.items.map(c => {
-                  const badgeStyle = getChantierStatusBadgeStyle(c.statut)
-                  return (
-                    <div key={c.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employe/chantier/${c.id}`)}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                        <div>
-                          <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
-                          <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                          {c.statut || 'A confirmer'}
-                        </span>
-                        <span style={{ color: '#185FA5' }}>›</span>
+          {!intermediaireSel ? (
+            <div className="card">
+              <div style={{ marginBottom: '12px', fontWeight: 600, fontSize: '14px' }}>Intermédiaire</div>
+              {intermediaires.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier disponible pour l'instant.</div>}
+              {intermediaires.map(interm => {
+                const count = chantiers.filter(c => c.intermediaire_id === interm.id).length
+                return (
+                  <div key={interm.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setIntermediaireSel(interm.id)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{interm.nom}</div>
+                        <div style={{ fontSize: '11px', color: '#888' }}>{count} chantier{count > 1 ? 's' : ''}</div>
                       </div>
                     </div>
-                  )
-                })}
+                    <span style={{ color: '#185FA5', fontSize: '18px' }}>›</span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <>
+              <input
+                type="search"
+                placeholder="🔍 Rechercher un chantier..."
+                value={recherche}
+                onChange={e => setRecherche(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
+              />
+              <div className="card">
+                {chantiers
+                  .filter(c => c.intermediaire_id === intermediaireSel)
+                  .filter(c => !recherche || c.nom.toLowerCase().includes(recherche.toLowerCase()) || (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()))
+                  .length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier trouvé.</div>}
+                {chantiers
+                  .filter(c => c.intermediaire_id === intermediaireSel)
+                  .filter(c => !recherche || c.nom.toLowerCase().includes(recherche.toLowerCase()) || (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()))
+                  .map(c => {
+                    const badgeStyle = getChantierStatusBadgeStyle(c.statut)
+                    return (
+                      <div key={c.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employe/chantier/${c.id}`)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
+                          <div>
+                            <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
+                            <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {c.statut || 'A confirmer'}
+                          </span>
+                          <span style={{ color: '#185FA5' }}>›</span>
+                        </div>
+                      </div>
+                    )
+                  })}
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </>}
 
         {vue === 'depannages' && <>
@@ -880,6 +923,10 @@ export default function Employe() {
             />
           ))}
         </>}
+
+        {vue === 'testv1' && user?.prenom?.toLowerCase() === 'noylan' && (
+          <RapportV1 user={user} onRetour={() => setVue('accueil')} />
+        )}
       </div>
     </div>
   )

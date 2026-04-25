@@ -211,6 +211,8 @@ export default function Admin() {
   const [adminError, setAdminError] = useState('')
   const [search, setSearch] = useState(adminNavigationState.depannagesSearch || '')
   const [regies, setRegies] = useState([])
+  const [ajoutRegie, setAjoutRegie] = useState(false)
+  const [nouvelleRegieNom, setNouvelleRegieNom] = useState('')
   const [intermediaires, setIntermediaires] = useState([])
   const [regieFilter, setRegieFilter] = useState(adminNavigationState.depannagesRegieFilter || '')
   const [regieFilterAvailable, setRegieFilterAvailable] = useState(true)
@@ -233,6 +235,8 @@ export default function Admin() {
   const [sousDossierActif, setSousDossierActif] = useState(null)
   const [rapports, setRapports] = useState([])
   const [rapportDetail, setRapportDetail] = useState(null)
+  const [rapportsV1, setRapportsV1] = useState([])
+  const [rapportsV1Loading, setRapportsV1Loading] = useState(false)
   const [corbeille, setCorbeille] = useState([])
   const [vueCorbeille, setVueCorbeille] = useState(false)
   const [confirm, setConfirm] = useState(null)
@@ -306,6 +310,7 @@ export default function Admin() {
       if (rapportDetail?.id) return await rechargerRapportDetail(rapportDetail.id)
       if (vue === 'sous_dossiers' && chantierActif) return await chargerSousDossiers(chantierActif.id)
       if (vue === 'rapports' && sousDossierActif) return await chargerRapports(sousDossierActif.id)
+      if (vue === 'rapports_v1') return await chargerRapportsV1()
       return await chargerTout()
     } finally {
       setRefreshingData(false)
@@ -727,11 +732,32 @@ export default function Admin() {
     setCalMois(newMois); setCalJour(null); chargerCalendrier(newMois)
   }
 
+  async function chargerRapportsV1() {
+    setRapportsV1Loading(true)
+    try {
+      const data = await supabaseSafe(
+        supabase.from('rapports')
+          .select('*, employe:employe_id(prenom)')
+          .is('sous_dossier_id', null)
+          .is('depannage_id', null)
+          .is('deleted_at', null)
+          .order('date_travail', { ascending: false })
+      )
+      setRapportsV1(data || [])
+    } catch (error) {
+      console.error('Erreur chargement rapports V1', error)
+      setRapportsV1([])
+    } finally {
+      setRapportsV1Loading(false)
+    }
+  }
+
   function ouvrirVueAdmin(prochaineVue) {
     setVue(prochaineVue)
     if (prochaineVue === 'calendrier') chargerCalendrier(calMois)
     if (prochaineVue === 'vacances') chargerVacancesAdmin()
     if (prochaineVue === 'employes') chargerStatsEmployes()
+    if (prochaineVue === 'rapports_v1') chargerRapportsV1()
   }
 
   async function chargerStatsEmployes() {
@@ -2157,7 +2183,14 @@ export default function Admin() {
           <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
           <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Dépannages</div>
         </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+          <button
+            className="btn-primary btn-sm"
+            style={{ width: 'auto' }}
+            onClick={() => setAjoutRegie(true)}
+          >+ Régie</button>
+        </div>
       </div>
       <div className="page-content">
         <input
@@ -2944,6 +2977,53 @@ export default function Admin() {
       </div>
     )
   }
+
+  if (vue === 'rapports_v1') return (
+    <div>
+      <div className="top-bar">
+        <div>
+          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Rapports V1</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>Rapports terrain (hors chantier)</div>
+        </div>
+        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+      </div>
+      <div className="page-content">
+        {rapportsV1Loading && (
+          <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>Chargement...</div>
+        )}
+        {!rapportsV1Loading && rapportsV1.length === 0 && (
+          <div className="card" style={{ textAlign: 'center', color: '#888', fontSize: '13px' }}>
+            Aucun rapport V1 pour l'instant.
+          </div>
+        )}
+        {!rapportsV1Loading && rapportsV1.map(r => {
+          const heures = r.heure_debut && r.heure_fin ? `${r.heure_debut.slice(0, 5)} – ${r.heure_fin.slice(0, 5)}` : null
+          return (
+            <div key={r.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontWeight: 600, fontSize: '13px' }}>
+                  {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  {heures && <span style={{ fontSize: '11px', color: '#555' }}>{heures}</span>}
+                  <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px', background: r.valide ? '#EAF3DE' : '#FAEEDA', color: r.valide ? '#3B6D11' : '#BA7517' }}>
+                    {r.valide ? 'Validé' : 'En attente'}
+                  </span>
+                </div>
+              </div>
+              <div style={{ fontSize: '12px', color: '#666', fontWeight: 500 }}>{r.employe?.prenom || '—'}</div>
+              {r.remarques && (
+                <div style={{ fontSize: '12px', color: '#444', whiteSpace: 'pre-wrap', background: '#F8F8F8', borderRadius: '6px', padding: '8px 10px' }}>
+                  {r.remarques}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 
   // ─── Accueil — 4 entrées (tâche 7) ───────────────────────────────────────
   return (

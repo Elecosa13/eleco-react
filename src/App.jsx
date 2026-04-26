@@ -166,6 +166,10 @@ export default function App() {
           'route:employe',
           <PrivateRoute requiredRole="employe"><CharteGuard><Employe /></CharteGuard></PrivateRoute>
         )} />
+        <Route path="/employe/chantier" element={guardedPage(
+          'route:employe-chantier',
+          <PrivateRoute requiredRole="employe"><CharteGuard><Chantier /></CharteGuard></PrivateRoute>
+        )} />
         <Route path="/employe/chantier/:id" element={guardedPage(
           'route:employe-chantier',
           <PrivateRoute requiredRole="employe"><CharteGuard><Chantier /></CharteGuard></PrivateRoute>

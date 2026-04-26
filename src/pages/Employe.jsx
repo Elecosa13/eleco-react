@@ -724,7 +724,7 @@ export default function Employe() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <button onClick={() => setVue('chantiers')} style={{ position: 'relative', background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => navigate('/employe/chantier')} style={{ position: 'relative', background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>🏗️</span>
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantiers</span>
               <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier</span>

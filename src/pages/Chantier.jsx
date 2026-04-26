@@ -127,14 +127,20 @@ export default function Chantier() {
     if (n === 2) setSelectedIntermediaire(item)
     if (n === 3) setSelectedChantier(item)
     if (n === 4) setSelectedAffaire(item)
-    setItems([])
+    setLoading(true)
     fermerForm()
     setNiveau(n)
   }
 
+  function toggleFormAjout() {
+    setErreur(null)
+    setShowForm(show => !show)
+  }
+
   function retour() {
     fermerForm()
-    if (niveau === 2) { setSelectedIntermediaire(null); setNiveau(1) }
+    if (niveau === 1) navigate('/employe')
+    else if (niveau === 2) { setSelectedIntermediaire(null); setNiveau(1) }
     else if (niveau === 3) { setSelectedChantier(null); setNiveau(2) }
     else if (niveau === 4) { setSelectedAffaire(null); setNiveau(3) }
   }
@@ -171,7 +177,7 @@ export default function Chantier() {
             <div style={{ fontSize: '11px', color: '#888' }}>{sousTitreTop()}</div>
           )}
         </div>
-        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} />
+        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} showBack={niveau === 1} />
       </div>
 
       <div className="page-content">
@@ -194,7 +200,7 @@ export default function Chantier() {
               </div>
               <button
                 type="button"
-                onClick={() => { setShowForm(f => !f); setErreur(null) }}
+                onClick={toggleFormAjout}
                 style={{
                   background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px',
                   width: '28px', height: '28px', fontSize: '18px', cursor: 'pointer',

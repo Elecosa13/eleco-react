@@ -8,7 +8,6 @@ import {
   isStandaloneIntermediaireRecord
 } from '../services/chantiers.service'
 
-
 export default function Chantier() {
   const navigate = useNavigate()
   const { id: chantierIdParam } = useParams()
@@ -19,21 +18,14 @@ export default function Chantier() {
   const [selectedIntermediaire, setSelectedIntermediaire] = useState(null)
   const [selectedChantier, setSelectedChantier] = useState(null)
   const [selectedAffaire, setSelectedAffaire] = useState(null)
-
-  const [showForm, setShowForm] = useState(false)
-  const [nomAjout, setNomAjout] = useState('')
-  const [adresseAjout, setAdresseAjout] = useState('')
-  const [numeroAjout, setNumeroAjout] = useState('')
-  const [saving, setSaving] = useState(false)
   const [erreur, setErreur] = useState(null)
 
-  const refreshPage = usePageRefresh(() => charger(), [])
+  const refreshPage = usePageRefresh(() => charger(), [niveau, selectedIntermediaire?.id, selectedChantier?.id])
 
   useEffect(() => {
     if (chantierIdParam) ouvrirChantierDepuisUrl(chantierIdParam)
+    else charger(1, null, null)
   }, [chantierIdParam])
-
-  useEffect(() => { charger() }, [niveau, selectedIntermediaire?.id, selectedChantier?.id])
 
   async function ouvrirChantierDepuisUrl(chantierId) {
     setLoading(true)
@@ -46,29 +38,32 @@ export default function Chantier() {
         .eq('actif', true)
         .maybeSingle()
       if (error) throw error
-      if (!data || !isChantierVisibleToEmployees(data)) {
+      if (!data || !isChantierVisibleToEmployees(data) || isStandaloneIntermediaireRecord(data)) {
         setErreur('Chantier indisponible')
         setNiveau(1)
+        await charger(1, null, null)
         return
       }
 
       const intermediaire = data.intermediaires || null
-      if (intermediaire) setSelectedIntermediaire(intermediaire)
+      setSelectedIntermediaire(intermediaire)
       setSelectedChantier(data)
       setNiveau(3)
+      await charger(3, intermediaire, data)
     } catch (e) {
       setErreur(e.message)
       setNiveau(1)
+      await charger(1, null, null)
     } finally {
       setLoading(false)
     }
   }
 
-  async function charger() {
+  async function charger(niveauCible = niveau, intermediaire = selectedIntermediaire, chantier = selectedChantier) {
     setLoading(true)
     setErreur(null)
     try {
-      if (niveau === 1) {
+      if (niveauCible === 1) {
         const { data, error } = await supabase
           .from('intermediaires')
           .select('id, nom')
@@ -76,27 +71,29 @@ export default function Chantier() {
           .order('nom')
         if (error) throw error
         setItems(data || [])
-      } else if (niveau === 2) {
+      } else if (niveauCible === 2 && intermediaire?.id) {
         const { data, error } = await supabase
           .from('chantiers')
           .select('id, nom, adresse, statut')
-          .eq('intermediaire_id', selectedIntermediaire.id)
+          .eq('intermediaire_id', intermediaire.id)
           .eq('actif', true)
           .order('nom')
         if (error) throw error
         setItems((data || [])
-          .filter(chantier => isChantierVisibleToEmployees(chantier))
-          .filter(chantier => !isStandaloneIntermediaireRecord(chantier, [selectedIntermediaire]))
+          .filter(item => isChantierVisibleToEmployees(item))
+          .filter(item => !isStandaloneIntermediaireRecord(item, [intermediaire]))
         )
-      } else if (niveau === 3) {
+      } else if (niveauCible === 3 && chantier?.id) {
         const { data, error } = await supabase
           .from('affaires')
           .select('id, numero, nom, statut')
-          .eq('chantier_id', selectedChantier.id)
+          .eq('chantier_id', chantier.id)
           .eq('actif', true)
           .order('created_at')
         if (error) throw error
         setItems(data || [])
+      } else {
+        setItems([])
       }
     } catch (e) {
       setErreur(e.message)
@@ -105,68 +102,37 @@ export default function Chantier() {
     }
   }
 
-  async function ajouterItem() {
-    setSaving(true)
-    setErreur(null)
-    try {
-      if (niveau === 1) {
-        if (!nomAjout.trim()) { setErreur('Nom requis'); return }
-        const { error } = await supabase.from('intermediaires').insert({ nom: nomAjout.trim(), type: 'intermediaire' })
-        if (error) throw error
-      } else if (niveau === 2) {
-        if (!nomAjout.trim()) { setErreur('Nom requis'); return }
-        const { error } = await supabase.from('chantiers').insert({
-          nom: nomAjout.trim(),
-          adresse: adresseAjout.trim() || null,
-          intermediaire_id: selectedIntermediaire.id
-        })
-        if (error) throw error
-      } else if (niveau === 3) {
-        if (!numeroAjout.trim()) { setErreur('Numéro requis'); return }
-        const { error } = await supabase.from('affaires').insert({
-          chantier_id: selectedChantier.id,
-          numero: numeroAjout.trim(),
-          nom: nomAjout.trim() || null
-        })
-        if (error) throw error
-      }
-      fermerForm()
-      await charger()
-    } catch (e) {
-      setErreur(e.message)
-    } finally {
-      setSaving(false)
-    }
-  }
+  async function allerVers(n, item) {
+    if (loading) return
 
-  function fermerForm() {
-    setShowForm(false)
-    setNomAjout('')
-    setAdresseAjout('')
-    setNumeroAjout('')
-    setErreur(null)
-  }
+    const intermediaire = n === 2 ? item : selectedIntermediaire
+    const chantier = n === 3 ? item : selectedChantier
 
-  function allerVers(n, item) {
-    if (n === 2) setSelectedIntermediaire(item)
-    if (n === 3) setSelectedChantier(item)
+    if (n === 2) setSelectedIntermediaire(intermediaire)
+    if (n === 3) setSelectedChantier(chantier)
     if (n === 4) setSelectedAffaire(item)
-    setLoading(true)
-    fermerForm()
+
     setNiveau(n)
+    if (n < 4) await charger(n, intermediaire, chantier)
   }
 
-  function toggleFormAjout() {
+  async function retour() {
     setErreur(null)
-    setShowForm(show => !show)
-  }
-
-  function retour() {
-    fermerForm()
-    if (niveau === 1) navigate('/employe')
-    else if (niveau === 2) { setSelectedIntermediaire(null); setNiveau(1) }
-    else if (niveau === 3) { setSelectedChantier(null); setNiveau(2) }
-    else if (niveau === 4) { setSelectedAffaire(null); setNiveau(3) }
+    if (niveau === 1) {
+      navigate('/employe', { replace: true })
+    } else if (niveau === 2) {
+      setSelectedIntermediaire(null)
+      setNiveau(1)
+      await charger(1, null, null)
+    } else if (niveau === 3) {
+      setSelectedChantier(null)
+      setNiveau(2)
+      await charger(2, selectedIntermediaire, null)
+    } else if (niveau === 4) {
+      setSelectedAffaire(null)
+      setNiveau(3)
+      await charger(3, selectedIntermediaire, selectedChantier)
+    }
   }
 
   function titreTop() {
@@ -182,7 +148,7 @@ export default function Chantier() {
     if (niveau === 2) return 'Intermédiaire'
     if (niveau === 3) return selectedIntermediaire?.nom
     if (niveau === 4) return `${selectedChantier?.nom} · Affaire`
-    return null
+    return 'Espace employé'
   }
 
   function titreListe() {
@@ -194,91 +160,32 @@ export default function Chantier() {
 
   return (
     <div>
-      <div className="top-bar">
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{titreTop()}</div>
-          {sousTitreTop() && (
-            <div style={{ fontSize: '11px', color: '#888' }}>{sousTitreTop()}</div>
-          )}
+      <div className="top-bar" style={{ display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) 48px', gap: '10px', alignItems: 'center' }}>
+        <button
+          type="button"
+          aria-label="Retour"
+          title="Retour"
+          onClick={retour}
+          style={{ width: 40, height: 40, borderRadius: '10px', border: '1px solid #d9e8f6', background: '#fff', color: '#185FA5', fontSize: '20px', lineHeight: 1, cursor: 'pointer' }}
+        >
+          ←
+        </button>
+        <div style={{ minWidth: 0 }}>
+          <div title={titreTop()} style={{ fontWeight: 600, fontSize: '15px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titreTop()}</div>
+          <div title={sousTitreTop()} style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitreTop()}</div>
         </div>
-        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} showBack={niveau === 1} />
+        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} showBack={false} />
       </div>
 
       <div className="page-content">
-
         {niveau < 4 && (
-          <div className="card">
+          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {niveau > 1 && (
-                  <button
-                    type="button"
-                    onClick={retour}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontSize: '13px', padding: 0 }}
-                  >
-                    ← Retour
-                  </button>
-                )}
                 <span style={{ fontWeight: 600, fontSize: '14px' }}>{titreListe()}</span>
                 {!loading && <span style={{ fontSize: '11px', color: '#888' }}>{items.length}</span>}
               </div>
-              <button
-                type="button"
-                onClick={toggleFormAjout}
-                style={{
-                  background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px',
-                  width: '28px', height: '28px', fontSize: '18px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, flexShrink: 0
-                }}
-              >
-                +
-              </button>
             </div>
-
-            {showForm && (
-              <div style={{ background: '#F5F8FC', borderRadius: '8px', padding: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {niveau === 3 && (
-                  <input
-                    placeholder="Numéro d'affaire *"
-                    value={numeroAjout}
-                    onChange={e => setNumeroAjout(e.target.value)}
-                    style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
-                  />
-                )}
-                <input
-                  placeholder={niveau === 3 ? 'Nom (optionnel)' : 'Nom *'}
-                  value={nomAjout}
-                  onChange={e => setNomAjout(e.target.value)}
-                  style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
-                />
-                {niveau === 2 && (
-                  <input
-                    placeholder="Adresse (optionnelle)"
-                    value={adresseAjout}
-                    onChange={e => setAdresseAjout(e.target.value)}
-                    style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
-                  />
-                )}
-                {erreur && <div style={{ fontSize: '12px', color: '#c0392b' }}>{erreur}</div>}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={ajouterItem}
-                    disabled={saving}
-                    style={{ flex: 1, background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}
-                  >
-                    {saving ? 'Enregistrement...' : 'Ajouter'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={fermerForm}
-                    style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: '6px', padding: '8px', fontSize: '13px', cursor: 'pointer' }}
-                  >
-                    Annuler
-                  </button>
-                </div>
-              </div>
-            )}
 
             {loading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
 
@@ -286,7 +193,7 @@ export default function Chantier() {
               <div style={{ fontSize: '13px', color: '#888' }}>Aucun élément</div>
             )}
 
-            {erreur && !showForm && (
+            {erreur && (
               <div style={{ fontSize: '12px', color: '#c0392b' }}>{erreur}</div>
             )}
 
@@ -295,40 +202,31 @@ export default function Chantier() {
                 key={item.id}
                 type="button"
                 className="row-item"
-                style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff' }}
+                style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff', borderBottomColor: '#E7EDF5' }}
                 onClick={() => allerVers(niveau + 1, item)}
               >
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {niveau === 3
                       ? `${item.numero}${item.nom ? ' · ' + item.nom : ''}`
                       : item.nom}
                   </div>
                   {niveau === 2 && item.adresse && (
-                    <div style={{ fontSize: '11px', color: '#888' }}>{item.adresse}</div>
+                    <div style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.adresse}</div>
                   )}
                   {niveau === 3 && item.statut && (
                     <div style={{ fontSize: '11px', color: '#888' }}>{item.statut}</div>
                   )}
                 </div>
-                <span style={{ color: '#185FA5' }}>{'>'}</span>
+                <span style={{ color: '#185FA5', fontSize: '18px', lineHeight: 1 }}>›</span>
               </button>
             ))}
           </div>
         )}
 
         {niveau === 4 && (
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-              <button
-                type="button"
-                onClick={retour}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontSize: '13px', padding: 0 }}
-              >
-                ← Retour
-              </button>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Documents</span>
-            </div>
+          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Documents</div>
             <button
               type="button"
               className="btn-primary"
@@ -338,7 +236,6 @@ export default function Chantier() {
             </button>
           </div>
         )}
-
       </div>
     </div>
   )

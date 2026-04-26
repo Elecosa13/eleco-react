@@ -1104,6 +1104,25 @@ export default function Admin() {
     }
   }
 
+  async function supprimerIntermediaire(intermediaire) {
+    if (!intermediaire?.id) return
+    const count = chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaire)).length
+    if (count > 0) {
+      alert(`Impossible de supprimer cet intermédiaire : ${count} chantier${count > 1 ? 's' : ''} actif${count > 1 ? 's' : ''} y est rattaché.`)
+      setConfirm(null)
+      return
+    }
+
+    try {
+      await supabaseSafe(supabase.from('intermediaires').update({ actif: false }).eq('id', intermediaire.id))
+      setIntermediaires(prev => prev.filter(item => String(item.id) !== String(intermediaire.id)))
+      if (intermediaireChantiersActif?.id === intermediaire.id) setIntermediaireChantiersActif(null)
+      setConfirm(null)
+    } catch (error) {
+      alert("Erreur lors de la suppression de l'intermédiaire. Veuillez réessayer.")
+    }
+  }
+
   async function supprimerSousDossier(sd) {
     const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
     if ((raps || []).length > 0) {
@@ -1153,6 +1172,12 @@ export default function Admin() {
       if (renommerItem.type === 'chantier') {
         await supabaseSafe(supabase.from('chantiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
         chargerTout()
+      } else if (renommerItem.type === 'intermediaire') {
+        const updated = await supabaseSafe(
+          supabase.from('intermediaires').update({ nom: nouveauNom.trim() }).eq('id', renommerItem.data.id).select().single()
+        )
+        setIntermediaires(prev => prev.map(item => item.id === updated.id ? updated : item))
+        if (intermediaireChantiersActif?.id === updated.id) setIntermediaireChantiersActif(updated)
       } else if (renommerItem.type === 'sous_dossier') {
         await supabaseSafe(supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
         chargerSousDossiers(chantierActif.id)
@@ -1568,6 +1593,7 @@ export default function Admin() {
         <button className="btn-outline" style={{ flex: 1 }} onClick={() => setConfirm(null)}>Annuler</button>
         <button className="btn-primary" style={{ flex: 1, background: '#A32D2D' }} onClick={() => {
           if (confirm.type === 'chantier') supprimerChantier(confirm.data)
+          else if (confirm.type === 'intermediaire') supprimerIntermediaire(confirm.data)
           else if (confirm.type === 'sous_dossier') supprimerSousDossier(confirm.data)
           else if (confirm.type === 'rapport') supprimerRapport(confirm.data)
         }}>Supprimer</button>
@@ -2024,6 +2050,7 @@ export default function Admin() {
           <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
           <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
             if (intermediaireChantiersActif?.id) setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
+            setAjoutIntermediaire(false)
             setAjoutChantier(true)
           }}>+ Nouveau</button>
         </div>
@@ -2040,6 +2067,11 @@ export default function Admin() {
         {ajoutChantier && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
+            {intermediaireChantiersActif ? (
+              <div style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #D8E3EF', background: '#F8FAFC', fontSize: '13px', color: '#334155' }}>
+                Intermédiaire : <strong>{intermediaireChantiersActif.nom}</strong>
+              </div>
+            ) : (
             <select value={nouvelIntermediaireId} onChange={e => setNouvelIntermediaireId(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', background: '#fff' }}>
               <option value="">Sélectionner un intermédiaire *</option>
@@ -2047,7 +2079,8 @@ export default function Admin() {
                 <option key={item.id} value={item.id}>{item.nom}</option>
               ))}
             </select>
-            <button
+            )}
+            {!intermediaireChantiersActif && <button
               type="button"
               onClick={() => setAjoutIntermediaire(prev => !prev)}
               style={{
@@ -2061,8 +2094,8 @@ export default function Admin() {
               }}
             >
               + Ajouter un intermédiaire
-            </button>
-            {ajoutIntermediaire && (
+            </button>}
+            {!intermediaireChantiersActif && ajoutIntermediaire && (
               <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
                 <input
                   placeholder="Nom de l’intermédiaire"
@@ -2079,7 +2112,7 @@ export default function Admin() {
                     try {
                       const { data, error } = await supabase
                         .from('intermediaires')
-                        .insert({ nom: nouvelIntermediaireNom.trim() })
+                        .insert({ nom: nouvelIntermediaireNom.trim(), type: 'intermediaire', actif: true })
                         .select()
                         .single()
 
@@ -2113,7 +2146,8 @@ export default function Admin() {
               <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauClientNom(''); setNouvelIntermediaireId(''); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
               <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
                 if (!nouveauNomChantier.trim()) return
-                if (!nouvelIntermediaireId) {
+                const intermediaireId = nouvelIntermediaireId || (intermediaireChantiersActif?.id ? String(intermediaireChantiersActif.id) : '')
+                if (!intermediaireId) {
                   alert("Sélectionne un intermédiaire.")
                   return
                 }
@@ -2124,7 +2158,7 @@ export default function Admin() {
                     nom: nouveauNomChantier.trim(),
                     adresse: nouvelleAdresse.trim() || null
                   }
-                  payload.intermediaire_id = Number(nouvelIntermediaireId)
+                  payload.intermediaire_id = Number(intermediaireId)
                   if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
                   if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
 
@@ -2138,17 +2172,21 @@ export default function Admin() {
             </div>
           </div>
         )}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
           {!intermediaireChantiersActif && intermediairesChantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun intermÃ©diaire</div>}
           {!intermediaireChantiersActif && intermediairesChantiers.map(intermediaire => {
             const count = chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaire)).length
             return (
-              <div key={intermediaire.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setIntermediaireChantiersActif(intermediaire)}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{intermediaire.nom}</div>
+              <div key={intermediaire.id} className="row-item" style={{ cursor: 'pointer', borderBottomColor: '#E7EDF5', gap: '10px' }}>
+                <div style={{ minWidth: 0, flex: 1 }} onClick={() => setIntermediaireChantiersActif(intermediaire)}>
+                  <div style={{ fontWeight: 600, fontSize: '13px' }}>{intermediaire.nom}</div>
                   <div style={{ fontSize: '11px', color: '#888' }}>{count} chantier{count > 1 ? 's' : ''}</div>
                 </div>
-                <span style={{ color: '#185FA5' }}>â€º</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button title="Renommer l'intermediaire" onClick={() => { setRenommerItem({ type: 'intermediaire', data: intermediaire }); setNouveauNom(intermediaire.nom) }} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #D8E3EF', borderRadius: '6px', padding: 0, fontSize: '12px', cursor: 'pointer' }}>R</button>
+                  <button title={count > 0 ? 'Suppression impossible avec des chantiers actifs' : "Supprimer l'intermediaire"} onClick={() => setConfirm({ type: 'intermediaire', data: intermediaire })} disabled={count > 0} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #F1C7C7', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: count > 0 ? 'not-allowed' : 'pointer', color: '#A32D2D', opacity: count > 0 ? 0.45 : 1 }}>x</button>
+                  <span onClick={() => setIntermediaireChantiersActif(intermediaire)} style={{ color: '#185FA5', fontSize: '18px', lineHeight: 1 }}>›</span>
+                </div>
               </div>
             )
           })}
@@ -2194,27 +2232,27 @@ export default function Admin() {
                 const badgeStyle = getChantierStatusBadgeStyle(chantierStatut)
                 const nextAction = chantierSchema.statut ? getNextChantierStatusAction(chantierStatut) : null
                 return (
-                  <div key={c.id} className="row-item" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 336px', alignItems: 'center', gap: '12px', minHeight: '54px' }}>
+                  <div key={c.id} className="row-item" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: '10px', minHeight: '58px', borderBottomColor: '#E7EDF5' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr)', alignItems: 'center', gap: '10px', minWidth: 0, cursor: 'pointer' }} onClick={() => { setChantierActif(c); chargerSousDossiers(c.id); setVue('sous_dossiers') }}>
                       <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
                       <div style={{ minWidth: 0 }}>
-                        <div title={c.nom} style={{ fontWeight: 500, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nom}</div>
-                        <div title={c.adresse || ''} style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.adresse || '—'}</div>
+                        <div title={c.nom} style={{ fontWeight: 700, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nom}</div>
+                        <div title={c.adresse || ''} style={{ fontSize: '12px', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{c.adresse || 'Adresse non renseignee'}</div>
                       </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '118px 150px 30px 30px', gap: '6px', alignItems: 'center', justifyContent: 'end' }}>
-                      <span title={getChantierStatusLabel(chantierStatut)} style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', height: '28px', lineHeight: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'end' }}>
+                      <span title={getChantierStatusLabel(chantierStatut)} style={{ ...badgeStyle, borderRadius: '999px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap', lineHeight: '16px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                         {getChantierStatusLabel(chantierStatut)}
                       </span>
                       {nextAction ? (
-                        <button className="btn-outline btn-sm" style={{ width: '150px', height: '30px', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => mettreAJourStatutChantier(c, nextAction.nextStatus)}>
-                          {nextAction.label}
+                        <button title={nextAction.label} className="btn-outline btn-sm" style={{ width: '30px', height: '30px', padding: 0, fontSize: '14px', borderColor: '#BFD7EF', color: '#185FA5' }} onClick={() => mettreAJourStatutChantier(c, nextAction.nextStatus)}>
+                          Go
                         </button>
                       ) : (
-                        <span aria-hidden="true" style={{ width: '150px', height: '30px' }} />
+                        null
                       )}
-                      <button title="Renommer" onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ width: '30px', height: '30px', background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: 0, fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
-                      <button title="Supprimer" onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ width: '30px', height: '30px', background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: 0, fontSize: '13px', cursor: 'pointer', color: '#A32D2D', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>🗑️</button>
+                      <button title="Renommer" onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #D8E3EF', borderRadius: '6px', padding: 0, fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>R</button>
+                      <button title="Supprimer" onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #f09595', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: 'pointer', color: '#A32D2D', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>x</button>
                     </div>
                   </div>
                 )
@@ -3099,29 +3137,6 @@ export default function Admin() {
       </div>
       <div className="page-content">
         {adminError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{adminError}</div>}
-        {rapportsEnAttente.length > 0 && (
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>⏳ À valider</span>
-              <span className="badge badge-amber">{rapportsEnAttente.length}</span>
-            </div>
-            {rapportsEnAttente.map(r => {
-              const t = totaux(r)
-              const nomChantier = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'
-              const nomDossier = r.sous_dossiers?.nom || r.affaires?.nom || ''
-              return (
-                <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{nomChantier}{nomDossier ? ` › ${nomDossier}` : ''}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
-                  </div>
-                  <span style={{ color: '#185FA5' }}>›</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <button onClick={() => setVue('chantiers')} style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '28px' }}>🏗️</span>
@@ -3132,6 +3147,12 @@ export default function Admin() {
             <span style={{ fontSize: '28px' }}>⚡</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
+          </button>
+          <button onClick={() => setVue('a_verifier')}
+            style={{ background: '#E8F5F2', border: '1px solid #157A6E', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '28px' }}>✓</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#157A6E' }}>À vérifier</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>{rapportsEnAttente.length} validation(s)</span>
           </button>
           <button onClick={() => ouvrirVueAdmin('employes')}
             style={{ background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>

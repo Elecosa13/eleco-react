@@ -19,6 +19,11 @@ export default function Chantier() {
   const [selectedChantier, setSelectedChantier] = useState(null)
   const [selectedAffaire, setSelectedAffaire] = useState(null)
   const [erreur, setErreur] = useState(null)
+  const [ajoutChantier, setAjoutChantier] = useState(false)
+  const [nouveauNomChantier, setNouveauNomChantier] = useState('')
+  const [nouvelleAdresse, setNouvelleAdresse] = useState('')
+  const [creationErreur, setCreationErreur] = useState('')
+  const [creationLoading, setCreationLoading] = useState(false)
 
   const refreshPage = usePageRefresh(() => charger(), [niveau, selectedIntermediaire?.id, selectedChantier?.id])
 
@@ -135,6 +140,35 @@ export default function Chantier() {
     }
   }
 
+  async function creerChantier() {
+    const nom = nouveauNomChantier.trim()
+    if (!nom) { setCreationErreur('Renseigne le nom du chantier.'); return }
+    setCreationLoading(true)
+    setCreationErreur('')
+    try {
+      const { data, error } = await supabase
+        .from('chantiers')
+        .insert({
+          nom,
+          adresse: nouvelleAdresse.trim() || null,
+          intermediaire_id: selectedIntermediaire.id,
+          actif: true,
+          statut: 'A confirmer'
+        })
+        .select('id, nom, adresse, statut')
+        .single()
+      if (error) throw error
+      setAjoutChantier(false)
+      setNouveauNomChantier('')
+      setNouvelleAdresse('')
+      await allerVers(3, data)
+    } catch (e) {
+      setCreationErreur(e.message || 'Erreur lors de la création.')
+    } finally {
+      setCreationLoading(false)
+    }
+  }
+
   function titreTop() {
     if (niveau === 1) return 'Intermédiaires'
     if (niveau === 2) return selectedIntermediaire?.nom || 'Chantiers'
@@ -185,7 +219,52 @@ export default function Chantier() {
                 <span style={{ fontWeight: 600, fontSize: '14px' }}>{titreListe()}</span>
                 {!loading && <span style={{ fontSize: '11px', color: '#888' }}>{items.length}</span>}
               </div>
+              {niveau === 2 && !ajoutChantier && (
+                <button
+                  type="button"
+                  onClick={() => { setAjoutChantier(true); setCreationErreur('') }}
+                  style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #185FA5', background: '#fff', color: '#185FA5', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  + Nouveau
+                </button>
+              )}
             </div>
+            {ajoutChantier && niveau === 2 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px', padding: '10px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #D8E3EF' }}>
+                <input
+                  placeholder="Nom *"
+                  value={nouveauNomChantier}
+                  onChange={e => setNouveauNomChantier(e.target.value)}
+                  style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+                />
+                <input
+                  placeholder="Adresse"
+                  value={nouvelleAdresse}
+                  onChange={e => setNouvelleAdresse(e.target.value)}
+                  style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+                />
+                {creationErreur && <div style={{ fontSize: '12px', color: '#c0392b' }}>{creationErreur}</div>}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    style={{ flex: 1 }}
+                    onClick={() => { setAjoutChantier(false); setNouveauNomChantier(''); setNouvelleAdresse(''); setCreationErreur('') }}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ flex: 1 }}
+                    onClick={creerChantier}
+                    disabled={creationLoading}
+                  >
+                    {creationLoading ? '...' : 'Créer'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {loading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
 
@@ -230,9 +309,10 @@ export default function Chantier() {
             <button
               type="button"
               className="btn-primary"
+              disabled={!selectedAffaire?.id}
               onClick={() => navigate(`/employe/rapport/${selectedAffaire.id}`)}
             >
-              Nouveau rapport
+              + Nouveau rapport
             </button>
           </div>
         )}

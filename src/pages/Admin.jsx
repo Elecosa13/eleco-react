@@ -252,6 +252,9 @@ export default function Admin() {
   const [nouvelleAdresse, setNouvelleAdresse] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
   const [ajoutIntermediaire, setAjoutIntermediaire] = useState(false)
+  const [creationChantierErreur, setCreationChantierErreur] = useState('')
+  // TODO: remplacer par colonne `protege boolean default false` sur la table chantiers
+  // Le cadenas localStorage n'est pas fiable (par poste, pas en DB)
   const [nouveauSd, setNouveauSd] = useState(false)
   const [nouveauSdNom, setNouveauSdNom] = useState('')
 
@@ -1188,6 +1191,84 @@ export default function Admin() {
     }
   }
 
+  function resetNouveauChantierForm() {
+    setAjoutChantier(false)
+    setAjoutIntermediaire(false)
+    setCreationChantierErreur('')
+    setNouveauClientNom('')
+    setNouvelIntermediaireId('')
+    setNouveauNomChantier('')
+    setNouvelleAdresse('')
+  }
+
+  async function creerChantierAdmin() {
+    setCreationChantierErreur('')
+
+    const nom = nouveauNomChantier.trim()
+    if (!nom) {
+      setCreationChantierErreur('Renseigne le nom du chantier.')
+      return
+    }
+
+    const intermediaireId = intermediaireChantiersActif?.id
+      ? String(intermediaireChantiersActif.id)
+      : nouvelIntermediaireId
+
+    if (!intermediaireId) {
+      setCreationChantierErreur("Selectionne un intermediaire.")
+      return
+    }
+
+    const existe = chantiers.find(c =>
+      String(c.nom || '').trim().toLowerCase() === nom.toLowerCase() &&
+      String(c.intermediaire_id || '') === String(intermediaireId)
+    )
+    if (existe) {
+      setCreationChantierErreur(`"${nom}" existe deja pour cet intermediaire.`)
+      return
+    }
+
+    try {
+      const payload = {
+        nom,
+        adresse: nouvelleAdresse.trim() || null,
+        intermediaire_id: Number(intermediaireId),
+        actif: true
+      }
+      if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
+      if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
+
+      const created = await supabaseSafe(
+        supabase.from('chantiers').insert(payload).select('*').single()
+      )
+
+      const intermediaire = intermediaires.find(item => String(item.id) === String(intermediaireId)) || intermediaireChantiersActif || null
+      setChantiers(prev => [...prev, { ...created, intermediaire }])
+      resetNouveauChantierForm()
+      await rechargerChantiersSeulement()
+    } catch (error) {
+      console.error('Erreur creation chantier', error)
+      setCreationChantierErreur(`Impossible de creer le chantier. ${chantierSchemaErrorMessage(error)}`)
+    }
+  }
+
+  async function rechargerChantiersSeulement() {
+    try {
+      const ch = await supabaseSafe(
+        supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+      )
+      const intermediairesById = new Map(intermediaires.map(item => [String(item.id), item]))
+      const hydrates = (ch || []).map(c => ({
+        ...c,
+        intermediaire: c.intermediaire_id != null
+          ? (intermediairesById.get(String(c.intermediaire_id)) || null)
+          : null
+      })).filter(c => !isStandaloneIntermediaireRecord(c, intermediaires))
+      setChantiers(hydrates)
+    } catch {}
+  }
+
+
   async function valider(rid) {
     try {
       await supabaseSafe(supabase.from('rapports').update({ valide: true }).eq('id', rid))
@@ -2051,6 +2132,7 @@ export default function Admin() {
           <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
             if (intermediaireChantiersActif?.id) setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
             setAjoutIntermediaire(false)
+            setCreationChantierErreur('')
             setAjoutChantier(true)
           }}>+ Nouveau</button>
         </div>
@@ -2142,33 +2224,14 @@ export default function Admin() {
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
             <input placeholder="Adresse" value={nouvelleAdresse} onChange={e => setNouvelleAdresse(e.target.value)}
               style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+            {creationChantierErreur && (
+              <div style={{ background: '#FFF1F2', border: '1px solid #FDA4AF', borderRadius: '8px', padding: '8px 10px', color: '#BE123C', fontSize: '12px' }}>
+                {creationChantierErreur}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn-outline" style={{ flex: 1 }} onClick={() => { setAjoutChantier(false); setNouveauClientNom(''); setNouvelIntermediaireId(''); setNouveauNomChantier(''); setNouvelleAdresse('') }}>Annuler</button>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={async () => {
-                if (!nouveauNomChantier.trim()) return
-                const intermediaireId = nouvelIntermediaireId || (intermediaireChantiersActif?.id ? String(intermediaireChantiersActif.id) : '')
-                if (!intermediaireId) {
-                  alert("Sélectionne un intermédiaire.")
-                  return
-                }
-                const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNomChantier.toLowerCase())
-                if (existe) { alert(`"${nouveauNomChantier}" existe déjà !`); return }
-                try {
-                  const payload = {
-                    nom: nouveauNomChantier.trim(),
-                    adresse: nouvelleAdresse.trim() || null
-                  }
-                  payload.intermediaire_id = Number(intermediaireId)
-                  if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
-                  if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
-
-                  await supabaseSafe(supabase.from('chantiers').insert(payload))
-                  setAjoutChantier(false); setNouveauClientNom(''); setNouvelIntermediaireId(''); setNouveauNomChantier(''); setNouvelleAdresse(''); chargerTout()
-                } catch (error) {
-                  console.error('Erreur creation chantier', error)
-                  alert(`Erreur lors de la creation du chantier. ${chantierSchemaErrorMessage(error)}`)
-                }
-              }}>Créer</button>
+              <button className="btn-outline" style={{ flex: 1 }} onClick={resetNouveauChantierForm}>Annuler</button>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={creerChantierAdmin}>Créer</button>
             </div>
           </div>
         )}
@@ -2252,7 +2315,21 @@ export default function Admin() {
                         null
                       )}
                       <button title="Renommer" onClick={() => { setRenommerItem({ type: 'chantier', data: c }); setNouveauNom(c.nom) }} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #D8E3EF', borderRadius: '6px', padding: 0, fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>R</button>
-                      <button title="Supprimer" onClick={() => setConfirm({ type: 'chantier', data: c })} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #f09595', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: 'pointer', color: '#A32D2D', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>x</button>
+                      {/* TODO: cadenas — nécessite colonne `protege boolean default false` sur chantiers en DB */}
+                      <button
+                        title="Protection non disponible — colonne DB manquante"
+                        disabled
+                        style={{ width: '30px', height: '30px', background: '#f5f5f5', border: '1px solid #D8E3EF', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: 0.4 }}
+                      >
+                        🔓
+                      </button>
+                      <button
+                        title="Supprimer"
+                        onClick={() => setConfirm({ type: 'chantier', data: c })}
+                        style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #f09595', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: 'pointer', color: '#A32D2D', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        x
+                      </button>
                     </div>
                   </div>
                 )

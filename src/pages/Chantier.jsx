@@ -77,7 +77,7 @@ export default function Chantier() {
 
   async function seederIntermediaires() {
     for (const nom of SEEDS) {
-      await supabase.from('intermediaires').insert({ nom, type: 'intermediaire' })
+      await supabase.from('intermediaires').insert({ nom, type: 'intermediaire', actif: true })
     }
   }
 
@@ -299,7 +299,13 @@ export default function Chantier() {
               </button>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Documents</span>
             </div>
-            <div style={{ fontSize: '13px', color: '#888' }}>Documents à venir</div>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => navigate(`/employe/rapport/${selectedAffaire.id}`)}
+            >
+              Nouveau rapport
+            </button>
           </div>
         )}
 

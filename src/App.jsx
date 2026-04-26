@@ -15,6 +15,7 @@ import Depannage from './pages/Depannage'
 import DepannageDetail from './pages/DepannageDetail'
 import Charte from './pages/Charte'
 import Devis from './pages/Devis'
+import SaisieHeures from './pages/SaisieHeures'
 
 function GuardFallback({ title = 'Chargement', message = 'Verification en cours...', action }) {
   return (
@@ -176,6 +177,10 @@ export default function App() {
         <Route path="/employe/depannage" element={guardedPage(
           'route:employe-depannage',
           <PrivateRoute requiredRole="employe"><CharteGuard><Depannage /></CharteGuard></PrivateRoute>
+        )} />
+        <Route path="/employe/heures" element={guardedPage(
+          'route:employe/heures',
+          <PrivateRoute requiredRole="employe"><CharteGuard><SaisieHeures /></CharteGuard></PrivateRoute>
         )} />
         <Route path="/employe/devis" element={guardedPage(
           'route:employe-devis',

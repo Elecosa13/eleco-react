@@ -12,11 +12,13 @@ import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '..
 import { fetchTimeEntryDurationsMap } from '../services/timeEntries.service'
 import {
   CHANTIER_STATUT_A_CONFIRMER,
+  chantierBelongsToIntermediaire,
   getChantierClientLabel,
   getChantierStatusBadgeStyle,
   getChantierStatusLabel,
   getNextChantierStatusAction,
-  groupChantiersByClient
+  groupChantiersByClient,
+  isStandaloneIntermediaireRecord
 } from '../services/chantiers.service'
 
 const TAUX = 115
@@ -214,6 +216,7 @@ export default function Admin() {
   const [ajoutRegie, setAjoutRegie] = useState(false)
   const [nouvelleRegieNom, setNouvelleRegieNom] = useState('')
   const [intermediaires, setIntermediaires] = useState([])
+  const [intermediaireChantiersActif, setIntermediaireChantiersActif] = useState(null)
   const [regieFilter, setRegieFilter] = useState(adminNavigationState.depannagesRegieFilter || '')
   const [regieFilterAvailable, setRegieFilterAvailable] = useState(true)
   const [dateFilter, setDateFilter] = useState(adminNavigationState.depannagesDateFilter || '')
@@ -500,7 +503,7 @@ export default function Admin() {
         intermediaire: chantier?.intermediaire_id != null
           ? (intermediairesById.get(String(chantier.intermediaire_id)) || null)
           : null
-      }))
+      })).filter(chantier => !isStandaloneIntermediaireRecord(chantier, intermediairesListe))
 
       setChantiers(chantiersHydrates)
 
@@ -1430,7 +1433,20 @@ export default function Admin() {
     return depannageTimestamp(b) - depannageTimestamp(a)
   }
 
-  const chantiersGroupes = useMemo(() => groupChantiersByClient(chantiers), [chantiers])
+  const intermediairesChantiers = useMemo(
+    () => [...intermediaires].sort((a, b) => String(a.nom || '').localeCompare(String(b.nom || ''), 'fr', { sensitivity: 'base' })),
+    [intermediaires]
+  )
+  const chantiersIntermediaireActif = useMemo(
+    () => intermediaireChantiersActif
+      ? chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaireChantiersActif))
+      : [],
+    [chantiers, intermediaireChantiersActif]
+  )
+  const chantiersGroupesAffiches = useMemo(
+    () => groupChantiersByClient(chantiersIntermediaireActif),
+    [chantiersIntermediaireActif]
+  )
 
   function normalizeDepannageSearchValue(value) {
     return String(value || '')
@@ -1460,6 +1476,19 @@ export default function Admin() {
 
   function grouperDepannages(liste) {
     const groupes = {}
+    const inclureRegiesVides = !normalizeDepannageSearchValue(search) && !dateFilter
+
+    if (inclureRegiesVides) {
+      const regiesSources = regieFilter
+        ? regies.filter(regie => String(regie.id) === String(regieFilter))
+        : regies
+
+      for (const regie of regiesSources) {
+        const nom = regie?.nom || 'RÃ©gie non dÃ©finie'
+        if (!groupes[nom]) groupes[nom] = { nom, count: 0, mois: {}, moisTimestamps: {} }
+      }
+    }
+
     for (const depannage of [...liste].sort(comparerDepannagesRecent)) {
       const regie = depannageRegieLabel(depannage)
       const mois = depannageMoisLabel(depannage)
@@ -1494,7 +1523,7 @@ export default function Admin() {
     return depannagesFiltres.filter(d => statuts.includes(depannageStatut(d)))
   }, [depannagesFiltres, depannagesOnglet])
 
-  const depannagesGroupes = useMemo(() => grouperDepannages(depannagesFiltresOnglet), [depannagesFiltresOnglet])
+  const depannagesGroupes = useMemo(() => grouperDepannages(depannagesFiltresOnglet), [depannagesFiltresOnglet, regies, regieFilter, search, dateFilter])
 
   // ──────────────────────────────────────────────────────────────────────────
   // VUES
@@ -1980,12 +2009,23 @@ export default function Admin() {
     <div>
       <div className="top-bar">
         <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Chantiers</div>
+          <button onClick={() => {
+            if (intermediaireChantiersActif) {
+              setIntermediaireChantiersActif(null)
+              setAjoutChantier(false)
+            } else {
+              setVue('accueil')
+            }
+          }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
+          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{intermediaireChantiersActif?.nom || 'Chantiers'}</div>
+          {intermediaireChantiersActif && <div style={{ fontSize: '11px', color: '#888' }}>Intermédiaire</div>}
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-          <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutChantier(true)}>+ Nouveau</button>
+          <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
+            if (intermediaireChantiersActif?.id) setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
+            setAjoutChantier(true)
+          }}>+ Nouveau</button>
         </div>
       </div>
       <div className="page-content">
@@ -2099,8 +2139,21 @@ export default function Admin() {
           </div>
         )}
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {chantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier</div>}
-          {chantiersGroupes.map(group => (
+          {!intermediaireChantiersActif && intermediairesChantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun intermÃ©diaire</div>}
+          {!intermediaireChantiersActif && intermediairesChantiers.map(intermediaire => {
+            const count = chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaire)).length
+            return (
+              <div key={intermediaire.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setIntermediaireChantiersActif(intermediaire)}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: '13px' }}>{intermediaire.nom}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{count} chantier{count > 1 ? 's' : ''}</div>
+                </div>
+                <span style={{ color: '#185FA5' }}>â€º</span>
+              </div>
+            )
+          })}
+          {intermediaireChantiersActif && chantiersIntermediaireActif.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier pour cet intermÃ©diaire</div>}
+          {intermediaireChantiersActif && chantiersGroupesAffiches.map(group => (
             <div key={group.clientLabel} style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}>
                 <div style={{ minWidth: 0 }}>
@@ -2264,7 +2317,7 @@ export default function Admin() {
             </div>
           )}
           {!depannagesLoading && depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
-          {!depannagesLoading && !depannagesError && depannages.length === 0 && (
+          {!depannagesLoading && !depannagesError && depannagesGroupes.length === 0 && (
             <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
               <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun dépannage</div>
               <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Les dossiers apparaîtront ici, classés par régie puis par mois.</div>
@@ -3079,12 +3132,6 @@ export default function Admin() {
             <span style={{ fontSize: '28px' }}>⚡</span>
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
-          </button>
-          <button onClick={() => setVue('a_verifier')}
-            style={{ background: '#E8F5F2', border: '1px solid #157A6E', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>✓</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#157A6E' }}>À vérifier</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>{rapportsEnAttente.length} validation(s)</span>
           </button>
           <button onClick={() => ouvrirVueAdmin('employes')}
             style={{ background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>

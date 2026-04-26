@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import PageTopActions from '../components/PageTopActions'
 import { supabase } from '../lib/supabase'
 import { usePageRefresh } from '../lib/refresh'
+import {
+  isChantierVisibleToEmployees,
+  isStandaloneIntermediaireRecord
+} from '../services/chantiers.service'
 
-const SEEDS = [
-  'ABA', 'ALTUN', 'Bonbonnière', 'DS', 'Eyka',
-  'Zimmerman', 'Jonathan / sani Projet', 'Wandrille'
-]
 
 export default function Chantier() {
   const navigate = useNavigate()
+  const { id: chantierIdParam } = useParams()
 
   const [niveau, setNiveau] = useState(1)
   const [items, setItems] = useState([])
@@ -28,7 +29,40 @@ export default function Chantier() {
 
   const refreshPage = usePageRefresh(() => charger(), [])
 
+  useEffect(() => {
+    if (chantierIdParam) ouvrirChantierDepuisUrl(chantierIdParam)
+  }, [chantierIdParam])
+
   useEffect(() => { charger() }, [niveau, selectedIntermediaire?.id, selectedChantier?.id])
+
+  async function ouvrirChantierDepuisUrl(chantierId) {
+    setLoading(true)
+    setErreur(null)
+    try {
+      const { data, error } = await supabase
+        .from('chantiers')
+        .select('id, nom, adresse, statut, intermediaire_id, intermediaires(id, nom)')
+        .eq('id', chantierId)
+        .eq('actif', true)
+        .maybeSingle()
+      if (error) throw error
+      if (!data || !isChantierVisibleToEmployees(data)) {
+        setErreur('Chantier indisponible')
+        setNiveau(1)
+        return
+      }
+
+      const intermediaire = data.intermediaires || null
+      if (intermediaire) setSelectedIntermediaire(intermediaire)
+      setSelectedChantier(data)
+      setNiveau(3)
+    } catch (e) {
+      setErreur(e.message)
+      setNiveau(1)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function charger() {
     setLoading(true)
@@ -41,14 +75,7 @@ export default function Chantier() {
           .eq('actif', true)
           .order('nom')
         if (error) throw error
-        if (!data || data.length === 0) {
-          await seederIntermediaires()
-          const { data: seeded } = await supabase
-            .from('intermediaires').select('id, nom').eq('actif', true).order('nom')
-          setItems(seeded || [])
-        } else {
-          setItems(data)
-        }
+        setItems(data || [])
       } else if (niveau === 2) {
         const { data, error } = await supabase
           .from('chantiers')
@@ -57,7 +84,10 @@ export default function Chantier() {
           .eq('actif', true)
           .order('nom')
         if (error) throw error
-        setItems(data || [])
+        setItems((data || [])
+          .filter(chantier => isChantierVisibleToEmployees(chantier))
+          .filter(chantier => !isStandaloneIntermediaireRecord(chantier, [selectedIntermediaire]))
+        )
       } else if (niveau === 3) {
         const { data, error } = await supabase
           .from('affaires')
@@ -72,12 +102,6 @@ export default function Chantier() {
       setErreur(e.message)
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function seederIntermediaires() {
-    for (const nom of SEEDS) {
-      await supabase.from('intermediaires').insert({ nom, type: 'intermediaire', actif: true })
     }
   }
 

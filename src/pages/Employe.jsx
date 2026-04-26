@@ -16,10 +16,9 @@ import {
   rejoindreDepannage
 } from '../services/depannages.service'
 import {
-  getChantierClientLabel,
   getChantierStatusBadgeStyle,
-  groupChantiersByClient,
-  isChantierVisibleToEmployees
+  isChantierVisibleToEmployees,
+  isStandaloneIntermediaireRecord
 } from '../services/chantiers.service'
 import RapportV1 from './RapportV1'
 
@@ -126,7 +125,7 @@ export default function Employe() {
 
   async function charger() {
     const { data: ch } = await supabase.from('chantiers').select('*, intermediaires(id, nom)').eq('actif', true).order('nom')
-    if (ch) setChantiers(ch.filter(isChantierVisibleToEmployees))
+    if (ch) setChantiers(ch.filter(isChantierVisibleToEmployees).filter(chantier => !isStandaloneIntermediaireRecord(chantier)))
 
     const aujourdHui = new Date().toISOString().split('T')[0]
     const { data: entries } = await supabase
@@ -430,12 +429,6 @@ export default function Employe() {
   const creditRestant = CREDIT_JOUR - creditUtilise
   const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
   const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
-  const chantiersFiltres = chantiers.filter(c =>
-    c.nom.toLowerCase().includes(recherche.toLowerCase()) ||
-    (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()) ||
-    getChantierClientLabel(c).toLowerCase().includes(recherche.toLowerCase())
-  )
-  const chantiersGroupes = useMemo(() => groupChantiersByClient(chantiersFiltres), [chantiersFiltres])
   const intermediaires = useMemo(() => {
     const map = new Map()
     chantiers.forEach(c => {

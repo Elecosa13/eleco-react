@@ -11,6 +11,26 @@ export const CHANTIER_EMPLOYEE_VISIBLE_STATUSES = [
   CHANTIER_STATUT_FINI
 ]
 
+const INTERMEDIAIRES_METIER = [
+  'ABA',
+  'ALTUN',
+  'Bonbonniere',
+  'BonbonniÃ¨re',
+  'DS',
+  'Eyka',
+  'Zimmerman',
+  'Jonathan / sani Projet',
+  'Wandrille'
+]
+
+function normaliserNom(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
 export function getChantierClientLabel(chantier) {
   const intermediaireNom = String(
     chantier?.intermediaire?.nom ||
@@ -22,6 +42,29 @@ export function getChantierClientLabel(chantier) {
   const legacyClientNom = String(chantier?.client_nom || '').trim()
 
   return intermediaireNom || legacyClientNom || 'Intermédiaire non défini'
+}
+
+export function isStandaloneIntermediaireRecord(chantier, intermediaires = []) {
+  if (!chantier) return false
+
+  const nom = normaliserNom(chantier.nom)
+  if (!nom) return false
+
+  const nomsIntermediaires = [
+    ...INTERMEDIAIRES_METIER,
+    ...Array.from(intermediaires || []).map(item => item?.nom)
+  ].map(normaliserNom).filter(Boolean)
+
+  return nomsIntermediaires.includes(nom)
+}
+
+export function chantierBelongsToIntermediaire(chantier, intermediaire) {
+  if (!chantier || !intermediaire) return false
+  if (chantier.intermediaire_id && String(chantier.intermediaire_id) === String(intermediaire.id)) return true
+
+  const label = normaliserNom(getChantierClientLabel(chantier))
+  const nom = normaliserNom(intermediaire.nom)
+  return Boolean(label && nom && label === nom)
 }
 
 export function isChantierVisibleToEmployees(chantierOrStatus) {

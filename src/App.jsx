@@ -207,6 +207,10 @@ export default function App() {
           'route:admin-calendrier',
           <PrivateRoute requiredRole="admin"><Admin /></PrivateRoute>
         )} />
+        <Route path="/admin/depannage/nouveau" element={guardedPage(
+          'route:admin-depannage-nouveau',
+          <PrivateRoute requiredRole="admin"><Depannage mode="admin" /></PrivateRoute>
+        )} />
         <Route path="/admin/depannage/:id" element={guardedPage(
           'route:admin-depannage-detail',
           <PrivateRoute requiredRole="admin"><DepannageDetail /></PrivateRoute>

@@ -30,16 +30,20 @@ function saveFavoris(favoris) {
   safeLocalStorage.setJSON(FAVORIS_KEY, favoris)
 }
 
-export default function Depannage() {
+export default function Depannage({ mode = 'employe' }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile: user } = useAuth()
+  const isAdminMode = mode === 'admin'
   const depannageId = new URLSearchParams(location.search).get('depannageId')
+  const initialDate = location.state?.date || new Date().toISOString().split('T')[0]
+  const initialRegieId = location.state?.regieId || ''
 
   const [adresse, setAdresse] = useState('')
+  const [numeroBon, setNumeroBon] = useState('')
   const [duree, setDuree] = useState(1)
   const [remarques, setRemarques] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [date, setDate] = useState(initialDate)
   const [creditUtilise, setCreditUtilise] = useState(0)
   const [envoi, setEnvoi] = useState(false)
   const [soumissionVerrouillee, setSoumissionVerrouillee] = useState(false)
@@ -56,14 +60,16 @@ export default function Depannage() {
   const [regieNonAssigneeId, setRegieNonAssigneeId] = useState('')
   const [chantiers, setChantiers] = useState([])
   const [chantierId, setChantierId] = useState('')
+  const [employes, setEmployes] = useState([])
+  const [employeId, setEmployeId] = useState('')
   const [rapportExistantId, setRapportExistantId] = useState('')
   const [rapportValide, setRapportValide] = useState(false)
   const [photosExistantes, setPhotosExistantes] = useState([])
   const [erreur, setErreur] = useState('')
   const [rapportErreur, setRapportErreur] = useState('')
   const [loading, setLoading] = useState(true)
-  const { photos, addFiles, removePhoto, clearPhotos } = useDraftPhotos(`depannage-draft:${user?.id || 'anon'}:${depannageId || 'new'}`)
-  const refreshPage = usePageRefresh(() => charger(), [depannageId, user?.id])
+  const { photos, addFiles, removePhoto, clearPhotos } = useDraftPhotos(`depannage-draft:${isAdminMode ? 'admin' : user?.id || 'anon'}:${depannageId || 'new'}`)
+  const refreshPage = usePageRefresh(() => charger(), [depannageId, user?.id, isAdminMode])
 
   useEffect(() => {
     charger()
@@ -74,7 +80,7 @@ export default function Depannage() {
       console.error('Erreur chargement credit depannage', error)
       setErreur('Impossible de charger les données. Réessaie dans un instant.')
     })
-  }, [date, user?.id])
+  }, [date, user?.id, employeId, isAdminMode])
 
   async function charger() {
     setLoading(true)
@@ -82,26 +88,31 @@ export default function Depannage() {
     setRapportErreur('')
 
     try {
-      const [regiesResult, catalogueResult, chantiersResult] = await Promise.all([
+      const [regiesResult, catalogueResult, chantiersResult, employesResult] = await Promise.all([
         supabase.from('regies').select('id, nom, nom_normalise').eq('actif', true).order('nom'),
         supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom'),
-        supabase.from('chantiers').select('id, nom, adresse').eq('actif', true).order('nom')
+        supabase.from('chantiers').select('id, nom, adresse').eq('actif', true).order('nom'),
+        isAdminMode
+          ? supabase.from('utilisateurs').select('id, prenom, initiales').eq('role', 'employe').order('prenom')
+          : Promise.resolve({ data: [], error: null })
       ])
 
       if (regiesResult.error) throw regiesResult.error
       if (catalogueResult.error) throw catalogueResult.error
       if (chantiersResult.error) throw chantiersResult.error
+      if (employesResult.error) throw employesResult.error
 
       const listeRegies = regiesResult.data || []
       const nonAssignee = listeRegies.find(regie => regie.nom_normalise === 'non assignee')
       setRegies(listeRegies)
       setRegieNonAssigneeId(nonAssignee?.id || '')
-      setRegieId(current => current || nonAssignee?.id || listeRegies[0]?.id || '')
+      setRegieId(current => current || initialRegieId || nonAssignee?.id || listeRegies[0]?.id || '')
 
       const listeCatalogue = catalogueResult.data || []
       setCatalogue(listeCatalogue)
       setCategories(['Favoris', ...Array.from(new Set(listeCatalogue.map(article => article.categorie).filter(Boolean)))])
       setChantiers(chantiersResult.data || [])
+      setEmployes(employesResult.data || [])
 
       if (depannageId) {
         await chargerDepannageExistant()
@@ -130,17 +141,19 @@ export default function Depannage() {
     if (!depannage) throw new Error('depannage_introuvable')
 
     setAdresse(depannage.adresse || '')
+    setNumeroBon(depannage.numero_bon || '')
     setDuree(1)
     setRemarques(depannage.remarques || '')
     setDate(depannage.date_travail || new Date().toISOString().split('T')[0])
     setRegieId(depannage.regie_id || regieNonAssigneeId || '')
     setChantierId(depannage.chantier_id || '')
+    if (isAdminMode) setEmployeId(depannage.employe_id || '')
 
     try {
       const timeEntry = await fetchLinkedTimeEntry({
         type: 'depannage',
         referenceId: depannageId,
-        employeId: user?.id
+        employeId: isAdminMode ? depannage.employe_id : user?.id
       })
       if (timeEntry?.duree !== undefined && timeEntry?.duree !== null) {
         setDuree(Number(timeEntry.duree) || 1)
@@ -196,11 +209,15 @@ export default function Depannage() {
   }
 
   async function chargerCredit(nextDate = date) {
-    if (!user?.id) return
+    const targetEmployeId = isAdminMode ? employeId : user?.id
+    if (!targetEmployeId) {
+      setCreditUtilise(0)
+      return
+    }
     const { data, error } = await supabase
       .from('time_entries')
       .select('duree')
-      .eq('employe_id', user.id)
+      .eq('employe_id', targetEmployeId)
       .eq('date_travail', nextDate)
 
     if (error) throw error
@@ -274,6 +291,10 @@ export default function Depannage() {
       setErreur('Sélectionne le chantier lié au dépannage pour classer le rapport dans le bon dossier admin.')
       return
     }
+    if (isAdminMode && !employeId) {
+      setErreur("SÃ©lectionne l'employÃ© pour qui crÃ©er le rapport.")
+      return
+    }
     if (!user?.id) {
       setErreur("Impossible d'identifier l'utilisateur connecté.")
       return
@@ -283,17 +304,19 @@ export default function Depannage() {
     setErreur('')
     let depannageSauveId = depannageId || null
     let rapportSauveId = rapportExistantId || null
+    const employeFinalId = isAdminMode ? employeId : user.id
 
     try {
       const regieIdFinal = regieId || regieNonAssigneeId || null
       const depannagePayload = {
-        employe_id: user.id,
+        employe_id: employeFinalId,
         chantier_id: chantierId,
         regie_id: regieIdFinal,
         date_travail: date,
         adresse: adresse.trim(),
         remarques: remarques.trim(),
-        statut: STATUT_INTERVENTION_FAITE
+        statut: STATUT_INTERVENTION_FAITE,
+        ...(isAdminMode ? { numero_bon: numeroBon.trim() || null } : {})
       }
 
       if (depannageSauveId) {
@@ -322,7 +345,7 @@ export default function Depannage() {
 
       const rapportPayload = {
         sous_dossier_id: sousDossierId,
-        employe_id: user.id,
+        employe_id: employeFinalId,
         date_travail: date,
         heure_debut: '07:30',
         heure_fin: '17:00',
@@ -352,7 +375,7 @@ export default function Depannage() {
         rapportSauveId = rapportInserted.id
       }
 
-      await sauvegarderTimeEntry(depannageSauveId)
+      await sauvegarderTimeEntry(depannageSauveId, employeFinalId)
       await sauvegarderMateriaux(rapportSauveId)
 
       if (photos.length > 0) {
@@ -379,7 +402,13 @@ export default function Depannage() {
 
       clearPhotos()
       setSucces(true)
-      setTimeout(() => navigate('/employe'), 2000)
+      setTimeout(() => {
+        if (isAdminMode) {
+          navigate('/admin', { state: { vue: 'depannages' } })
+        } else {
+          navigate('/employe')
+        }
+      }, 2000)
     } catch (error) {
       console.error('Erreur enregistrement dépannage', error)
       if (String(error?.message || '').includes('locked_validated_report')) {
@@ -398,9 +427,9 @@ export default function Depannage() {
     }
   }
 
-  async function sauvegarderTimeEntry(depannageSauveId) {
+  async function sauvegarderTimeEntry(depannageSauveId, employeFinalId) {
     await upsertLinkedTimeEntry({
-      employeId: user.id,
+      employeId: employeFinalId,
       type: 'depannage',
       referenceId: depannageSauveId,
       dateTravail: date,
@@ -440,7 +469,7 @@ export default function Depannage() {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
         <div style={{ fontSize: '48px' }}>✓</div>
-        <div style={{ fontWeight: 600, fontSize: '16px' }}>Rapport dépannage envoyé.</div>
+        <div style={{ fontWeight: 600, fontSize: '16px' }}>{isAdminMode ? 'Rapport dépannage créé.' : 'Rapport dépannage envoyé.'}</div>
       </div>
     )
   }
@@ -454,7 +483,7 @@ export default function Depannage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span>}
-            <PageTopActions navigate={navigate} fallbackPath="/employe/depannage" />
+            <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe/depannage'} />
           </div>
         </div>
         <div className="page-content">
@@ -527,7 +556,7 @@ export default function Depannage() {
             {depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
           </div>
         </div>
-        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} />
+        <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} />
       </div>
 
       <form onSubmit={envoyer}>
@@ -548,7 +577,7 @@ export default function Depannage() {
             </div>
           )}
           {soumissionVerrouillee && (
-            <button type="button" className="btn-primary" onClick={() => navigate('/employe')}>
+            <button type="button" className="btn-primary" onClick={() => navigate(isAdminMode ? '/admin' : '/employe')}>
               Retour à l'accueil
             </button>
           )}
@@ -566,6 +595,17 @@ export default function Depannage() {
 
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Informations</div>
+            {isAdminMode && (
+              <div className="form-group">
+                <label>Employé *</label>
+                <select value={employeId} onChange={event => setEmployeId(event.target.value)} required>
+                  <option value="">Sélectionner un employé...</option>
+                  {employes.map(employe => (
+                    <option key={employe.id} value={employe.id}>{employe.prenom || employe.initiales || 'Employé'}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="form-group">
               <label>Chantier lié *</label>
               <select value={chantierId} onChange={event => setChantierId(event.target.value)} required>
@@ -601,6 +641,12 @@ export default function Depannage() {
               <label>Adresse *</label>
               <input value={adresse} onChange={event => setAdresse(event.target.value)} placeholder="Rue, NPA Ville" required />
             </div>
+            {isAdminMode && (
+              <div className="form-group">
+                <label>N° de bon</label>
+                <input value={numeroBon} onChange={event => setNumeroBon(event.target.value)} placeholder="Numéro de bon" />
+              </div>
+            )}
             <div className="form-group">
               <label>Durée (minimum 1h)</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
@@ -695,7 +741,7 @@ export default function Depannage() {
           </div>
 
           <button type="submit" className="btn-primary" disabled={envoi || rapportEmployeVerrouille}>
-            {envoi ? 'Envoi...' : '⚡ Envoyer le rapport dépannage'}
+            {envoi ? 'Envoi...' : (isAdminMode ? '⚡ Créer le dépannage + rapport' : '⚡ Envoyer le rapport dépannage')}
           </button>
         </div>
       </form>

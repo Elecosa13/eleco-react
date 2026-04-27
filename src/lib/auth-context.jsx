@@ -158,11 +158,9 @@ export function AuthProvider({ children }) {
     }
 
     const cleanupVisibility = addDocumentListener('visibilitychange', refreshIfActive)
-    const cleanupFocus = addWindowListener('focus', refreshIfActive)
     const cleanupPageShow = addWindowListener('pageshow', refreshIfActive)
     return () => {
       cleanupVisibility()
-      cleanupFocus()
       cleanupPageShow()
     }
   }, [revalidate])

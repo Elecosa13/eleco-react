@@ -214,6 +214,17 @@ export default function Admin() {
   const [search, setSearch] = useState(adminNavigationState.depannagesSearch || '')
   const [regies, setRegies] = useState([])
   const [ajoutRegie, setAjoutRegie] = useState(false)
+  const [selectedRegieNom, setSelectedRegieNom] = useState(null)
+  const [selectedAnnee, setSelectedAnnee] = useState(null)
+  const [selectedMois, setSelectedMois] = useState(null)
+  const [ajoutDepannage, setAjoutDepannage] = useState(false)
+  const [nouveauDepannageDate, setNouveauDepannageDate] = useState('')
+  const [nouveauDepannageBon, setNouveauDepannageBon] = useState('')
+  const [nouveauDepannageAdresse, setNouveauDepannageAdresse] = useState('')
+  const [ajoutDepannageErreur, setAjoutDepannageErreur] = useState('')
+  const [ajoutDepannageSaving, setAjoutDepannageSaving] = useState(false)
+  const [ajoutRegieErreur, setAjoutRegieErreur] = useState('')
+  const [ajoutRegieSaving, setAjoutRegieSaving] = useState(false)
   const [nouvelleRegieNom, setNouvelleRegieNom] = useState('')
   const [intermediaires, setIntermediaires] = useState([])
   const [intermediaireChantiersActif, setIntermediaireChantiersActif] = useState(null)
@@ -2342,235 +2353,372 @@ export default function Admin() {
   )
 
   if (vue === 'depannages') {
-    const rechercheActive = search.trim()
+    const getAnneesGroupe = (groupe) => {
+      const set = new Set()
+      for (const label of groupe.moisOrdre) {
+        const y = label.split(' ').pop()
+        if (/^\d{4}$/.test(y || '')) set.add(y)
+      }
+      return Array.from(set).sort((a, b) => Number(b) - Number(a))
+    }
 
-    return (
-    <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Dépannages</div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+    const selectedGroupe = selectedRegieNom
+      ? depannagesGroupes.find(g => g.nom === selectedRegieNom) || null
+      : null
+
+    const selectedGroupeEff = selectedGroupe || (selectedRegieNom
+      ? { nom: selectedRegieNom, moisOrdre: [], mois: {}, count: 0 }
+      : null)
+
+    const formAjoutRegie = ajoutRegie && (
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouvelle régie</div>
+        <input
+          placeholder="Nom de la régie *"
+          value={nouvelleRegieNom}
+          onChange={e => setNouvelleRegieNom(e.target.value)}
+          style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+        />
+        {ajoutRegieErreur && <div style={{ color: '#A32D2D', fontSize: '12px' }}>{ajoutRegieErreur}</div>}
+        <div style={{ display: 'flex', gap: '8px' }}>
           <button
             className="btn-primary btn-sm"
             style={{ width: 'auto' }}
-            onClick={() => setAjoutRegie(true)}
-          >+ Régie</button>
+            disabled={ajoutRegieSaving}
+            onClick={async () => {
+              const nom = nouvelleRegieNom.trim()
+              if (!nom) { setAjoutRegieErreur('Nom requis.'); return }
+              setAjoutRegieSaving(true)
+              setAjoutRegieErreur('')
+              try {
+                const nomNormalise = nom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+                const { data, error } = await supabase.from('regies').insert({ nom, nom_normalise: nomNormalise, actif: true }).select('id, nom, nom_normalise').single()
+                if (error) throw error
+                setRegies(prev => [...prev, data].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')))
+                setNouvelleRegieNom('')
+                setAjoutRegie(false)
+              } catch (err) {
+                console.error('Erreur création régie', err)
+                setAjoutRegieErreur(err.message || 'Erreur lors de la création.')
+              } finally {
+                setAjoutRegieSaving(false)
+              }
+            }}
+          >{ajoutRegieSaving ? 'Création...' : 'Créer'}</button>
+          <button
+            type="button"
+            style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #ddd', background: 'white', fontSize: '13px', cursor: 'pointer' }}
+            onClick={() => { setAjoutRegie(false); setNouvelleRegieNom(''); setAjoutRegieErreur('') }}
+          >Annuler</button>
         </div>
       </div>
-      <div className="page-content">
-        <input
-          type="search"
-          placeholder="Rechercher une régie, une adresse, une remarque ou un bon #..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
-        />
-        <select
-          value={regieFilter}
-          disabled={!regieFilterAvailable}
-          onChange={e => {
-            const value = e.target.value
-            setRegieFilter(value)
-            chargerDepannages(search, value, dateFilter, regies, regieFilterAvailable)
-          }}
-          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px', background: 'white' }}
+    )
+
+    const formAjoutDepannage = ajoutDepannage && (
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau dépannage — {selectedMois}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ fontSize: '12px', color: '#555', fontWeight: 500 }}>Date</label>
+          <input
+            type="date"
+            value={nouveauDepannageDate}
+            onChange={e => setNouveauDepannageDate(e.target.value)}
+            style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+          />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ fontSize: '12px', color: '#555', fontWeight: 500 }}>Adresse</label>
+          <input
+            placeholder="Adresse du dépannage"
+            value={nouveauDepannageAdresse}
+            onChange={e => setNouveauDepannageAdresse(e.target.value)}
+            style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+          />
+        </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ fontSize: '12px', color: '#555', fontWeight: 500 }}>N° de bon</label>
+          <input
+            placeholder="Numéro de bon (optionnel)"
+            value={nouveauDepannageBon}
+            onChange={e => setNouveauDepannageBon(e.target.value)}
+            style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+          />
+        </div>
+        {ajoutDepannageErreur && <div style={{ color: '#A32D2D', fontSize: '12px' }}>{ajoutDepannageErreur}</div>}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            className="btn-primary btn-sm"
+            style={{ width: 'auto' }}
+            disabled={ajoutDepannageSaving}
+            onClick={async () => {
+              if (!nouveauDepannageDate) { setAjoutDepannageErreur('Date requise.'); return }
+              if (!nouveauDepannageAdresse.trim()) { setAjoutDepannageErreur('Adresse requise.'); return }
+              setAjoutDepannageSaving(true)
+              setAjoutDepannageErreur('')
+              try {
+                const regieObj = regies.find(r => r.nom === selectedRegieNom)
+                const { error } = await supabase.from('depannages').insert({
+                  date_travail: nouveauDepannageDate,
+                  adresse: nouveauDepannageAdresse.trim(),
+                  numero_bon: nouveauDepannageBon.trim() || null,
+                  regie_id: regieObj?.id || null,
+                })
+                if (error) throw error
+                setAjoutDepannage(false)
+                setNouveauDepannageBon('')
+                setNouveauDepannageAdresse('')
+                await chargerDepannages()
+              } catch (err) {
+                console.error('Erreur création dépannage', err)
+                setAjoutDepannageErreur(err.message || 'Erreur lors de la création.')
+              } finally {
+                setAjoutDepannageSaving(false)
+              }
+            }}
+          >{ajoutDepannageSaving ? 'Création...' : 'Créer'}</button>
+          <button
+            type="button"
+            style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #ddd', background: 'white', fontSize: '13px', cursor: 'pointer' }}
+            onClick={() => { setAjoutDepannage(false); setNouveauDepannageBon(''); setNouveauDepannageAdresse(''); setAjoutDepannageErreur('') }}
+          >Annuler</button>
+        </div>
+      </div>
+    )
+
+    const renderDepannageRow = (d) => {
+      const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
+      const mo = (d._duree || 0) * TAUX
+      const ttc = (mat + mo) * 1.081
+      const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
+      const statut = depannageStatut(d)
+      return (
+        <div
+          key={d.id}
+          className="row-item"
+          role="button"
+          tabIndex={0}
+          onClick={() => navigate(`/admin/depannage/${d.id}`, { state: { fromAdminDepannages: true } })}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/admin/depannage/${d.id}`, { state: { fromAdminDepannages: true } }) } }}
+          style={{ alignItems: 'flex-start', cursor: 'pointer', gap: '10px', padding: '12px', borderRadius: '14px', border: '1px solid #EEF2F7', background: '#FBFCFE' }}
         >
-          <option value="">{regieFilterAvailable ? 'Toutes les régies' : 'Filtre régie indisponible'}</option>
-          {regies.map(r => (
-            <option key={r.id} value={r.id}>{r.nom || 'Régie non définie'}</option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={dateFilter}
-          onChange={e => {
-            const value = e.target.value
-            setDateFilter(value)
-            chargerDepannages(search, regieFilter, value)
-          }}
-          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
-        />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#333' }}>{dateLabel}</span>
+              <span className={`badge ${depannageStatutBadgeClass(statut)}`}>{statut}</span>
+            </div>
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>{depannageClientAdresse(d)}</div>
+            <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>{d.employe?.prenom || 'Employé non défini'} · Bon #{d.id}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
+            <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+          </div>
+        </div>
+      )
+    }
+
+    const Refresh = () => (
+      <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+    )
+
+    const TopBar = ({ onBack, backLabel, title, action }) => (
+      <div className="top-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <button
-          type="button"
-          onClick={resetDepannagesFilters}
-          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', background: 'white', fontSize: '13px', cursor: 'pointer' }}
-        >
-          Réinitialiser les filtres
-        </button>
-        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-          {[
-            { key: 'en_cours', label: 'En cours', statuts: ONGLET_STATUTS.en_cours },
-            { key: 'a_traiter', label: 'À traiter', statuts: ONGLET_STATUTS.a_traiter },
-            { key: 'archives', label: 'Archivés', statuts: ONGLET_STATUTS.archives }
-          ].map(({ key, label, statuts }) => {
-            const count = depannagesFiltres.filter(d => statuts.includes(depannageStatut(d))).length
-            return (
-              <button key={key} onClick={() => setDepannagesOnglet(key)} style={{
-                padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer',
-                border: depannagesOnglet === key ? 'none' : '1px solid #ddd',
-                background: depannagesOnglet === key ? '#185FA5' : 'white',
-                color: depannagesOnglet === key ? 'white' : '#333', whiteSpace: 'nowrap'
-              }}>{label} ({count})</button>
-            )
-          })}
-        </div>
-        <div className="card">
-          {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
-          {!depannagesLoading && !depannagesError && depannagesGroupes.length > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '4px 2px 0', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: '11px', color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Classement dossiers</div>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Régie → mois → dépannages</div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <span className="badge badge-blue">{depannagesFiltres.length} dépannage{depannagesFiltres.length > 1 ? 's' : ''}</span>
-                <span className="badge badge-amber">{depannagesGroupes.length} régie{depannagesGroupes.length > 1 ? 's' : ''}</span>
-              </div>
-            </div>
-          )}
-          {!depannagesLoading && depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
-          {!depannagesLoading && !depannagesError && depannagesGroupes.length === 0 && (
-            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun dépannage</div>
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Les dossiers apparaîtront ici, classés par régie puis par mois.</div>
-            </div>
-          )}
-          {!depannagesLoading && !depannagesError && depannages.length > 0 && depannagesFiltres.length === 0 && (
-            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun resultat</div>
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
-                {rechercheActive
-                  ? `Aucun depannage ne correspond a "${search.trim()}".`
-                  : 'Aucun depannage ne correspond aux filtres actuels.'}
-              </div>
-            </div>
-          )}
-          {false && !depannagesLoading && !depannagesError && depannages.length > 0 && depannagesFiltres.length === 0 && (
-            <div style={{ padding: '28px 18px', borderRadius: '14px', background: '#F7F9FC', border: '1px dashed #D6DEE8', textAlign: 'center' }}>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucun rÃ©sultat</div>
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
-                {rechercheActive
-                  ? `Aucun dÃ©pannage ne correspond Ã  "${search.trim()}".`
-                  : 'Aucun dÃ©pannage ne correspond aux filtres actuels.'}
-              </div>
-            </div>
-          )}
-          {!depannagesLoading && !depannagesError && depannagesGroupes.map(groupe => (
-            <div
-              key={groupe.nom}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                marginTop: '12px',
-                padding: '14px',
-                borderRadius: '18px',
-                border: '1px solid #DCE6F2',
-                background: 'linear-gradient(180deg, #F9FBFF 0%, #FFFFFF 100%)',
-                boxShadow: '0 8px 24px rgba(24,95,165,0.05)'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Regie</div>
-                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{groupe.nom}</div>
-                </div>
-                <span className="badge badge-blue">{groupe.count} dossier{groupe.count > 1 ? 's' : ''}</span>
-              </div>
-              {groupe.moisOrdre.map(mois => (
-                <div
-                  key={`${groupe.nom}-${mois}`}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    padding: '12px',
-                    borderRadius: '14px',
-                    background: '#FFFFFF',
-                    border: '1px solid #E7EDF5'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>{mois}</div>
-                    <div style={{ fontSize: '11px', color: '#7A8795' }}>{groupe.mois[mois].length} depannage{groupe.mois[mois].length > 1 ? 's' : ''}</div>
-                  </div>
-                  {groupe.mois[mois].map(d => {
-                    const mat = (d.rapport_materiaux || []).reduce((s, m) => s + m.quantite * (m.prix_net || 0), 0)
-                    const mo = (d._duree || 0) * TAUX
-                    const ttc = (mat + mo) * 1.081
-                    const dateLabel = d.date_travail ? new Date(d.date_travail + 'T12:00:00').toLocaleDateString('fr-CH') : 'Date non définie'
-                    const statut = depannageStatut(d)
-                    const responsable = depannageResponsableLabel(d)
-                    const intervenantsCount = depannageIntervenantsCount(d)
-                    return (
-                      <div
-                        key={d.id}
-                        className="row-item"
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => navigate(`/admin/depannage/${d.id}`, {
-                          state: {
-                            fromAdminDepannages: true,
-                            depannagesSearch: search,
-                            depannagesRegieFilter: regieFilter,
-                            depannagesDateFilter: dateFilter
-                          }
-                        })}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            navigate(`/admin/depannage/${d.id}`, {
-                              state: {
-                                fromAdminDepannages: true,
-                                depannagesSearch: search,
-                                depannagesRegieFilter: regieFilter,
-                                depannagesDateFilter: dateFilter
-                              }
-                            })
-                          }
-                        }}
-                        style={{
-                          alignItems: 'flex-start',
-                          cursor: 'pointer',
-                          gap: '10px',
-                          padding: '12px',
-                          borderRadius: '14px',
-                          border: '1px solid #EEF2F7',
-                          background: '#FBFCFE'
-                        }}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '12px', fontWeight: 700, color: '#333' }}>{dateLabel}</span>
-                            <span className={`badge ${depannageStatutBadgeClass(statut)}`}>{statut}</span>
-                          </div>
-                          <div style={{ fontSize: '13px', fontWeight: 600 }}>{depannageClientAdresse(d)}</div>
-                          <div style={{ fontSize: '12px', color: '#555' }}>{depannageDescription(d)}</div>
-                          <div style={{ fontSize: '11px', color: '#888' }}>
-                            {d.employe?.prenom || 'Employé non défini'} · {fmtDuree(Number(d._duree) || 0)} · Bon #{d.id}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#555' }}>
-                            Statut : {statut} · Resp. : {responsable} · Intervenants : {intervenantsCount}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                          <div style={{ fontSize: '13px', fontWeight: 600 }}>{ttc.toFixed(0)} CHF</div>
-                          <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              ))}
-            </div>
-          ))}
+          onClick={onBack}
+          style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: '4px 0', flexShrink: 0, whiteSpace: 'nowrap' }}
+        >← {backLabel}</button>
+        <div style={{ flex: 1, textAlign: 'center', fontWeight: 600, fontSize: '15px', color: '#1a202c' }}>{title}</div>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+          <Refresh />
+          {action || null}
         </div>
       </div>
-    </div>
-  )
+    )
+
+    // Level 4: mois → dépannages + formulaire création
+    if (selectedGroupeEff && selectedAnnee && selectedMois) {
+      const deps = (selectedGroupeEff.mois[selectedMois] || [])
+      return (
+        <div>
+          <TopBar
+            onBack={() => { setSelectedMois(null); setAjoutDepannage(false); setNouveauDepannageBon(''); setAjoutDepannageErreur('') }}
+            backLabel={selectedAnnee}
+            title={selectedMois}
+            action={
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
+                const regieObj = regies.find(r => r.nom === selectedRegieNom)
+                navigate('/admin/depannage/nouveau', {
+                  state: {
+                    vue: 'depannages',
+                    date: new Date().toISOString().slice(0, 10),
+                    regieId: regieObj?.id || ''
+                  }
+                })
+              }}>+ Dépannage</button>
+            }
+          />
+          <div className="page-content">
+            {formAjoutDepannage}
+            {depannagesLoading && <div className="card" style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
+            {!depannagesLoading && deps.length === 0 && !ajoutDepannage && (
+              <div className="card" style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '28px' }}>Aucun dépannage ce mois.</div>
+            )}
+            {!depannagesLoading && deps.map(d => renderDepannageRow(d))}
+          </div>
+        </div>
+      )
+    }
+
+    // Level 3: année → mois
+    if (selectedGroupeEff && selectedAnnee) {
+      const MOIS_NOMS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
+      const nowDate = new Date()
+      const nowYear = nowDate.getFullYear()
+      const nowMonth = nowDate.getMonth()
+      const moisDuGroupe = selectedGroupeEff.moisOrdre.filter(m => m.endsWith(selectedAnnee))
+      let moisAfficher
+      if (moisDuGroupe.length > 0) {
+        moisAfficher = moisDuGroupe
+      } else {
+        const yr = Number(selectedAnnee)
+        const maxM = yr < nowYear ? 11 : (yr === nowYear ? nowMonth : -1)
+        moisAfficher = maxM >= 0
+          ? MOIS_NOMS.slice(0, maxM + 1).map(m => `${m} ${selectedAnnee}`).reverse()
+          : []
+      }
+      return (
+        <div>
+          <TopBar
+            onBack={() => { setSelectedAnnee(null); setSelectedMois(null); setAjoutDepannage(false) }}
+            backLabel={selectedRegieNom}
+            title={selectedAnnee}
+          />
+          <div className="page-content">
+            {depannagesLoading && <div className="card" style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
+            {!depannagesLoading && moisAfficher.length === 0 && (
+              <div className="card" style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '28px' }}>Aucun mois disponible pour {selectedAnnee}.</div>
+            )}
+            {!depannagesLoading && moisAfficher.length > 0 && (
+              <div className="card">
+                {moisAfficher.map((mois, idx) => {
+                  const deps = selectedGroupeEff.mois[mois] || []
+                  return (
+                    <div
+                      key={mois}
+                      className="row-item"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedMois(mois)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedMois(mois) } }}
+                      style={{ cursor: 'pointer', borderBottom: idx < moisAfficher.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>{mois}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="badge badge-blue">{deps.length} dépannage{deps.length !== 1 ? 's' : ''}</span>
+                        <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    // Level 2: régie → années
+    if (selectedGroupeEff) {
+      const annees = getAnneesGroupe(selectedGroupeEff)
+      const anneesAffichees = annees.length > 0 ? annees : [String(new Date().getFullYear())]
+      return (
+        <div>
+          <TopBar
+            onBack={() => { setSelectedRegieNom(null); setSelectedAnnee(null); setSelectedMois(null); setAjoutDepannage(false) }}
+            backLabel="Régies"
+            title={selectedRegieNom}
+          />
+          <div className="page-content">
+            <div className="card">
+              {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement...</div>}
+              {!depannagesLoading && anneesAffichees.map((annee, idx) => {
+                const moisDuGroupe = selectedGroupeEff.moisOrdre.filter(m => m.endsWith(annee))
+                const count = moisDuGroupe.reduce((s, m) => s + selectedGroupeEff.mois[m].length, 0)
+                return (
+                  <div
+                    key={annee}
+                    className="row-item"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedAnnee(annee)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedAnnee(annee) } }}
+                    style={{ cursor: 'pointer', borderBottom: idx < anneesAffichees.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{annee}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
+                      <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Level 1: liste de toutes les régies
+    return (
+      <div>
+        <TopBar
+          onBack={() => setVue('accueil')}
+          backLabel="Retour"
+          title="Régies"
+          action={
+            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutRegie(true)}>+ Régie</button>
+          }
+        />
+        <div className="page-content">
+          {formAjoutRegie}
+          <div className="card">
+            {depannagesLoading && <div style={{ fontSize: '13px', color: '#888' }}>Chargement des dépannages...</div>}
+            {depannagesError && <div style={{ fontSize: '13px', color: '#A32D2D' }}>{depannagesError}</div>}
+            {!depannagesLoading && !depannagesError && regies.length === 0 && (
+              <div style={{ padding: '28px 18px', textAlign: 'center' }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucune régie</div>
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Créez une régie avec le bouton + Régie.</div>
+              </div>
+            )}
+            {!depannagesLoading && !depannagesError && regies.map((regie, idx) => {
+              const groupe = depannagesGroupes.find(g => g.nom === regie.nom)
+              const count = groupe ? groupe.count : 0
+              return (
+                <div
+                  key={regie.id}
+                  className="row-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { setSelectedRegieNom(regie.nom); setSelectedAnnee(null); setSelectedMois(null) }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedRegieNom(regie.nom); setSelectedAnnee(null); setSelectedMois(null) } }}
+                  style={{ cursor: 'pointer', borderBottom: idx < regies.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                >
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Régie</div>
+                    <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{regie.nom}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="badge badge-blue">{count} dossier{count !== 1 ? 's' : ''}</span>
+                    <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (vue === 'a_verifier') {

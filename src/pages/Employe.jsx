@@ -5,9 +5,9 @@ import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import DepannageCard from '../components/depannage/DepannageCard'
+import PageHeader from '../components/PageHeader'
 import {
   demarrerDepannage,
-  fetchDepannages,
   libererDepannage,
   planifierDepannage,
   prendreDepannage,
@@ -27,7 +27,9 @@ const CREDIT_JOUR = 8
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
 const STATUT_FACTURE_PRETE = 'Facture prête'
-const STATUTS_DEPANNAGE_ADMIN = [STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER, STATUT_FACTURE_PRETE]
+const STATUT_ANNULE = 'Annulé'
+const STATUTS_DEPANNAGE_ADMIN = [STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER, STATUT_FACTURE_PRETE, STATUT_ANNULE]
+const REGIE_NON_ASSIGNEE = { id: '__sans_regie__', nom: 'Régie non assignée' }
 
 function countJoursOuvrables(dateDebut, dateFin) {
   if (!dateDebut || !dateFin) return 0
@@ -78,6 +80,9 @@ export default function Employe() {
   const [depannagesErreur, setDepannagesErreur] = useState('')
   const [depannagesRecherche, setDepannagesRecherche] = useState('')
   const [depannageActionLoading, setDepannageActionLoading] = useState('')
+  const [depannagesNiveau, setDepannagesNiveau] = useState(1)
+  const [regieSel, setRegieSel] = useState(null)
+  const [moisSel, setMoisSel] = useState(null)
 
   const [modalSupp, setModalSupp] = useState(false)
   const [suppHeures, setSuppHeures] = useState(1)
@@ -193,8 +198,155 @@ export default function Employe() {
     setDepannagesLoading(true)
     setDepannagesErreur('')
     try {
-      const data = await fetchDepannages()
-      setDepannagesTerrain(data)
+      const formatSupabaseError = error => error
+        ? {
+          code: error.code || null,
+          message: error.message || String(error),
+          details: error.details || null,
+          hint: error.hint || null
+        }
+        : null
+
+      const DEPANNAGE_SELECT = `
+        id,
+        adresse,
+        adresse_normalisee,
+        statut,
+        date_travail,
+        date_planifiee,
+        heure_planifiee,
+        chantier_id,
+        created_at,
+        employe_id,
+        pris_par,
+        regie:regies (
+          id,
+          nom
+        ),
+        chantier:chantiers (
+          id,
+          nom
+        ),
+        depannage_intervenants (
+          employe_id
+        )
+      `
+
+      const { data: interventions, error: interventionsError } = await supabase
+        .from('depannage_intervenants')
+        .select('depannage_id')
+        .eq('employe_id', user.id)
+
+      const depannageIdsIntervenant = (interventions || [])
+        .map(intervention => intervention.depannage_id)
+        .filter(Boolean)
+
+      const statutsResult = await supabase
+        .from('depannages')
+        .select('statut')
+        .order('statut', { ascending: true })
+
+      const statutsTrouves = Array.from(new Set(
+        (statutsResult.data || []).map(depannage => depannage.statut || '(vide)')
+      )).sort((a, b) => a.localeCompare(b, 'fr'))
+
+      const ouvertsResult = await supabase
+        .from('depannages')
+        .select(DEPANNAGE_SELECT)
+        .not('statut', 'in', `(${STATUTS_DEPANNAGE_ADMIN.map(statut => `"${statut}"`).join(',')})`)
+        .order('created_at', { ascending: false })
+
+      const prisParResult = await supabase
+        .from('depannages')
+        .select(DEPANNAGE_SELECT)
+        .eq('pris_par', user.id)
+        .order('created_at', { ascending: false })
+
+      const employeIdResult = await supabase
+        .from('depannages')
+        .select(DEPANNAGE_SELECT)
+        .eq('employe_id', user.id)
+        .order('created_at', { ascending: false })
+
+      const intervenantsResult = depannageIdsIntervenant.length > 0
+        ? await supabase
+          .from('depannages')
+          .select(DEPANNAGE_SELECT)
+          .in('id', depannageIdsIntervenant)
+          .order('created_at', { ascending: false })
+        : { data: [], error: null }
+
+      console.log('[Eleco][Employe][Depannages] chargement', {
+        userId: user.id,
+        statutsTrouves,
+        counts: {
+          ouverts: Array.isArray(ouvertsResult.data) ? ouvertsResult.data.length : 0,
+          prisPar: Array.isArray(prisParResult.data) ? prisParResult.data.length : 0,
+          employeId: Array.isArray(employeIdResult.data) ? employeIdResult.data.length : 0,
+          intervenantsIds: depannageIdsIntervenant.length,
+          intervenants: Array.isArray(intervenantsResult.data) ? intervenantsResult.data.length : 0
+        },
+        errors: {
+          statuts: formatSupabaseError(statutsResult.error),
+          interventions: formatSupabaseError(interventionsError),
+          ouverts: formatSupabaseError(ouvertsResult.error),
+          prisPar: formatSupabaseError(prisParResult.error),
+          employeId: formatSupabaseError(employeIdResult.error),
+          intervenants: formatSupabaseError(intervenantsResult.error)
+        }
+      })
+
+      const error = statutsResult.error ||
+        interventionsError ||
+        ouvertsResult.error ||
+        prisParResult.error ||
+        employeIdResult.error ||
+        intervenantsResult.error
+
+      if (error) throw error
+
+      const depannagesById = new Map()
+      for (const depannage of [
+        ...(ouvertsResult.data || []),
+        ...(prisParResult.data || []),
+        ...(employeIdResult.data || []),
+        ...(intervenantsResult.data || [])
+      ]) {
+        if (depannage?.id) depannagesById.set(String(depannage.id), depannage)
+      }
+
+      const data = Array.from(depannagesById.values())
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+
+      const idsProfil = Array.from(new Set(
+        (data || []).flatMap(depannage => [
+          depannage.pris_par,
+          ...(depannage.depannage_intervenants || []).map(intervenant => intervenant.employe_id)
+        ]).filter(Boolean)
+      ))
+
+      const profilsById = new Map()
+      if (idsProfil.length > 0) {
+        const { data: profils, error: profilsError } = await supabase
+          .from('profils_publics')
+          .select('id, prenom, initiales')
+          .in('id', idsProfil)
+
+        if (profilsError) throw profilsError
+        for (const profil of profils || []) profilsById.set(String(profil.id), profil)
+      }
+
+      const depannages = (data || []).map(depannage => ({
+        ...depannage,
+        regie: depannage.regie || REGIE_NON_ASSIGNEE,
+        pris_par_user: depannage.pris_par ? profilsById.get(String(depannage.pris_par)) || null : null,
+        depannage_intervenants: (depannage.depannage_intervenants || []).map(intervenant => ({
+          ...intervenant,
+          employe: intervenant.employe_id ? profilsById.get(String(intervenant.employe_id)) || null : null
+        }))
+      }))
+
+      setDepannagesTerrain(depannages)
     } catch (error) {
       console.error('Erreur chargement depannages terrain', error)
       setDepannagesErreur("Impossible de charger les dépannages. Réessaie dans un instant.")
@@ -446,6 +598,21 @@ export default function Employe() {
     )
   }, [depannagesRecherche, depannagesTerrain])
 
+  const regiesListe = useMemo(() => {
+    const map = new Map()
+    depannagesTerrain.forEach(d => {
+      if (d.regie?.id) map.set(d.regie.id, d.regie.nom)
+    })
+    return [...map.entries()]
+      .map(([id, nom]) => ({ id, nom }))
+      .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
+  }, [depannagesTerrain])
+
+  const now = new Date()
+  const moisCourant = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const moisPrecedentDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const moisPrecedent = `${moisPrecedentDate.getFullYear()}-${String(moisPrecedentDate.getMonth() + 1).padStart(2, '0')}`
+
   const statutLabel = { en_attente: 'En attente', accepte: 'Accepté', refuse: 'Refusé' }
   const statutColor = { en_attente: '#BA7517', accepte: '#3B6D11', refuse: '#A32D2D' }
   const statutBg = { en_attente: '#FAEEDA', accepte: '#EAF3DE', refuse: '#FCEBEB' }
@@ -455,15 +622,46 @@ export default function Employe() {
   const absTypeLabel = { maladie: 'Maladie', accident: 'Accident', autre: 'Autre' }
   const titrePage = vue === 'accueil'
     ? `Bonjour, ${user?.prenom}`
-    : vue === 'depannages'
-      ? 'Dépannages'
-      : vue === 'autres'
-        ? 'Autres'
-        : vue === 'testv1'
-          ? 'Rapport V1'
-          : vue === 'chantiers' && intermediaireSel
-            ? (intermediaires.find(i => i.id === intermediaireSel)?.nom || 'Chantiers actifs')
-            : 'Chantiers actifs'
+    : vue === 'depannages' && depannagesNiveau === 2
+      ? (regieSel?.nom || 'Dépannages')
+      : vue === 'depannages' && depannagesNiveau === 3
+        ? (moisSel ? formatMoisLabel(moisSel) : regieSel?.nom || 'Dépannages')
+        : vue === 'depannages'
+          ? 'Dépannages'
+          : vue === 'autres'
+            ? 'Autres'
+            : vue === 'testv1'
+              ? 'Rapport V1'
+              : vue === 'chantiers' && intermediaireSel
+                ? (intermediaires.find(i => i.id === intermediaireSel)?.nom || 'Chantiers actifs')
+                : 'Chantiers actifs'
+
+  function revenirDepuisHeader() {
+    if (vue === 'chantiers' && intermediaireSel) {
+      setIntermediaireSel(null)
+      setRecherche('')
+      return
+    }
+
+    if (vue === 'depannages' && depannagesNiveau > 1) {
+      if (depannagesNiveau === 3) {
+        setMoisSel(null)
+        setDepannagesNiveau(2)
+      } else {
+        setRegieSel(null)
+        setDepannagesNiveau(1)
+      }
+      return
+    }
+
+    setVue('accueil')
+    setRecherche('')
+    setDepannagesRecherche('')
+    setAjoutChantier(false)
+    setDepannagesNiveau(1)
+    setRegieSel(null)
+    setMoisSel(null)
+  }
 
   if (modalSupp) {
     if (suppSucces) return (
@@ -533,10 +731,11 @@ export default function Employe() {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
         <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <span style={{ fontWeight: 700, fontSize: '16px' }}>Demande de vacances</span>
-            <button onClick={() => { setModalVacances(false); setVacErreur('') }} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
-          </div>
+          <PageHeader
+            title="Demande de vacances"
+            subtitle="Espace employé"
+            onBack={() => { setModalVacances(false); setVacErreur('') }}
+          />
           <form onSubmit={soumettreVacances} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="grid2">
               <div className="form-group">
@@ -604,10 +803,11 @@ export default function Employe() {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
         <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <span style={{ fontWeight: 700, fontSize: '16px' }}>Déclarer une absence</span>
-            <button onClick={() => { setModalAbsence(false); setAbsErreur('') }} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
-          </div>
+          <PageHeader
+            title="Déclarer une absence"
+            subtitle="Espace employé"
+            onBack={() => { setModalAbsence(false); setAbsErreur('') }}
+          />
           <form onSubmit={soumettreAbsence} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="form-group">
               <label>Type d'absence *</label>
@@ -662,20 +862,12 @@ export default function Employe() {
 
   return (
     <div>
-      <div className="top-bar">
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '15px' }}>
-            {titrePage}
-          </div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Espace employé</div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {vue !== 'accueil' && (
-            <button className="btn-outline btn-sm" onClick={() => { if (vue === 'chantiers' && intermediaireSel) { setIntermediaireSel(null); setRecherche('') } else { setVue('accueil'); setRecherche(''); setDepannagesRecherche(''); setAjoutChantier(false) } }}>Retour ←</button>
-          )}
-          <button className="avatar" onClick={deconnecter}>{user?.initiales}</button>
-        </div>
-      </div>
+      <PageHeader
+        title={vue === 'depannages' ? 'Dépannages' : titrePage}
+        subtitle="Espace employé"
+        onBack={vue !== 'accueil' ? revenirDepuisHeader : undefined}
+        rightSlot={<button className="avatar" onClick={deconnecter}>{user?.initiales}</button>}
+      />
 
       <div className="page-content">
         {vue === 'accueil' && <>
@@ -884,28 +1076,86 @@ export default function Employe() {
           )}
         </>}
 
-        {vue === 'depannages' && <>
-          <input
-            type="search"
-            placeholder="Rechercher une adresse..."
-            value={depannagesRecherche}
-            onChange={e => setDepannagesRecherche(e.target.value)}
-            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
-          />
-          {depannagesErreur && (
-            <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
-              {depannagesErreur}
-            </div>
+        {vue === 'depannages' && depannagesNiveau === 1 && <>
+          {depannagesLoading && <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement...</div>}
+          {depannagesErreur && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{depannagesErreur}</div>}
+          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Régies</div>
+            {!depannagesLoading && regiesListe.length === 0 && (
+              <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage disponible.</div>
+            )}
+            {regiesListe.map((regie, idx) => {
+              const count = depannagesTerrain.filter(d => d.regie?.id === regie.id).length
+              return (
+                <div
+                  key={regie.id}
+                  className="row-item"
+                  role="button"
+                  tabIndex={0}
+                  style={{ cursor: 'pointer', borderBottom: idx < regiesListe.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                  onClick={() => { setRegieSel(regie); setDepannagesNiveau(2) }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRegieSel(regie); setDepannagesNiveau(2) } }}
+                >
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Régie</div>
+                    <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{regie.nom}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
+                    <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>}
+
+        {vue === 'depannages' && depannagesNiveau === 2 && (
+          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>{regieSel?.nom}</div>
+            {[moisCourant, moisPrecedent].map((mois, idx) => {
+              const count = depannagesTerrain.filter(d => {
+                if (d.regie?.id !== regieSel?.id) return false
+                const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
+                return dateStr && dateStr.substring(0, 7) === mois
+              }).length
+              return (
+                <div
+                  key={mois}
+                  className="row-item"
+                  role="button"
+                  tabIndex={0}
+                  style={{ cursor: 'pointer', borderBottom: idx === 0 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                  onClick={() => { setMoisSel(mois); setDepannagesNiveau(3) }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMoisSel(mois); setDepannagesNiveau(3) } }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{formatMoisLabel(mois)}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
+                    <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {vue === 'depannages' && depannagesNiveau === 3 && <>
+          <div style={{ fontSize: '12px', color: '#6D7B8A', marginBottom: '4px', fontWeight: 600, paddingLeft: '4px' }}>
+            {regieSel?.nom} · {formatMoisLabel(moisSel)}
+          </div>
+          {depannagesTerrain.filter(d => {
+            if (d.regie?.id !== regieSel?.id) return false
+            const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
+            return dateStr && dateStr.substring(0, 7) === moisSel
+          }).length === 0 && (
+            <div className="card" style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage ce mois-ci.</div>
           )}
-          {depannagesLoading && (
-            <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement des dépannages...</div>
-          )}
-          {!depannagesLoading && depannagesFiltres.length === 0 && (
-            <div className="card" style={{ fontSize: '13px', color: '#888', borderRadius: '8px' }}>
-              Aucun dépannage trouvé
-            </div>
-          )}
-          {!depannagesLoading && depannagesFiltres.map(depannage => (
+          {depannagesTerrain.filter(d => {
+            if (d.regie?.id !== regieSel?.id) return false
+            const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
+            return dateStr && dateStr.substring(0, 7) === moisSel
+          }).map(depannage => (
             <DepannageCard
               key={depannage.id}
               depannage={depannage}
@@ -931,4 +1181,11 @@ function normaliserRecherche(value) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
+}
+
+function formatMoisLabel(moisStr) {
+  if (!moisStr) return ''
+  const [annee, mois] = moisStr.split('-')
+  return new Date(Number(annee), Number(mois) - 1, 1)
+    .toLocaleDateString('fr-CH', { month: 'long', year: 'numeric' })
 }

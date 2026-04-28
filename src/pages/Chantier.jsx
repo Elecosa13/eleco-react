@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
 import { supabase } from '../lib/supabase'
 import { usePageRefresh } from '../lib/refresh'
@@ -194,22 +195,12 @@ export default function Chantier() {
 
   return (
     <div>
-      <div className="top-bar" style={{ display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) 48px', gap: '10px', alignItems: 'center' }}>
-        <button
-          type="button"
-          aria-label="Retour"
-          title="Retour"
-          onClick={retour}
-          style={{ width: 40, height: 40, borderRadius: '10px', border: '1px solid #d9e8f6', background: '#fff', color: '#185FA5', fontSize: '20px', lineHeight: 1, cursor: 'pointer' }}
-        >
-          ←
-        </button>
-        <div style={{ minWidth: 0 }}>
-          <div title={titreTop()} style={{ fontWeight: 600, fontSize: '15px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titreTop()}</div>
-          <div title={sousTitreTop()} style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitreTop()}</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} showBack={false} />
-      </div>
+      <PageHeader
+        title={titreTop()}
+        subtitle={sousTitreTop()}
+        onBack={retour}
+        rightSlot={<PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} showBack={false} />}
+      />
 
       <div className="page-content">
         {niveau < 4 && (

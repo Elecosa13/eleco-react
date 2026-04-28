@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
 import PhotoInputPanel from '../components/PhotoInputPanel'
 import { useDraftPhotos } from '../lib/photo-drafts'
@@ -477,15 +478,11 @@ export default function Depannage({ mode = 'employe' }) {
   if (catalogueVue) {
     return (
       <div>
-        <div className="top-bar">
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Catalogue</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {materiaux.length > 0 && <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span>}
-            <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe/depannage'} />
-          </div>
-        </div>
+        <PageHeader
+          title="Catalogue"
+          onBack={() => setCatalogueVue(false)}
+          rightSlot={materiaux.length > 0 ? <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span> : null}
+        />
         <div className="page-content">
           {erreur && (
             <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
@@ -550,14 +547,11 @@ export default function Depannage({ mode = 'employe' }) {
 
   return (
     <div>
-      <div className="top-bar">
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>
-            {depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
-          </div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} />
-      </div>
+      <PageHeader
+        title={depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
+        onBack={() => navigate(isAdminMode ? '/admin' : '/employe')}
+        rightSlot={<PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} showBack={false} />}
+      />
 
       <form onSubmit={envoyer}>
         <div className="page-content">

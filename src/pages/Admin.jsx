@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
 import PhotoInputPanel from '../components/PhotoInputPanel'
 import { supabase } from '../lib/supabase'
@@ -1648,12 +1649,11 @@ export default function Admin() {
 
   if (vueCorbeille) return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVueCorbeille(false)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>🗑️ Corbeille</div>
-        </div>
-      </div>
+      <PageHeader
+        title="Corbeille"
+        subtitle="Tableau de bord admin"
+        onBack={() => setVueCorbeille(false)}
+      />
       <div className="page-content">
         {corbeille.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Corbeille vide</div>}
         {corbeille.map((item, i) => (
@@ -3344,22 +3344,22 @@ export default function Admin() {
   // ─── Accueil — 4 entrées (tâche 7) ───────────────────────────────────────
   return (
     <div>
-      <div className="top-bar">
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '15px' }}>Bonjour, {user?.prenom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Tableau de bord admin</div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-          {corbeille.length > 0 && (
-            <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
-              🗑️ {corbeille.length}
-            </button>
-          )}
-          <span className="badge badge-amber">Admin</span>
-          <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{user?.initiales}</button>
-        </div>
-      </div>
+      <PageHeader
+        title={`Bonjour, ${user?.prenom || ''}`}
+        subtitle="Tableau de bord admin"
+        rightSlot={(
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+            {corbeille.length > 0 && (
+              <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                🗑️ {corbeille.length}
+              </button>
+            )}
+            <span className="badge badge-amber">Admin</span>
+            <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{user?.initiales}</button>
+          </div>
+        )}
+      />
       <div className="page-content">
         {adminError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{adminError}</div>}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

@@ -417,6 +417,10 @@ export default function Depannage({ mode = 'employe' }) {
         setErreur("Ce rapport est deja valide. Les heures et la recreation sont verrouillees cote employe.")
         return
       }
+      if (String(error?.message || '').includes('depannage_employe_id_locked')) {
+        setErreur("Ce dépannage est déjà assigné à un autre employé. Le rapport n’a pas été enregistré.")
+        return
+      }
       if (depannageSauveId || rapportSauveId) {
         setSoumissionVerrouillee(true)
         setErreur("Le rapport a probablement été enregistré partiellement. Retourne à l'accueil et laisse l'administration contrôler le dossier avant une nouvelle tentative.")

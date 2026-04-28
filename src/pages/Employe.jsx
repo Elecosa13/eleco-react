@@ -568,6 +568,10 @@ export default function Employe() {
       await chargerDepannagesTerrain()
     } catch (error) {
       console.error(`Erreur action depannage ${action}`, error)
+      if (String(error?.message || '').includes('depannage_employe_id_locked')) {
+        setDepannagesErreur('Ce dépannage a déjà été pris par un autre employé. Actualise la liste.')
+        return
+      }
       setDepannagesErreur(error?.message || "Action impossible pour ce dépannage. La liste reste disponible.")
     } finally {
       setDepannageActionLoading('')

@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import DepannageCard from '../components/depannage/DepannageCard'
 import PageHeader from '../components/PageHeader'
+import PageTopActions from '../components/PageTopActions'
 import {
   demarrerDepannage,
   libererDepannage,
@@ -117,7 +118,7 @@ export default function Employe() {
   const [absErreur, setAbsErreur] = useState('')
 
   useEffect(() => { charger() }, [])
-  usePageRefresh(() => charger(), [user?.id])
+  const refreshPage = usePageRefresh(() => charger(), [user?.id])
 
   useEffect(() => {
     if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) {
@@ -578,9 +579,11 @@ export default function Employe() {
     navigate(`/employe/depannage?depannageId=${depannage.id}`)
   }
 
+  const isCarlosAdmin = user?.email?.toLowerCase() === 'carlos.a@eleco.ch'
+  const employeUserMark = isCarlosAdmin ? '∞' : user?.initiales
   const creditRestant = CREDIT_JOUR - creditUtilise
-  const pourcent = Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
-  const couleurBarre = creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
+  const pourcent = isCarlosAdmin ? 0 : Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
+  const couleurBarre = isCarlosAdmin ? '#9CA3AF' : creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
   const intermediaires = useMemo(() => {
     const map = new Map()
     chantiers.forEach(c => {
@@ -635,6 +638,12 @@ export default function Employe() {
               : vue === 'chantiers' && intermediaireSel
                 ? (intermediaires.find(i => i.id === intermediaireSel)?.nom || 'Chantiers actifs')
                 : 'Chantiers actifs'
+  const employeHeaderRight = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} showBack={false} />
+      <button className="avatar" onClick={deconnecter}>{employeUserMark}</button>
+    </div>
+  )
 
   function revenirDepuisHeader() {
     if (vue === 'chantiers' && intermediaireSel) {
@@ -735,6 +744,7 @@ export default function Employe() {
             title="Demande de vacances"
             subtitle="Espace employé"
             onBack={() => { setModalVacances(false); setVacErreur('') }}
+            rightSlot={employeHeaderRight}
           />
           <form onSubmit={soumettreVacances} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="grid2">
@@ -807,6 +817,7 @@ export default function Employe() {
             title="Déclarer une absence"
             subtitle="Espace employé"
             onBack={() => { setModalAbsence(false); setAbsErreur('') }}
+            rightSlot={employeHeaderRight}
           />
           <form onSubmit={soumettreAbsence} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="form-group">
@@ -863,10 +874,10 @@ export default function Employe() {
   return (
     <div>
       <PageHeader
-        title={vue === 'depannages' ? 'Dépannages' : titrePage}
+        title={titrePage}
         subtitle="Espace employé"
         onBack={vue !== 'accueil' ? revenirDepuisHeader : undefined}
-        rightSlot={<button className="avatar" onClick={deconnecter}>{user?.initiales}</button>}
+        rightSlot={employeHeaderRight}
       />
 
       <div className="page-content">
@@ -876,7 +887,7 @@ export default function Employe() {
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Crédit heures aujourd'hui</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 600, color: couleurBarre }}>
-                  {creditUtilise.toFixed(1)}h / {CREDIT_JOUR}h
+                  {isCarlosAdmin ? '\u221e' : `${creditUtilise.toFixed(1)}h / ${CREDIT_JOUR}h`}
                 </span>
                 <button
                   onClick={() => setModalSupp(true)}
@@ -889,7 +900,7 @@ export default function Employe() {
               <div style={{ width: `${pourcent}%`, background: couleurBarre, height: '100%', borderRadius: '6px', transition: 'width 0.3s' }} />
             </div>
             <div style={{ fontSize: '12px', color: '#888' }}>
-              {creditRestant > 0 ? `Il reste ${creditRestant.toFixed(1)}h à saisir` : '✅ Journée complète'}
+              {isCarlosAdmin ? 'Cr\u00e9dit illimit\u00e9 admin' : creditRestant > 0 ? `Il reste ${creditRestant.toFixed(1)}h \u00e0 saisir` : '\u2705 Journ\u00e9e compl\u00e8te'}
             </div>
             {suppHistorique.length > 0 && (
               <div style={{ borderTop: '1px solid #eee', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>

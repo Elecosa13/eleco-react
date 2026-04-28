@@ -1101,6 +1101,33 @@ export default function Admin() {
 
   async function deconnecter() { await signOut(); navigate('/login') }
 
+  const adminUserMark = user?.email?.toLowerCase() === 'carlos@eleco.ch'
+    ? '∞'
+    : user?.initiales
+
+  const adminHeaderPlusStyle = {
+    width: '40px',
+    height: '40px',
+    minWidth: '40px',
+    padding: 0,
+    borderRadius: '10px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '24px',
+    fontWeight: 700,
+    lineHeight: 1,
+    flexShrink: 0
+  }
+
+  const adminHeaderRight = (extra = null) => (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+      {extra}
+      <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
+      <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{adminUserMark}</button>
+    </div>
+  )
+
   async function supprimerChantier(c) {
     const [{ data: sds }, { data: affaires }] = await Promise.all([
       supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id),
@@ -1653,6 +1680,7 @@ export default function Admin() {
         title="Corbeille"
         subtitle="Tableau de bord admin"
         onBack={() => setVueCorbeille(false)}
+        rightSlot={adminHeaderRight()}
       />
       <div className="page-content">
         {corbeille.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '40px 0' }}>Corbeille vide</div>}
@@ -1708,12 +1736,12 @@ export default function Admin() {
   // Vue ajout article (catalogue + saisie manuelle — tâche 8)
   if (ajoutArticleVue && editMateriaux) return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setAjoutArticleVue(false)} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Ajouter article</div>
-        </div>
-      </div>
+      <PageHeader
+        title="Ajouter article"
+        subtitle="Tableau de bord admin"
+        onBack={() => setAjoutArticleVue(false)}
+        rightSlot={adminHeaderRight()}
+      />
       <div className="page-content">
         {/* Saisie manuelle */}
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1798,13 +1826,14 @@ export default function Admin() {
 
   if (editMateriaux) return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => { setEditMateriaux(null); setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 }) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Modifier matériaux</div>
-        </div>
-        <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => { setRechercheArticle(''); setCatFiltre('Tous'); setAjoutArticleVue(true) }}>+ Ajouter</button>
-      </div>
+      <PageHeader
+        title="Modifier matériaux"
+        subtitle="Tableau de bord admin"
+        onBack={() => { setEditMateriaux(null); setArticleManuel({ designation: '', unite: '', prix: '0', quantite: 1 }) }}
+        rightSlot={adminHeaderRight(
+          <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => { setRechercheArticle(''); setCatFiltre('Tous'); setAjoutArticleVue(true) }}>+ Ajouter</button>
+        )}
+      />
       <div className="page-content">
         {editMateriaux.mats.length === 0 && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px' }}>Aucun article</div>}
         {editMateriaux.mats.map((m, i) => (
@@ -1836,22 +1865,21 @@ export default function Admin() {
     const t = totaux(rapportDetail)
     return (
       <div>
-        <div className="top-bar">
-          <div>
-            <button onClick={() => { setRapportDetail(null); setEditRapportMode(false) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Rapport</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>{rapportDetail.employe?.prenom} · {new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
-          </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-            {!editRapportMode && (
-              <button onClick={() => { setEditRapportMode(true); setEditRapportDate(rapportDetail.date_travail); setEditRapportRemarques(rapportDetail.remarques || '') }}
-                style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
-            )}
-            {!rapportDetail.valide && <span className="badge badge-amber">À valider</span>}
-            {rapportDetail.valide && <span className="badge badge-green">✓ Validé</span>}
-          </div>
-        </div>
+        <PageHeader
+          title="Rapport"
+          subtitle={`${rapportDetail.employe?.prenom || ''} · ${new Date(rapportDetail.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}`}
+          onBack={() => { setRapportDetail(null); setEditRapportMode(false) }}
+          rightSlot={adminHeaderRight(
+            <>
+              {!editRapportMode && (
+                <button onClick={() => { setEditRapportMode(true); setEditRapportDate(rapportDetail.date_travail); setEditRapportRemarques(rapportDetail.remarques || '') }}
+                  style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
+              )}
+              {!rapportDetail.valide && <span className="badge badge-amber">À valider</span>}
+              {rapportDetail.valide && <span className="badge badge-green">✓ Validé</span>}
+            </>
+          )}
+        />
         <div className="page-content">
           {editRapportMode ? (
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -1957,18 +1985,17 @@ export default function Admin() {
 
   if (vue === 'sous_dossiers' && chantierActif) return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => { setVue('chantiers'); setChantierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{chantierActif.nom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>{getChantierClientLabel(chantierActif)} · {chantierActif.adresse || '—'}</div>
-        </div>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-          <button onClick={() => { setRenommerItem({ type: 'chantier', data: chantierActif }); setNouveauNom(chantierActif.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
-          <button onClick={() => setConfirm({ type: 'chantier', data: chantierActif })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
-        </div>
-      </div>
+      <PageHeader
+        title={chantierActif.nom}
+        subtitle={`${getChantierClientLabel(chantierActif)} · ${chantierActif.adresse || '—'}`}
+        onBack={() => { setVue('chantiers'); setChantierActif(null) }}
+        rightSlot={adminHeaderRight(
+          <>
+            <button onClick={() => { setRenommerItem({ type: 'chantier', data: chantierActif }); setNouveauNom(chantierActif.nom) }} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>✏️</button>
+            <button onClick={() => setConfirm({ type: 'chantier', data: chantierActif })} style={{ background: 'none', border: '1px solid #f09595', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', color: '#A32D2D' }}>🗑️</button>
+          </>
+        )}
+      />
       <div className="page-content">
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
@@ -2080,14 +2107,12 @@ export default function Admin() {
 
   if (vue === 'rapports' && sousDossierActif) return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => { setVue('sous_dossiers'); setSousDossierActif(null) }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{sousDossierActif.nom}</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>{sousDossierActif.isAffaire ? 'Affaire' : 'Sous-dossier'}</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-      </div>
+      <PageHeader
+        title={sousDossierActif.nom}
+        subtitle={sousDossierActif.isAffaire ? 'Affaire' : 'Sous-dossier'}
+        onBack={() => { setVue('sous_dossiers'); setSousDossierActif(null) }}
+        rightSlot={adminHeaderRight()}
+      />
       <div className="page-content">
         <div className="card">
           {false && !depannagesLoading && !depannagesError && depannages.length > 0 && (
@@ -2125,29 +2150,26 @@ export default function Admin() {
 
   if (vue === 'chantiers') return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => {
-            if (intermediaireChantiersActif) {
-              setIntermediaireChantiersActif(null)
-              setAjoutChantier(false)
-            } else {
-              setVue('accueil')
-            }
-          }} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{intermediaireChantiersActif?.nom || 'Chantiers'}</div>
-          {intermediaireChantiersActif && <div style={{ fontSize: '11px', color: '#888' }}>Intermédiaire</div>}
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-          <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
+      <PageHeader
+        title={intermediaireChantiersActif?.nom || 'Chantiers'}
+        subtitle={intermediaireChantiersActif ? 'Intermédiaire' : 'Tableau de bord admin'}
+        onBack={() => {
+          if (intermediaireChantiersActif) {
+            setIntermediaireChantiersActif(null)
+            setAjoutChantier(false)
+          } else {
+            setVue('accueil')
+          }
+        }}
+        rightSlot={adminHeaderRight(
+          <button className="btn-primary btn-sm" style={adminHeaderPlusStyle} onClick={() => {
             if (intermediaireChantiersActif?.id) setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
             setAjoutIntermediaire(false)
             setCreationChantierErreur('')
             setAjoutChantier(true)
-          }}>+ Nouveau</button>
-        </div>
-      </div>
+          }}>+</button>
+        )}
+      />
       <div className="page-content">
         <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#475569' }}>
           Les chantiers en statut 'A confirmer' ne sont pas visibles par les employés.
@@ -2518,10 +2540,6 @@ export default function Admin() {
       )
     }
 
-    const Refresh = () => (
-      <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-    )
-
     const TopBar = ({ onBack, backLabel, title, action }) => (
       <div className="top-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <button
@@ -2529,10 +2547,7 @@ export default function Admin() {
           style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: '4px 0', flexShrink: 0, whiteSpace: 'nowrap' }}
         >← {backLabel}</button>
         <div style={{ flex: 1, textAlign: 'center', fontWeight: 600, fontSize: '15px', color: '#1a202c' }}>{title}</div>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
-          <Refresh />
-          {action || null}
-        </div>
+        {adminHeaderRight(action || null)}
       </div>
     )
 
@@ -2546,7 +2561,7 @@ export default function Admin() {
             backLabel={selectedAnnee}
             title={selectedMois}
             action={
-              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => {
+              <button className="btn-primary btn-sm" style={adminHeaderPlusStyle} onClick={() => {
                 const regieObj = regies.find(r => r.nom === selectedRegieNom)
                 navigate('/admin/depannage/nouveau', {
                   state: {
@@ -2555,7 +2570,7 @@ export default function Admin() {
                     regieId: regieObj?.id || ''
                   }
                 })
-              }}>+ Dépannage</button>
+              }}>+</button>
             }
           />
           <div className="page-content">
@@ -2677,7 +2692,7 @@ export default function Admin() {
           backLabel="Retour"
           title="Régies"
           action={
-            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setAjoutRegie(true)}>+ Régie</button>
+            <button className="btn-primary btn-sm" style={adminHeaderPlusStyle} onClick={() => setAjoutRegie(true)}>+</button>
           }
         />
         <div className="page-content">
@@ -2688,7 +2703,7 @@ export default function Admin() {
             {!depannagesLoading && !depannagesError && regies.length === 0 && (
               <div style={{ padding: '28px 18px', textAlign: 'center' }}>
                 <div style={{ fontSize: '14px', fontWeight: 700, color: '#185FA5' }}>Aucune régie</div>
-                <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Créez une régie avec le bouton + Régie.</div>
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Créez une régie avec le bouton +.</div>
               </div>
             )}
             {!depannagesLoading && !depannagesError && regies.map((regie, idx) => {
@@ -2724,14 +2739,12 @@ export default function Admin() {
   if (vue === 'a_verifier') {
     return (
       <div>
-        <div className="top-bar">
-          <div>
-            <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>À vérifier</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>Rapports et validations en attente</div>
-          </div>
-          <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-        </div>
+        <PageHeader
+          title="À vérifier"
+          subtitle="Rapports et validations en attente"
+          onBack={() => setVue('accueil')}
+          rightSlot={adminHeaderRight()}
+        />
         <div className="page-content">
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
@@ -2774,13 +2787,12 @@ export default function Admin() {
 
     return (
       <div>
-        <div className="top-bar">
-          <div>
-            <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Calendrier</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-      </div>
+        <PageHeader
+          title="Calendrier"
+          subtitle="Tableau de bord admin"
+          onBack={() => setVue('accueil')}
+          rightSlot={adminHeaderRight()}
+        />
         <div className="page-content">
           <select value={calEmployeFiltre} onChange={e => { setCalEmployeFiltre(e.target.value); setCalJour(null) }}
             style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e2e2', fontSize: '13px', background: 'white' }}>
@@ -2860,14 +2872,12 @@ export default function Admin() {
 
   if (vue === 'vacances') return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => ouvrirVueAdmin('employes')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour employés</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Vacances</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Demandes, quotas et périodes spéciales</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-      </div>
+      <PageHeader
+        title="Vacances"
+        subtitle="Demandes, quotas et périodes spéciales"
+        onBack={() => ouvrirVueAdmin('employes')}
+        rightSlot={adminHeaderRight()}
+      />
       <div className="page-content">
         {vacancesError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{vacancesError}</div>}
         {vacancesLoading && <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>Chargement...</div>}
@@ -2978,14 +2988,12 @@ export default function Admin() {
 
   if (vue === 'employes') return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Employés</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Fiches, heures et vacances</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-      </div>
+      <PageHeader
+        title="Employés"
+        subtitle="Fiches, heures et vacances"
+        onBack={() => setVue('accueil')}
+        rightSlot={adminHeaderRight()}
+      />
       <div className="page-content">
         <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
           <div>
@@ -3055,18 +3063,12 @@ export default function Admin() {
 
     return (
       <div>
-        <div className="top-bar">
-          <div>
-            <button onClick={() => setVue('employes')} style={{ background: 'none', border: 'none', color: '#185FA5', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-            <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{empDetail.prenom}</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#E6F1FB', color: '#185FA5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
-              {empDetail.initiales || empDetail.prenom?.slice(0, 2).toUpperCase()}
-            </div>
-          </div>
-        </div>
+        <PageHeader
+          title={empDetail.prenom}
+          subtitle="Fiche employé"
+          onBack={() => setVue('employes')}
+          rightSlot={adminHeaderRight()}
+        />
 
         {/* Tabs */}
         <div style={{ background: 'white', borderBottom: '1px solid #e2e2e2', padding: '8px 14px', display: 'flex', gap: '6px', overflowX: 'auto' }}>
@@ -3296,14 +3298,12 @@ export default function Admin() {
 
   if (vue === 'rapports_v1') return (
     <div>
-      <div className="top-bar">
-        <div>
-          <button onClick={() => setVue('accueil')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontSize: '13px', cursor: 'pointer', padding: 0 }}>← Retour</button>
-          <div style={{ fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>Rapports V1</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Rapports terrain (hors chantier)</div>
-        </div>
-        <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-      </div>
+      <PageHeader
+        title="Rapports V1"
+        subtitle="Rapports terrain (hors chantier)"
+        onBack={() => setVue('accueil')}
+        rightSlot={adminHeaderRight()}
+      />
       <div className="page-content">
         {rapportsV1Loading && (
           <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>Chargement...</div>
@@ -3347,18 +3347,11 @@ export default function Admin() {
       <PageHeader
         title={`Bonjour, ${user?.prenom || ''}`}
         subtitle="Tableau de bord admin"
-        rightSlot={(
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <PageTopActions navigate={navigate} fallbackPath="/admin" onRefresh={refreshPage} refreshing={refreshingData} showBack={false} />
-            {corbeille.length > 0 && (
-              <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
-                🗑️ {corbeille.length}
-              </button>
-            )}
-            <span className="badge badge-amber">Admin</span>
-            <button className="avatar" style={{ background: '#FAEEDA', color: '#BA7517' }} onClick={deconnecter}>{user?.initiales}</button>
-          </div>
-        )}
+        rightSlot={adminHeaderRight(corbeille.length > 0 && (
+          <button onClick={() => setVueCorbeille(true)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+            🗑️ {corbeille.length}
+          </button>
+        ))}
       />
       <div className="page-content">
         {adminError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{adminError}</div>}

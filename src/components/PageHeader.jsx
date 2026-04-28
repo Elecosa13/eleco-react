@@ -6,6 +6,7 @@ const sideStyle = {
   transform: 'translateY(-50%)',
   display: 'flex',
   alignItems: 'center',
+  gap: '8px',
   minWidth: '40px',
   minHeight: '40px'
 }
@@ -32,9 +33,10 @@ export default function PageHeader({ title, subtitle, onBack, rightSlot }) {
       className="top-bar"
       style={{
         position: 'sticky',
-        minHeight: '64px',
-        padding: '10px 64px',
-        justifyContent: 'center'
+        minHeight: '66px',
+        padding: '10px 104px',
+        justifyContent: 'center',
+        boxSizing: 'border-box'
       }}
     >
       <div style={{ ...sideStyle, left: '16px', justifyContent: 'flex-start' }}>

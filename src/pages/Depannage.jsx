@@ -465,6 +465,13 @@ export default function Depannage({ mode = 'employe' }) {
   const creditRestant = CREDIT_JOUR - creditUtilise
   const depasse = creditUtilise + duree > CREDIT_JOUR
   const rapportEmployeVerrouille = soumissionVerrouillee || rapportValide
+  const depannageHeaderRight = (extra = null) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} showBack={false} />
+      <button className="avatar" style={isAdminMode ? { background: '#FAEEDA', color: '#BA7517' } : undefined}>{user?.initiales}</button>
+      {extra}
+    </div>
+  )
 
   if (succes) {
     return (
@@ -480,8 +487,9 @@ export default function Depannage({ mode = 'employe' }) {
       <div>
         <PageHeader
           title="Catalogue"
+          subtitle={isAdminMode ? 'Tableau de bord admin' : 'Espace employé'}
           onBack={() => setCatalogueVue(false)}
-          rightSlot={materiaux.length > 0 ? <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span> : null}
+          rightSlot={depannageHeaderRight(materiaux.length > 0 ? <span className="badge badge-blue">{materiaux.reduce((sum, item) => sum + item.qte, 0)}</span> : null)}
         />
         <div className="page-content">
           {erreur && (
@@ -549,8 +557,9 @@ export default function Depannage({ mode = 'employe' }) {
     <div>
       <PageHeader
         title={depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
+        subtitle={isAdminMode ? 'Tableau de bord admin' : 'Espace employé'}
         onBack={() => navigate(isAdminMode ? '/admin' : '/employe')}
-        rightSlot={<PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} showBack={false} />}
+        rightSlot={depannageHeaderRight()}
       />
 
       <form onSubmit={envoyer}>

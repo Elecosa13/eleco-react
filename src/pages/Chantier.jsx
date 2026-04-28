@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import {
   isChantierVisibleToEmployees,
@@ -12,6 +13,7 @@ import {
 export default function Chantier() {
   const navigate = useNavigate()
   const { id: chantierIdParam } = useParams()
+  const { profile: user } = useAuth()
 
   const [niveau, setNiveau] = useState(1)
   const [items, setItems] = useState([])
@@ -193,13 +195,20 @@ export default function Chantier() {
     return 'Documents'
   }
 
+  const headerRight = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} showBack={false} />
+      <button className="avatar">{user?.initiales}</button>
+    </div>
+  )
+
   return (
     <div>
       <PageHeader
         title={titreTop()}
         subtitle={sousTitreTop()}
         onBack={retour}
-        rightSlot={<PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} refreshing={loading} showBack={false} />}
+        rightSlot={headerRight}
       />
 
       <div className="page-content">

@@ -1,19 +1,27 @@
-import React from 'react'
+﻿import React from 'react'
 import { useNavigate } from 'react-router-dom'
+import PageHeader from '../components/PageHeader'
+import PageTopActions from '../components/PageTopActions'
+import { useAuth } from '../lib/auth-context'
 
 export default function Devis() {
   const navigate = useNavigate()
+  const { profile: user } = useAuth()
   const devis = []
 
   return (
     <div>
-      <div className="top-bar">
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '15px' }}>Devis à faire</div>
-          <div style={{ fontSize: '11px', color: '#888' }}>Espace employé</div>
-        </div>
-        <button className="btn-outline btn-sm" onClick={() => navigate('/employe')}>Retour ←</button>
-      </div>
+      <PageHeader
+        title="Devis à faire"
+        subtitle="Espace employé"
+        onBack={() => navigate('/employe')}
+        rightSlot={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={() => {}} showBack={false} />
+            <button className="avatar">{user?.initiales}</button>
+          </div>
+        )}
+      />
 
       <div className="page-content">
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

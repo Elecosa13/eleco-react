@@ -198,22 +198,51 @@ export default function DepannageDetail() {
   }
 
   async function chargerRapportLie() {
-    const { data, error } = await supabase
-      .from('rapports')
-      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom, adresse)), rapport_materiaux(*), rapport_photos(*)')
-      .eq('depannage_id', id)
-      .maybeSingle()
+    const [{ data, error }, { data: materiauxCommuns, error: materiauxError }] = await Promise.all([
+      supabase
+        .from('rapports')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom, adresse)), rapport_photos(*)')
+        .eq('depannage_id', id)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('depannage_materiaux')
+        .select('*')
+        .eq('depannage_id', id)
+    ])
 
     if (error) throw error
-    if (!data) return null
+    if (materiauxError) throw materiauxError
+    if (!data || data.length === 0) return null
 
     try {
-      const photos = await withSignedPhotoUrls(data.rapport_photos || [])
-      return { ...data, rapport_photos: photos }
+      const signedPhotos = await withSignedPhotoUrls((data || []).flatMap(rapport => rapport.rapport_photos || []))
+      const photosByRapportId = new Map()
+      for (const photo of signedPhotos) {
+        const key = String(photo.rapport_id)
+        if (!photosByRapportId.has(key)) photosByRapportId.set(key, [])
+        photosByRapportId.get(key).push(photo)
+      }
+      const rapports = (data || []).map(rapport => ({
+        ...rapport,
+        rapport_photos: photosByRapportId.get(String(rapport.id)) || []
+      }))
+      return {
+        ...rapports[0],
+        rapports,
+        rapport_materiaux: materiauxCommuns || [],
+        rapport_photos: signedPhotos
+      }
     } catch (error) {
       console.error('Erreur chargement photos rapport lie depannage', error)
       setRapportLieErreur("Le rapport lie est charge sans ses photos pour l'instant.")
-      return { ...data, rapport_photos: [] }
+      const rapports = (data || []).map(rapport => ({ ...rapport, rapport_photos: [] }))
+      return {
+        ...rapports[0],
+        rapports,
+        rapport_materiaux: materiauxCommuns || [],
+        rapport_photos: []
+      }
     }
   }
 
@@ -590,9 +619,13 @@ export default function DepannageDetail() {
 
                 {rapportLie && (
                   <DetailSection title="Rapport terrain">
-                    <InfoLine label="Date rapport" value={formatDate(rapportLie.date_travail)} />
-                    <InfoLine label="Remarques rapport" value={rapportLie.remarques} />
-                    <InfoLine label="Photos" value={`${(rapportLie.rapport_photos || []).length} photo(s)`} />
+                    {(rapportLie.rapports || [rapportLie]).map(rapport => (
+                      <InfoLine
+                        key={rapport.id}
+                        label={rapport.employe?.prenom || 'Employe'}
+                        value={`${formatDate(rapport.date_travail)} - ${(rapport.rapport_photos || []).length} photo(s)${rapport.remarques ? ` - ${rapport.remarques}` : ''}`}
+                      />
+                    ))}
                   </DetailSection>
                 )}
 
@@ -606,7 +639,7 @@ export default function DepannageDetail() {
                           <div style={{ fontSize: '13px', fontWeight: 500 }}>{materiau.designation}</div>
                           <div style={{ fontSize: '11px', color: '#888' }}>{materiau.quantite} × {materiau.unite}</div>
                         </div>
-                        <div style={{ fontSize: '13px', fontWeight: 600 }}>{(Number(materiau.quantite || 0) * Number(materiau.prix_net || 0)).toFixed(2)} CHF</div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>{Number(materiau.quantite || 0)} {materiau.unite || ''}</div>
                       </div>
                     ))}
                   </div>

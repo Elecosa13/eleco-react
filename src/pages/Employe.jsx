@@ -545,7 +545,7 @@ export default function Employe() {
     if (!depannage?.id) return
 
     if (action === 'rapport') {
-      navigate(`/employe/depannage?depannageId=${depannage.id}`)
+      navigate(`/employe/depannage?depannageId=${depannage.id}`, { state: { from: '/employe' } })
       return
     }
 
@@ -580,7 +580,7 @@ export default function Employe() {
 
   function ouvrirDepannage(depannage) {
     if (!depannage?.id) return
-    navigate(`/employe/depannage?depannageId=${depannage.id}`)
+    navigate(`/employe/depannage?depannageId=${depannage.id}`, { state: { from: '/employe' } })
   }
 
   const isCarlosAdmin = user?.email?.toLowerCase() === 'carlos.a@eleco.ch'

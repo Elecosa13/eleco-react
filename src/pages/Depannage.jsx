@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
-import PageTopActions from '../components/PageTopActions'
+import PageTopActions, { navigateBackWithFallback } from '../components/PageTopActions'
 import PhotoInputPanel from '../components/PhotoInputPanel'
 import { useDraftPhotos } from '../lib/photo-drafts'
 import { supabase } from '../lib/supabase'
@@ -63,6 +63,7 @@ export default function Depannage({ mode = 'employe' }) {
   const [chantierId, setChantierId] = useState('')
   const [employes, setEmployes] = useState([])
   const [employeId, setEmployeId] = useState('')
+  const [depannageResponsableId, setDepannageResponsableId] = useState('')
   const [rapportExistantId, setRapportExistantId] = useState('')
   const [rapportValide, setRapportValide] = useState(false)
   const [photosExistantes, setPhotosExistantes] = useState([])
@@ -91,7 +92,7 @@ export default function Depannage({ mode = 'employe' }) {
     try {
       const [regiesResult, catalogueResult, chantiersResult, employesResult] = await Promise.all([
         supabase.from('regies').select('id, nom, nom_normalise').eq('actif', true).order('nom'),
-        supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom'),
+        supabase.from('catalogue_employe').select('id, categorie, nom, unite').order('categorie').order('nom'),
         supabase.from('chantiers').select('id, nom, adresse').eq('actif', true).order('nom'),
         isAdminMode
           ? supabase.from('utilisateurs').select('id, prenom, initiales').eq('role', 'employe').order('prenom')
@@ -148,6 +149,7 @@ export default function Depannage({ mode = 'employe' }) {
     setDate(depannage.date_travail || new Date().toISOString().split('T')[0])
     setRegieId(depannage.regie_id || regieNonAssigneeId || '')
     setChantierId(depannage.chantier_id || '')
+    setDepannageResponsableId(depannage.pris_par || depannage.employe_id || '')
     if (isAdminMode) setEmployeId(depannage.employe_id || '')
 
     try {
@@ -164,41 +166,49 @@ export default function Depannage({ mode = 'employe' }) {
     }
 
     try {
-      const { data: rapport, error: rapportError } = await supabase
-        .from('rapports')
-        .select('id, sous_dossier_id, date_travail, remarques, valide, rapport_materiaux(*), rapport_photos(*)')
+      const rapportEmployeId = isAdminMode ? depannage.employe_id : user?.id
+      let rapport = null
+
+      if (rapportEmployeId) {
+        const { data, error: rapportError } = await supabase
+          .from('rapports')
+          .select('id, sous_dossier_id, date_travail, remarques, valide, rapport_photos(*)')
+          .eq('depannage_id', depannageId)
+          .eq('employe_id', rapportEmployeId)
+          .is('deleted_at', null)
+          .maybeSingle()
+
+        if (rapportError) throw rapportError
+        rapport = data || null
+      }
+
+      const { data: commonMateriaux, error: commonMateriauxError } = await supabase
+        .from('depannage_materiaux')
+        .select('*')
         .eq('depannage_id', depannageId)
-        .maybeSingle()
 
-      if (rapportError) throw rapportError
+      if (commonMateriauxError) throw commonMateriauxError
+      setMateriaux((commonMateriaux || []).map(mapRapportMateriauToUi))
 
-      if (rapport) {
-        setRapportExistantId(rapport.id)
-        setRapportValide(Boolean(rapport.valide))
-        setDate(rapport.date_travail || depannage.date_travail || '')
-        setRemarques(rapport.remarques || depannage.remarques || '')
-        setMateriaux((rapport.rapport_materiaux || []).map(mapRapportMateriauToUi))
-
-        try {
-          setPhotosExistantes(await withSignedPhotoUrls(rapport.rapport_photos || []))
-        } catch (error) {
-          console.error('Erreur chargement photos rapport depannage', error)
-          setPhotosExistantes([])
-          setRapportErreur("Le rapport existant est charge sans ses photos pour l'instant.")
-        }
+      if (!rapport) {
+        setRapportExistantId('')
+        setRapportValide(false)
+        setPhotosExistantes([])
         return
       }
 
-      setRapportValide(false)
+      setRapportExistantId(rapport.id)
+      setRapportValide(Boolean(rapport.valide))
+      setDate(rapport.date_travail || depannage.date_travail || '')
+      setRemarques(rapport.remarques || depannage.remarques || '')
 
-      const { data: legacyMateriaux, error: legacyMateriauxError } = await supabase
-        .from('rapport_materiaux')
-        .select('*')
-        .eq('rapport_id', depannageId)
-
-      if (legacyMateriauxError) throw legacyMateriauxError
-      setMateriaux((legacyMateriaux || []).map(mapRapportMateriauToUi))
-      setPhotosExistantes([])
+      try {
+        setPhotosExistantes(await withSignedPhotoUrls(rapport.rapport_photos || []))
+      } catch (error) {
+        console.error('Erreur chargement photos rapport depannage', error)
+        setPhotosExistantes([])
+        setRapportErreur("Le rapport existant est charge sans ses photos pour l'instant.")
+      }
     } catch (error) {
       console.error('Erreur chargement rapport depannage existant', error)
       setRapportExistantId('')
@@ -244,9 +254,9 @@ export default function Depannage({ mode = 'employe' }) {
         id: article.id,
         catalogueId: article.id,
         nom: article.nom,
-        unite: article.unite,
+        unite: normalizeUnite(article.unite, article.nom),
         qte: 1,
-        pu: article.prix_net
+        pu: 0
       }
     ])
   }
@@ -256,6 +266,45 @@ export default function Depannage({ mode = 'employe' }) {
       materiaux
         .map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
         .filter(item => item.qte > 0)
+    )
+  }
+
+  function setQte(materiauId, value) {
+    const nextQte = Math.max(0, Number(value) || 0)
+    setMateriaux(
+      materiaux
+        .map(item => item.id === materiauId ? { ...item, qte: nextQte } : item)
+        .filter(item => item.qte > 0)
+    )
+  }
+
+  function renderQuantiteControl(item, disabled = false) {
+    if (isUniteMetre(item)) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            step="1"
+            value={item.qte}
+            disabled={disabled}
+            onChange={event => setQte(item.id, event.target.value)}
+            style={{ width: '74px', minHeight: '34px', padding: '6px 8px', border: '1px solid #ddd', borderRadius: '8px', background: 'white', fontSize: '15px', fontWeight: 700, textAlign: 'center' }}
+          />
+          <span style={{ fontSize: '13px', fontWeight: 700 }}>m</span>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+        <button type="button" disabled={disabled} onClick={() => modQte(item.id, -10)} style={qteButtonStyle(disabled)}>&lt;&lt;</button>
+        <button type="button" disabled={disabled} onClick={() => modQte(item.id, -1)} style={qteButtonStyle(disabled)}>&lt;</button>
+        <span style={{ fontWeight: 700, minWidth: '24px', textAlign: 'center', fontSize: '13px' }}>{item.qte}</span>
+        <button type="button" disabled={disabled} onClick={() => modQte(item.id, 1)} style={qteButtonStyle(disabled)}>&gt;</button>
+        <button type="button" disabled={disabled} onClick={() => modQte(item.id, 10)} style={qteButtonStyle(disabled)}>&gt;&gt;</button>
+      </div>
     )
   }
 
@@ -310,7 +359,6 @@ export default function Depannage({ mode = 'employe' }) {
     try {
       const regieIdFinal = regieId || regieNonAssigneeId || null
       const depannagePayload = {
-        employe_id: employeFinalId,
         chantier_id: chantierId,
         regie_id: regieIdFinal,
         date_travail: date,
@@ -318,6 +366,10 @@ export default function Depannage({ mode = 'employe' }) {
         remarques: remarques.trim(),
         statut: STATUT_INTERVENTION_FAITE,
         ...(isAdminMode ? { numero_bon: numeroBon.trim() || null } : {})
+      }
+
+      if (!depannageSauveId) {
+        depannagePayload.employe_id = employeFinalId
       }
 
       if (depannageSauveId) {
@@ -340,6 +392,13 @@ export default function Depannage({ mode = 'employe' }) {
         if (depannageInsertError) throw depannageInsertError
         if (!depannageInserted?.id) throw new Error('depannage_insert_empty')
         depannageSauveId = depannageInserted.id
+      }
+
+      if (depannageSauveId) {
+        const { error: intervenantError } = await supabase
+          .from('depannage_intervenants')
+          .upsert({ depannage_id: depannageSauveId, employe_id: employeFinalId }, { onConflict: 'depannage_id,employe_id' })
+        if (intervenantError) throw intervenantError
       }
 
       const sousDossierId = await ensureDepannageSousDossier(chantierId)
@@ -377,7 +436,9 @@ export default function Depannage({ mode = 'employe' }) {
       }
 
       await sauvegarderTimeEntry(depannageSauveId, employeFinalId)
-      await sauvegarderMateriaux(rapportSauveId)
+      if (peutModifierMateriaux) {
+        await sauvegarderMateriaux(depannageSauveId)
+      }
 
       if (photos.length > 0) {
         await uploadRapportPhotos({
@@ -443,24 +504,24 @@ export default function Depannage({ mode = 'employe' }) {
     })
   }
 
-  async function sauvegarderMateriaux(rapportId) {
+  async function sauvegarderMateriaux(depannageSauveId) {
     const { error: deleteError } = await supabase
-      .from('rapport_materiaux')
+      .from('depannage_materiaux')
       .delete()
-      .eq('rapport_id', rapportId)
+      .eq('depannage_id', depannageSauveId)
 
     if (deleteError) throw deleteError
     if (materiaux.length === 0) return
 
     const { error: insertError } = await supabase
-      .from('rapport_materiaux')
+      .from('depannage_materiaux')
       .insert(materiaux.map(item => ({
-        rapport_id: rapportId,
+        depannage_id: depannageSauveId,
         ref_article: item.catalogueId || item.id || null,
         designation: item.nom,
         unite: item.unite,
-        quantite: item.qte,
-        prix_net: item.pu
+        quantite: Math.max(0, Number(item.qte) || 0),
+        created_by: user?.id || null
       })))
 
     if (insertError) throw insertError
@@ -468,7 +529,18 @@ export default function Depannage({ mode = 'employe' }) {
 
   const creditRestant = CREDIT_JOUR - creditUtilise
   const depasse = creditUtilise + duree > CREDIT_JOUR
-  const rapportEmployeVerrouille = soumissionVerrouillee || rapportValide
+  const rapportEmployeVerrouille = soumissionVerrouillee || rapportValide || (!isAdminMode && Boolean(rapportExistantId))
+  const peutModifierMateriaux = isAdminMode || !depannageId || !depannageResponsableId || String(depannageResponsableId) === String(user?.id)
+  const retourFallback = isAdminMode ? '/admin' : '/employe'
+
+  function retourPagePrecedente() {
+    if (location.state?.from) {
+      navigate(location.state.from)
+      return
+    }
+    navigateBackWithFallback(navigate, retourFallback)
+  }
+
   const depannageHeaderRight = (extra = null) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
       <PageTopActions navigate={navigate} fallbackPath={isAdminMode ? '/admin' : '/employe'} onRefresh={refreshPage} refreshing={loading} showBack={false} />
@@ -562,7 +634,7 @@ export default function Depannage({ mode = 'employe' }) {
       <PageHeader
         title={depannageId ? 'Rapport dépannage' : 'Nouveau dépannage'}
         subtitle={isAdminMode ? 'Tableau de bord admin' : 'Espace employé'}
-        onBack={() => navigate(isAdminMode ? '/admin' : '/employe')}
+        onBack={retourPagePrecedente}
         rightSlot={depannageHeaderRight()}
       />
 
@@ -584,7 +656,7 @@ export default function Depannage({ mode = 'employe' }) {
             </div>
           )}
           {soumissionVerrouillee && (
-            <button type="button" className="btn-primary" onClick={() => navigate(isAdminMode ? '/admin' : '/employe')}>
+            <button type="button" className="btn-primary" onClick={retourPagePrecedente}>
               Retour à l'accueil
             </button>
           )}
@@ -685,17 +757,14 @@ export default function Depannage({ mode = 'employe' }) {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 600, fontSize: '14px' }}>Matériaux</span>
-              <button type="button" className="btn-primary btn-sm" disabled={rapportEmployeVerrouille} style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
+              <button type="button" className="btn-primary btn-sm" disabled={rapportEmployeVerrouille || !peutModifierMateriaux} style={{ width: 'auto' }} onClick={() => setCatalogueVue(true)}>+ Ajouter</button>
             </div>
+            {!peutModifierMateriaux && <div style={{ fontSize: '12px', color: '#888' }}>Liste commune au depannage. Seul le responsable ou l'admin la modifie.</div>}
             {materiaux.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun article</div>}
             {materiaux.map(item => (
               <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '8px', borderBottom: '1px solid #eee' }}>
                 <div><div style={{ fontSize: '13px', fontWeight: 500 }}>{item.nom}</div><div style={{ fontSize: '11px', color: '#888' }}>{item.unite}</div></div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button type="button" onClick={() => modQte(item.id, -1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
-                  <span style={{ fontWeight: 600, minWidth: '20px', textAlign: 'center', fontSize: '13px' }}>{item.qte}</span>
-                  <button type="button" onClick={() => modQte(item.id, 1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #185FA5', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
-                </div>
+                {renderQuantiteControl(item, rapportEmployeVerrouille || !peutModifierMateriaux)}
               </div>
             ))}
           </div>
@@ -761,8 +830,37 @@ function mapRapportMateriauToUi(item) {
     id: item.ref_article || item.id,
     catalogueId: item.ref_article || null,
     nom: item.designation,
-    unite: item.unite,
-    qte: Number(item.quantite) || 1,
+    unite: normalizeUnite(item.unite, item.designation),
+    qte: Math.max(0, Number(item.quantite) || 0),
     pu: Number(item.prix_net) || 0
+  }
+}
+
+function normalizeUnite(unite, nom = '') {
+  const raw = String(unite || '').trim().toLowerCase()
+  if (raw === 'm' || raw === 'ml') return 'm'
+
+  const label = String(nom || '').toLowerCase()
+  if (label.includes('cable') || label.includes('câble') || label.includes('fil ')) return 'm'
+
+  return 'pce'
+}
+
+function isUniteMetre(item) {
+  return normalizeUnite(item?.unite, item?.nom) === 'm'
+}
+
+function qteButtonStyle(disabled) {
+  return {
+    minWidth: '34px',
+    height: '32px',
+    borderRadius: '8px',
+    border: '1px solid #d9e8f6',
+    background: 'white',
+    color: '#185FA5',
+    cursor: disabled ? 'default' : 'pointer',
+    fontSize: '12px',
+    fontWeight: 800,
+    opacity: disabled ? 0.5 : 1
   }
 }

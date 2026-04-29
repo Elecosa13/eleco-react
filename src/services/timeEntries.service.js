@@ -42,7 +42,8 @@ export async function fetchTimeEntryDurationsMap({
 
   const byReferenceId = {}
   for (const entry of data || []) {
-    byReferenceId[String(entry.reference_id)] = Number(entry.duree) || 0
+    const key = String(entry.reference_id)
+    byReferenceId[key] = (byReferenceId[key] || 0) + (Number(entry.duree) || 0)
   }
 
   return byReferenceId

@@ -93,9 +93,8 @@ export default function Rapport() {
         setSd(data || null)
       })(),
       supabase
-        .from('catalogue')
-        .select('*')
-        .eq('actif', true)
+        .from('catalogue_employe')
+        .select('id, categorie, nom, unite')
         .order('categorie')
         .order('nom')
         .then(({ data }) => {
@@ -166,7 +165,7 @@ export default function Rapport() {
 
     setMateriaux([
       ...materiaux,
-      { id: article.id, catalogueId: article.id, nom: article.nom, unite: article.unite, qte: 1, pu: article.prix_net }
+      { id: article.id, catalogueId: article.id, nom: article.nom, unite: article.unite, qte: 1, pu: 0 }
     ])
   }
 

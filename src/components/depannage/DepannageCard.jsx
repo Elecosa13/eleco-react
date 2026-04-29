@@ -38,7 +38,7 @@ export default function DepannageCard({ depannage, currentUserId, onAction, acti
   const peutRejoindre = statut === STATUT_EN_COURS && !estIntervenant && !estResponsable
   const peutQuitter = estIntervenant && !estResponsable
   const peutLiberer = estResponsable && [STATUT_PRIS, STATUT_PLANIFIE, STATUT_EN_COURS].includes(statut)
-  const peutFaireRapport = estResponsable && [STATUT_PRIS, STATUT_PLANIFIE, STATUT_EN_COURS, STATUT_INTERVENTION_FAITE].includes(statut)
+  const peutFaireRapport = (estResponsable || estIntervenant) && [STATUT_PRIS, STATUT_PLANIFIE, STATUT_EN_COURS, STATUT_INTERVENTION_FAITE].includes(statut)
   const planningLabel = formatPlanningLabel(depannage)
   const isCurrentAction = useMemo(
     () => Boolean(actionLoading) && String(actionLoading).endsWith(`:${depannage.id}`),

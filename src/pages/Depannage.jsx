@@ -359,7 +359,8 @@ export default function Depannage({ mode = 'employe' }) {
         date_travail: date,
         adresse: adresse.trim(),
         remarques: remarques.trim(),
-        statut: STATUT_INTERVENTION_FAITE,
+        statut: 'À traiter',
+        duree: Number(duree) || 1,
         ...(isAdminMode ? { numero_bon: numeroBon.trim() || null } : {})
       }
 
@@ -378,6 +379,7 @@ export default function Depannage({ mode = 'employe' }) {
         if (depannageUpdateError) throw depannageUpdateError
         if (!depannageUpdated?.id) throw new Error('depannage_update_empty')
       } else {
+        console.log('[depannage-insert] payload:', JSON.stringify(depannagePayload), '| user.id:', user?.id)
         const { data: depannageInserted, error: depannageInsertError } = await supabase
           .from('depannages')
           .insert(depannagePayload)
@@ -392,7 +394,7 @@ export default function Depannage({ mode = 'employe' }) {
       if (depannageSauveId) {
         const { error: intervenantError } = await supabase
           .from('depannage_intervenants')
-          .upsert({ depannage_id: depannageSauveId, employe_id: employeFinalId }, { onConflict: 'depannage_id,employe_id' })
+          .insert({ depannage_id: depannageSauveId, employe_id: employeFinalId })
         if (intervenantError) throw intervenantError
       }
 
@@ -450,7 +452,7 @@ export default function Depannage({ mode = 'employe' }) {
         .from('depannages')
         .update({
           chantier_id: chantierIdFinal,
-          statut: STATUT_RAPPORT_RECU,
+          statut: 'Rapport reçu',
           rapport_envoye_le: new Date().toISOString()
         })
         .eq('id', depannageSauveId)
@@ -487,7 +489,7 @@ export default function Depannage({ mode = 'employe' }) {
         setErreur("Le rapport a probablement été enregistré partiellement. Retourne à l'accueil et laisse l'administration contrôler le dossier avant une nouvelle tentative.")
         return
       }
-      setErreur("Impossible d'enregistrer le dépannage. Vérifie les informations et réessaie.")
+      setErreur(`[DIAG] ${error?.message || String(error)} | code:${error?.code ?? '?'} | details:${error?.details ?? '-'}`)
     } finally {
       setEnvoi(false)
     }

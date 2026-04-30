@@ -84,6 +84,7 @@ export default function Employe() {
   const [depannagesNiveau, setDepannagesNiveau] = useState(1)
   const [regieSel, setRegieSel] = useState(null)
   const [moisSel, setMoisSel] = useState(null)
+  const [regiesAll, setRegiesAll] = useState([])
 
   const [modalSupp, setModalSupp] = useState(false)
   const [suppHeures, setSuppHeures] = useState(1)
@@ -327,17 +328,17 @@ export default function Employe() {
       ))
 
       const regiesById = new Map()
-      if (idsRegies.length > 0) {
-        const { data: regiesData, error: regiesError } = await supabase
-          .from('regies')
-          .select('id, nom')
-          .in('id', idsRegies)
+      const { data: regiesData, error: regiesError } = await supabase
+        .from('regies')
+        .select('id, nom')
+        .eq('actif', true)
+        .order('nom')
 
-        if (regiesError) {
-          console.error('Erreur chargement regies depannages employe', regiesError)
-        } else {
-          for (const regie of regiesData || []) regiesById.set(String(regie.id), regie)
-        }
+      if (regiesError) {
+        console.error('Erreur chargement regies depannages employe', regiesError)
+      } else {
+        for (const regie of regiesData || []) regiesById.set(String(regie.id), regie)
+        setRegiesAll(regiesData || [])
       }
 
       const depannagesById = new Map()
@@ -1129,14 +1130,11 @@ export default function Employe() {
           {depannagesLoading && <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement...</div>}
           {depannagesErreur && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{depannagesErreur}</div>}
           <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Régies</span>
-              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe' } })}>+ Dépannage</button>
-            </div>
-            {!depannagesLoading && regiesListe.length === 0 && (
-              <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage disponible.</div>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Régies</div>
+            {!depannagesLoading && regiesAll.length === 0 && (
+              <div style={{ fontSize: '13px', color: '#888' }}>Aucune régie disponible.</div>
             )}
-            {regiesListe.map((regie, idx) => {
+            {regiesAll.map((regie, idx) => {
               const count = depannagesTerrain.filter(d => d.regie?.id === regie.id).length
               return (
                 <div
@@ -1144,7 +1142,7 @@ export default function Employe() {
                   className="row-item"
                   role="button"
                   tabIndex={0}
-                  style={{ cursor: 'pointer', borderBottom: idx < regiesListe.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                  style={{ cursor: 'pointer', borderBottom: idx < regiesAll.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
                   onClick={() => { window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) }}
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) } }}
                 >
@@ -1165,36 +1163,45 @@ export default function Employe() {
         {vue === 'depannages' && depannagesNiveau === 2 && (
           <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
             <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>{regieSel?.nom}</div>
-            {[moisCourant, moisPrecedent].map((mois, idx) => {
-              const count = depannagesTerrain.filter(d => {
+            {(() => {
+              const moisPrecedentActif = depannagesTerrain.some(d => {
                 if (d.regie?.id !== regieSel?.id) return false
                 const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
-                return dateStr && dateStr.substring(0, 7) === mois
-              }).length
-              return (
-                <div
-                  key={mois}
-                  className="row-item"
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'pointer', borderBottom: idx === 0 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
-                  onClick={() => { window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) }}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) } }}
-                >
-                  <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{formatMoisLabel(mois)}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
-                    <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                return dateStr && dateStr.substring(0, 7) === moisPrecedent
+              })
+              const moisVisibles = moisPrecedentActif ? [moisCourant, moisPrecedent] : [moisCourant]
+              return moisVisibles.map((mois, idx) => {
+                const count = depannagesTerrain.filter(d => {
+                  if (d.regie?.id !== regieSel?.id) return false
+                  const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
+                  return dateStr && dateStr.substring(0, 7) === mois
+                }).length
+                return (
+                  <div
+                    key={mois}
+                    className="row-item"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: 'pointer', borderBottom: idx < moisVisibles.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
+                    onClick={() => { window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) }}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) } }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{formatMoisLabel(mois)}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
+                      <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
+                    </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            })()}
           </div>
         )}
 
         {vue === 'depannages' && depannagesNiveau === 3 && <>
-          <div style={{ fontSize: '12px', color: '#6D7B8A', marginBottom: '4px', fontWeight: 600, paddingLeft: '4px' }}>
-            {regieSel?.nom} · {formatMoisLabel(moisSel)}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', paddingLeft: '4px' }}>
+            <span style={{ fontSize: '12px', color: '#6D7B8A', fontWeight: 600 }}>{regieSel?.nom} · {formatMoisLabel(moisSel)}</span>
+            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe', regieId: regieSel?.id } })}>+ Dépannage</button>
           </div>
           {depannagesTerrain.filter(d => {
             if (d.regie?.id !== regieSel?.id) return false

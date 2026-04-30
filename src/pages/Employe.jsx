@@ -121,6 +121,16 @@ export default function Employe() {
   const refreshPage = usePageRefresh(() => charger(), [user?.id])
 
   useEffect(() => {
+    function handlePop() {
+      if (vue !== 'accueil' || intermediaireSel || depannagesNiveau > 1) {
+        revenirDepuisHeader()
+      }
+    }
+    window.addEventListener('popstate', handlePop)
+    return () => window.removeEventListener('popstate', handlePop)
+  }, [vue, depannagesNiveau, intermediaireSel, regieSel, moisSel])
+
+  useEffect(() => {
     if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) {
       setCouvertureInfo({ count: 0, noms: null })
       return
@@ -954,7 +964,7 @@ export default function Employe() {
               <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier</span>
               <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#185FA5', fontSize: '18px' }}>›</span>
             </button>
-            <button onClick={() => setVue('depannages')} style={{ position: 'relative', background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => { window.history.pushState(null, ''); setVue('depannages') }} style={{ position: 'relative', background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>⚡</span>
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
               <span style={{ fontSize: '11px', color: '#666' }}>Interventions rapides</span>
@@ -966,14 +976,14 @@ export default function Employe() {
               <span style={{ fontSize: '11px', color: '#666' }}>À venir</span>
               <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#3B6D11', fontSize: '18px' }}>›</span>
             </button>
-            <button onClick={() => setVue('autres')} style={{ position: 'relative', background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <button onClick={() => { window.history.pushState(null, ''); setVue('autres') }} style={{ position: 'relative', background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '28px' }}>☰</span>
               <span style={{ fontWeight: 600, fontSize: '14px', color: '#4B5563' }}>Autres</span>
               <span style={{ fontSize: '11px', color: '#666' }}>Vacances, absences</span>
               <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#4B5563', fontSize: '18px' }}>›</span>
             </button>
             {user?.prenom?.toLowerCase() === 'noylan' && (
-              <button onClick={() => setVue('testv1')} style={{ position: 'relative', background: '#F0E6FB', border: '1px solid #7C3AED', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', gridColumn: '1 / -1' }}>
+              <button onClick={() => { window.history.pushState(null, ''); setVue('testv1') }} style={{ position: 'relative', background: '#F0E6FB', border: '1px solid #7C3AED', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', gridColumn: '1 / -1' }}>
                 <span style={{ fontSize: '28px' }}>📋</span>
                 <span style={{ fontWeight: 600, fontSize: '14px', color: '#7C3AED' }}>Rapport V1</span>
                 <span style={{ fontSize: '11px', color: '#666' }}>Envoyer un rapport de journée</span>
@@ -1060,7 +1070,7 @@ export default function Employe() {
               {intermediaires.map(interm => {
                 const count = chantiers.filter(c => c.intermediaire_id === interm.id).length
                 return (
-                  <div key={interm.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setIntermediaireSel(interm.id)}>
+                  <div key={interm.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => { window.history.pushState(null, ''); setIntermediaireSel(interm.id) }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
                       <div>
@@ -1119,7 +1129,10 @@ export default function Employe() {
           {depannagesLoading && <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement...</div>}
           {depannagesErreur && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{depannagesErreur}</div>}
           <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Régies</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <span style={{ fontWeight: 600, fontSize: '14px' }}>Régies</span>
+              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe' } })}>+ Dépannage</button>
+            </div>
             {!depannagesLoading && regiesListe.length === 0 && (
               <div style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage disponible.</div>
             )}
@@ -1132,8 +1145,8 @@ export default function Employe() {
                   role="button"
                   tabIndex={0}
                   style={{ cursor: 'pointer', borderBottom: idx < regiesListe.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
-                  onClick={() => { setRegieSel(regie); setDepannagesNiveau(2) }}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRegieSel(regie); setDepannagesNiveau(2) } }}
+                  onClick={() => { window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) } }}
                 >
                   <div>
                     <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Régie</div>
@@ -1165,8 +1178,8 @@ export default function Employe() {
                   role="button"
                   tabIndex={0}
                   style={{ cursor: 'pointer', borderBottom: idx === 0 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
-                  onClick={() => { setMoisSel(mois); setDepannagesNiveau(3) }}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMoisSel(mois); setDepannagesNiveau(3) } }}
+                  onClick={() => { window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) } }}
                 >
                   <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{formatMoisLabel(mois)}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

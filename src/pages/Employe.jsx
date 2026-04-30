@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
@@ -64,10 +64,11 @@ function fmtDate(dateStr, opts) {
 
 export default function Employe() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { profile: user, signOut } = useAuth()
 
   const [chantiers, setChantiers] = useState([])
-  const [vue, setVue] = useState('accueil')
+  const [vue, setVue] = useState(() => location.state?.restoreDepannages ? 'depannages' : 'accueil')
   const [creditUtilise, setCreditUtilise] = useState(0)
   const [recherche, setRecherche] = useState('')
   const [ajoutChantier, setAjoutChantier] = useState(false)
@@ -81,9 +82,9 @@ export default function Employe() {
   const [depannagesErreur, setDepannagesErreur] = useState('')
   const [depannagesRecherche, setDepannagesRecherche] = useState('')
   const [depannageActionLoading, setDepannageActionLoading] = useState('')
-  const [depannagesNiveau, setDepannagesNiveau] = useState(1)
+  const [depannagesNiveau, setDepannagesNiveau] = useState(() => (location.state?.restoreDepannages && location.state?.moisSel) ? 3 : 1)
   const [regieSel, setRegieSel] = useState(null)
-  const [moisSel, setMoisSel] = useState(null)
+  const [moisSel, setMoisSel] = useState(() => location.state?.restoreDepannages ? (location.state?.moisSel || null) : null)
   const [regiesAll, setRegiesAll] = useState([])
 
   const [modalSupp, setModalSupp] = useState(false)
@@ -120,6 +121,13 @@ export default function Employe() {
 
   useEffect(() => { charger() }, [])
   const refreshPage = usePageRefresh(() => charger(), [user?.id])
+
+  useEffect(() => {
+    if (location.state?.restoreDepannages && location.state?.regieId && regiesAll.length > 0 && !regieSel) {
+      const found = regiesAll.find(r => r.id === location.state.regieId)
+      if (found) setRegieSel(found)
+    }
+  }, [regiesAll])
 
   useEffect(() => {
     function handlePop() {
@@ -1201,7 +1209,7 @@ export default function Employe() {
         {vue === 'depannages' && depannagesNiveau === 3 && <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', paddingLeft: '4px' }}>
             <span style={{ fontSize: '12px', color: '#6D7B8A', fontWeight: 600 }}>{regieSel?.nom} · {formatMoisLabel(moisSel)}</span>
-            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe', regieId: regieSel?.id } })}>+ Dépannage</button>
+            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe', regieId: regieSel?.id, moisSel } })}>+ Dépannage</button>
           </div>
           {depannagesTerrain.filter(d => {
             if (d.regie?.id !== regieSel?.id) return false

@@ -463,7 +463,12 @@ export default function Depannage({ mode = 'employe' }) {
         if (isAdminMode) {
           navigate('/admin', { state: { vue: 'depannages' } })
         } else {
-          navigate('/employe')
+          const navState = initialRegieId ? {
+            restoreDepannages: true,
+            regieId: initialRegieId,
+            moisSel: location.state?.moisSel || date.substring(0, 7)
+          } : undefined
+          navigate('/employe', { state: navState })
         }
       }, 2000)
     } catch (error) {
@@ -529,11 +534,18 @@ export default function Depannage({ mode = 'employe' }) {
   const retourFallback = isAdminMode ? '/admin' : '/employe'
 
   function retourPagePrecedente() {
-    if (location.state?.from) {
-      navigate(location.state.from)
-      return
+    const target = location.state?.from || retourFallback
+    if (!isAdminMode && location.state?.regieId) {
+      navigate(target, {
+        state: {
+          restoreDepannages: true,
+          regieId: location.state.regieId,
+          moisSel: location.state.moisSel || null
+        }
+      })
+    } else {
+      navigate(target)
     }
-    navigateBackWithFallback(navigate, retourFallback)
   }
 
   const depannageHeaderRight = (extra = null) => (

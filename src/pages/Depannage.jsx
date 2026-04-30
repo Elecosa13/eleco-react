@@ -263,19 +263,17 @@ export default function Depannage({ mode = 'employe' }) {
 
   function modQte(materiauId, delta) {
     setMateriaux(
-      materiaux
-        .map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
-        .filter(item => item.qte > 0)
+      materiaux.map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
     )
   }
 
   function setQte(materiauId, value) {
     const nextQte = Math.max(0, Number(value) || 0)
-    setMateriaux(
-      materiaux
-        .map(item => item.id === materiauId ? { ...item, qte: nextQte } : item)
-        .filter(item => item.qte > 0)
-    )
+    setMateriaux(materiaux.map(item => item.id === materiauId ? { ...item, qte: nextQte } : item))
+  }
+
+  function supprimerMateriau(materiauId) {
+    setMateriaux(materiaux.filter(item => item.id !== materiauId))
   }
 
   function renderQuantiteControl(item, disabled = false) {
@@ -337,10 +335,6 @@ export default function Depannage({ mode = 'employe' }) {
       return
     }
     if (!adresse.trim()) return
-    if (!chantierId) {
-      setErreur('Sélectionne le chantier lié au dépannage pour classer le rapport dans le bon dossier admin.')
-      return
-    }
     if (isAdminMode && !employeId) {
       setErreur("SÃ©lectionne l'employÃ© pour qui crÃ©er le rapport.")
       return
@@ -358,8 +352,9 @@ export default function Depannage({ mode = 'employe' }) {
 
     try {
       const regieIdFinal = regieId || regieNonAssigneeId || null
+      const chantierIdFinal = chantierId || null
       const depannagePayload = {
-        chantier_id: chantierId,
+        chantier_id: chantierIdFinal,
         regie_id: regieIdFinal,
         date_travail: date,
         adresse: adresse.trim(),
@@ -401,7 +396,7 @@ export default function Depannage({ mode = 'employe' }) {
         if (intervenantError) throw intervenantError
       }
 
-      const sousDossierId = await ensureDepannageSousDossier(chantierId)
+      const sousDossierId = chantierIdFinal ? await ensureDepannageSousDossier(chantierIdFinal) : null
 
       const rapportPayload = {
         sous_dossier_id: sousDossierId,
@@ -440,11 +435,11 @@ export default function Depannage({ mode = 'employe' }) {
         await sauvegarderMateriaux(depannageSauveId)
       }
 
-      if (photos.length > 0) {
+      if (photos.length > 0 && chantierIdFinal && sousDossierId) {
         await uploadRapportPhotos({
           rapportId: rapportSauveId,
           depannageId: depannageSauveId,
-          chantierId,
+          chantierId: chantierIdFinal,
           sousDossierId,
           files: photos.map(item => item.file),
           userId: user.id
@@ -454,7 +449,7 @@ export default function Depannage({ mode = 'employe' }) {
       const { error: statutError } = await supabase
         .from('depannages')
         .update({
-          chantier_id: chantierId,
+          chantier_id: chantierIdFinal,
           statut: STATUT_RAPPORT_RECU,
           rapport_envoye_le: new Date().toISOString()
         })
@@ -500,7 +495,7 @@ export default function Depannage({ mode = 'employe' }) {
       referenceId: depannageSauveId,
       dateTravail: date,
       duree,
-      chantierId
+      chantierId: chantierId || null
     })
   }
 
@@ -607,7 +602,7 @@ export default function Depannage({ mode = 'employe' }) {
                   <button onClick={() => toggleFavori(article.id)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', opacity: favoris.includes(article.id) ? 1 : 0.25, padding: 0, flexShrink: 0 }}>⭐</button>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '13px', fontWeight: 500 }}>{article.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{article.categorie} · {article.unite}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{article.categorie} · {normalizeUnite(article.unite, article.nom)}</div>
                   </div>
                   {qte === 0 ? (
                     <button onClick={() => ajouter(article)} style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #185FA5', background: '#E6F1FB', color: '#185FA5', fontSize: '18px', cursor: 'pointer', flexShrink: 0 }}>+</button>
@@ -686,9 +681,9 @@ export default function Depannage({ mode = 'employe' }) {
               </div>
             )}
             <div className="form-group">
-              <label>Chantier lié *</label>
-              <select value={chantierId} onChange={event => setChantierId(event.target.value)} required>
-                <option value="">Sélectionner un chantier...</option>
+              <label>Chantier lié</label>
+              <select value={chantierId} onChange={event => setChantierId(event.target.value)}>
+                <option value="">Aucun chantier lié</option>
                 {chantiers.map(chantier => (
                   <option key={chantier.id} value={chantier.id}>{chantier.nom}</option>
                 ))}
@@ -764,7 +759,17 @@ export default function Depannage({ mode = 'employe' }) {
             {materiaux.map(item => (
               <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '8px', borderBottom: '1px solid #eee' }}>
                 <div><div style={{ fontSize: '13px', fontWeight: 500 }}>{item.nom}</div><div style={{ fontSize: '11px', color: '#888' }}>{item.unite}</div></div>
-                {renderQuantiteControl(item, rapportEmployeVerrouille || !peutModifierMateriaux)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {renderQuantiteControl(item, rapportEmployeVerrouille || !peutModifierMateriaux)}
+                  <button
+                    type="button"
+                    disabled={rapportEmployeVerrouille || !peutModifierMateriaux}
+                    onClick={() => supprimerMateriau(item.id)}
+                    style={{ border: '1px solid #f09595', background: 'white', color: '#A32D2D', borderRadius: '6px', padding: '5px 7px', fontSize: '11px', cursor: rapportEmployeVerrouille || !peutModifierMateriaux ? 'default' : 'pointer', opacity: rapportEmployeVerrouille || !peutModifierMateriaux ? 0.5 : 1 }}
+                  >
+                    Retirer
+                  </button>
+                </div>
               </div>
             ))}
           </div>

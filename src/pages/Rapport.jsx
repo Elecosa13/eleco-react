@@ -39,7 +39,7 @@ export default function Rapport() {
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
   const [favoris, setFavoris] = useState(loadFavoris)
-  const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1, pu: '0' })
+  const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1 })
   const [envoi, setEnvoi] = useState(false)
   const [succes, setSucces] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -97,11 +97,14 @@ export default function Rapport() {
         .select('id, categorie, nom, unite')
         .order('categorie')
         .order('nom')
-        .then(({ data }) => {
-          if (data && data.length > 0) {
-            setCatalogue(data)
-            setCategories(['Favoris', ...Array.from(new Set(data.map(article => article.categorie).filter(Boolean)))])
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Erreur chargement catalogue employe', error)
+            return
           }
+          const listeCatalogue = data || []
+          setCatalogue(listeCatalogue)
+          setCategories(['Favoris', ...Array.from(new Set(listeCatalogue.map(article => article.categorie).filter(Boolean)))])
         }),
       chargerCredit(date)
     ])
@@ -165,7 +168,7 @@ export default function Rapport() {
 
     setMateriaux([
       ...materiaux,
-      { id: article.id, catalogueId: article.id, nom: article.nom, unite: article.unite, qte: 1, pu: 0 }
+      { id: article.id, catalogueId: article.id, nom: article.nom, unite: normalizeUnite(article.unite, article.nom), qte: 1, pu: 0 }
     ])
   }
 
@@ -178,20 +181,27 @@ export default function Rapport() {
         catalogueId: null,
         manuel: true,
         nom: articleManuel.nom.trim(),
-        unite: articleManuel.unite.trim() || 'pce',
-        qte: Math.max(1, Number(articleManuel.qte) || 1),
-        pu: Math.max(0, Number(articleManuel.pu) || 0)
+        unite: normalizeUnite(articleManuel.unite, articleManuel.nom),
+        qte: Math.max(0, Number(articleManuel.qte) || 0),
+        pu: 0
       }
     ])
-    setArticleManuel({ nom: '', unite: 'pce', qte: 1, pu: '0' })
+    setArticleManuel({ nom: '', unite: 'pce', qte: 1 })
   }
 
   function modQte(materiauId, delta) {
     setMateriaux(
-      materiaux
-        .map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
-        .filter(item => item.qte > 0)
+      materiaux.map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
     )
+  }
+
+  function setQte(materiauId, value) {
+    const nextQte = Math.max(0, Number(value) || 0)
+    setMateriaux(materiaux.map(item => item.id === materiauId ? { ...item, qte: nextQte } : item))
+  }
+
+  function supprimerMateriau(materiauId) {
+    setMateriaux(materiaux.filter(item => item.id !== materiauId))
   }
 
   async function ajouterPhotosDepuisListe(fileList) {
@@ -248,9 +258,9 @@ export default function Rapport() {
                 rapport_id: rapport.id,
                 ref_article: item.catalogueId || null,
                 designation: item.nom,
-                unite: item.unite,
-                quantite: item.qte,
-                prix_net: item.pu
+                unite: normalizeUnite(item.unite, item.nom),
+                quantite: Math.max(0, Number(item.qte) || 0),
+                prix_net: 0
               }))
             )
           )
@@ -317,16 +327,15 @@ export default function Rapport() {
             <div className="grid2">
               <div className="form-group">
                 <label>Unité</label>
-                <input value={articleManuel.unite} onChange={event => setArticleManuel(current => ({ ...current, unite: event.target.value }))} />
+                <select value={articleManuel.unite} onChange={event => setArticleManuel(current => ({ ...current, unite: event.target.value }))}>
+                  <option value="pce">pce</option>
+                  <option value="m">m</option>
+                </select>
               </div>
               <div className="form-group">
                 <label>Quantité</label>
-                <input type="number" min="1" value={articleManuel.qte} onChange={event => setArticleManuel(current => ({ ...current, qte: event.target.value }))} />
+                <input type="number" min="0" value={articleManuel.qte} onChange={event => setArticleManuel(current => ({ ...current, qte: event.target.value }))} />
               </div>
-            </div>
-            <div className="form-group">
-              <label>Prix net (CHF)</label>
-              <input type="number" min="0" step="0.01" value={articleManuel.pu} onChange={event => setArticleManuel(current => ({ ...current, pu: event.target.value }))} />
             </div>
             <button type="button" className="btn-primary" disabled={!articleManuel.nom.trim()} onClick={ajouterManuel}>+ Ajouter l'article manuel</button>
           </div>
@@ -367,7 +376,7 @@ export default function Rapport() {
                   <button onClick={() => toggleFavori(article.id)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', opacity: favoris.includes(article.id) ? 1 : 0.25, padding: 0, flexShrink: 0 }}>⭐</button>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '13px', fontWeight: 500 }}>{article.nom}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{article.categorie} · {article.unite}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{article.categorie} · {normalizeUnite(article.unite, article.nom)}</div>
                   </div>
                   {qte === 0 ? (
                     <button onClick={() => ajouter(article)} style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #185FA5', background: '#E6F1FB', color: '#185FA5', fontSize: '18px', cursor: 'pointer', flexShrink: 0 }}>+</button>
@@ -470,8 +479,16 @@ export default function Rapport() {
                 <div><div style={{ fontSize: '13px', fontWeight: 500 }}>{item.nom}</div><div style={{ fontSize: '11px', color: '#888' }}>{item.unite}</div></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <button type="button" onClick={() => modQte(item.id, -1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
-                  <span style={{ fontWeight: 600, minWidth: '20px', textAlign: 'center', fontSize: '13px' }}>{item.qte}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={item.qte}
+                    onChange={event => setQte(item.id, event.target.value)}
+                    style={{ width: '58px', minHeight: '30px', padding: '4px 6px', border: '1px solid #ddd', borderRadius: '8px', textAlign: 'center', fontSize: '13px', fontWeight: 600 }}
+                  />
                   <button type="button" onClick={() => modQte(item.id, 1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #185FA5', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
+                  <button type="button" onClick={() => supprimerMateriau(item.id)} style={{ border: '1px solid #f09595', background: 'white', color: '#A32D2D', borderRadius: '6px', padding: '5px 7px', fontSize: '11px', cursor: 'pointer' }}>Retirer</button>
                 </div>
               </div>
             ))}
@@ -514,4 +531,14 @@ export default function Rapport() {
       </form>
     </div>
   )
+}
+
+function normalizeUnite(unite, nom = '') {
+  const raw = String(unite || '').trim().toLowerCase()
+  if (raw === 'm' || raw === 'ml') return 'm'
+
+  const label = String(nom || '').toLowerCase()
+  if (label.includes('cable') || label.includes('câble') || label.includes('fil ')) return 'm'
+
+  return 'pce'
 }

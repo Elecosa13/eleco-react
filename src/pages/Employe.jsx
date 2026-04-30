@@ -217,6 +217,7 @@ export default function Employe() {
         date_planifiee,
         heure_planifiee,
         chantier_id,
+        regie_id,
         created_at,
         employe_id,
         pris_par,
@@ -306,6 +307,29 @@ export default function Employe() {
 
       if (error) throw error
 
+      const idsRegies = Array.from(new Set(
+        ([
+          ...(ouvertsResult.data || []),
+          ...(prisParResult.data || []),
+          ...(employeIdResult.data || []),
+          ...(intervenantsResult.data || [])
+        ]).map(depannage => depannage.regie_id).filter(Boolean)
+      ))
+
+      const regiesById = new Map()
+      if (idsRegies.length > 0) {
+        const { data: regiesData, error: regiesError } = await supabase
+          .from('regies')
+          .select('id, nom')
+          .in('id', idsRegies)
+
+        if (regiesError) {
+          console.error('Erreur chargement regies depannages employe', regiesError)
+        } else {
+          for (const regie of regiesData || []) regiesById.set(String(regie.id), regie)
+        }
+      }
+
       const depannagesById = new Map()
       for (const depannage of [
         ...(ouvertsResult.data || []),
@@ -339,7 +363,7 @@ export default function Employe() {
 
       const depannages = (data || []).map(depannage => ({
         ...depannage,
-        regie: depannage.regie || REGIE_NON_ASSIGNEE,
+        regie: depannage.regie || (depannage.regie_id ? regiesById.get(String(depannage.regie_id)) || null : null) || REGIE_NON_ASSIGNEE,
         pris_par_user: depannage.pris_par ? profilsById.get(String(depannage.pris_par)) || null : null,
         depannage_intervenants: (depannage.depannage_intervenants || []).map(intervenant => ({
           ...intervenant,

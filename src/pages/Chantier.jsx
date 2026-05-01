@@ -281,11 +281,11 @@ export default function Chantier() {
                 key={item.id}
                 type="button"
                 className="row-item"
-                style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff', borderBottomColor: '#E7EDF5' }}
+                style={{ cursor: 'pointer', width: '100%', textAlign: 'left', background: '#fff', border: 'none', borderBottom: '1px solid #E7EDF5' }}
                 onClick={() => allerVers(niveau + 1, item)}
               >
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 500, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontWeight: niveau === 1 ? 700 : 500, fontSize: niveau === 1 ? '14px' : '13px', color: niveau === 1 ? '#185FA5' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {niveau === 3
                       ? `${item.numero}${item.nom ? ' · ' + item.nom : ''}`
                       : item.nom}

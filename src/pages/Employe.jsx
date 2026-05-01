@@ -1155,7 +1155,6 @@ export default function Employe() {
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) } }}
                 >
                   <div>
-                    <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Régie</div>
                     <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{regie.nom}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

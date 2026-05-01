@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
+import ListItem from '../components/ListItem'
 import PhotoInputPanel from '../components/PhotoInputPanel'
 import { supabase } from '../lib/supabase'
 import { supabaseSafe } from '../lib/supabaseSafe'
@@ -1165,6 +1166,16 @@ export default function Admin() {
     }
   }
 
+  async function archiverIntermediaire(intermediaire) {
+    if (!intermediaire?.id) return
+    try {
+      await supabase.from('intermediaires').update({ actif: false }).eq('id', intermediaire.id)
+      setIntermediaires(prev => prev.filter(item => String(item.id) !== String(intermediaire.id)))
+    } catch (error) {
+      alert("Erreur lors de l'archivage de l'intermédiaire.")
+    }
+  }
+
   async function supprimerSousDossier(sd) {
     const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
     if ((raps || []).length > 0) {
@@ -2273,17 +2284,17 @@ export default function Admin() {
           {!intermediaireChantiersActif && intermediairesChantiers.map(intermediaire => {
             const count = chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaire)).length
             return (
-              <div key={intermediaire.id} className="row-item" style={{ cursor: 'pointer', borderBottomColor: '#E7EDF5', gap: '10px' }}>
-                <div style={{ minWidth: 0, flex: 1 }} onClick={() => setIntermediaireChantiersActif(intermediaire)}>
-                  <div style={{ fontWeight: 600, fontSize: '13px' }}>{intermediaire.nom}</div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{count} chantier{count > 1 ? 's' : ''}</div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <button title="Renommer l'intermediaire" onClick={() => { setRenommerItem({ type: 'intermediaire', data: intermediaire }); setNouveauNom(intermediaire.nom) }} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #D8E3EF', borderRadius: '6px', padding: 0, fontSize: '12px', cursor: 'pointer' }}>R</button>
-                  <button title={count > 0 ? 'Suppression impossible avec des chantiers actifs' : "Supprimer l'intermediaire"} onClick={() => setConfirm({ type: 'intermediaire', data: intermediaire })} disabled={count > 0} style={{ width: '30px', height: '30px', background: '#fff', border: '1px solid #F1C7C7', borderRadius: '6px', padding: 0, fontSize: '14px', cursor: count > 0 ? 'not-allowed' : 'pointer', color: '#A32D2D', opacity: count > 0 ? 0.45 : 1 }}>x</button>
-                  <span onClick={() => setIntermediaireChantiersActif(intermediaire)} style={{ color: '#185FA5', fontSize: '18px', lineHeight: 1 }}>›</span>
-                </div>
-              </div>
+              <ListItem
+                key={intermediaire.id}
+                title={intermediaire.nom}
+                subtitle={`${count} chantier${count > 1 ? 's' : ''}`}
+                showRename={true}
+                showArchive={true}
+                deleteDisabled={count > 0}
+                onClick={() => setIntermediaireChantiersActif(intermediaire)}
+                onRename={() => { setRenommerItem({ type: 'intermediaire', data: intermediaire }); setNouveauNom(intermediaire.nom) }}
+                onArchive={() => archiverIntermediaire(intermediaire)}
+              />
             )
           })}
           {intermediaireChantiersActif && chantiersIntermediaireActif.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier pour cet intermÃ©diaire</div>}
@@ -2720,7 +2731,6 @@ export default function Admin() {
                   style={{ cursor: 'pointer', borderBottom: idx < regies.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
                 >
                   <div>
-                    <div style={{ fontSize: '11px', color: '#6D7B8A', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Régie</div>
                     <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{regie.nom}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

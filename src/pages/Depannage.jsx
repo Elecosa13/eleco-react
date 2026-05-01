@@ -56,6 +56,7 @@ export default function Depannage({ mode = 'employe' }) {
   const [recherche, setRecherche] = useState('')
   const [catFiltre, setCatFiltre] = useState('Favoris')
   const [favoris, setFavoris] = useState(loadFavoris)
+  const [articleManuel, setArticleManuel] = useState({ nom: '', unite: 'pce', qte: 1 })
   const [regies, setRegies] = useState([])
   const [regieId, setRegieId] = useState('')
   const [regieNonAssigneeId, setRegieNonAssigneeId] = useState('')
@@ -258,6 +259,22 @@ export default function Depannage({ mode = 'employe' }) {
         qte: 1
       }
     ])
+  }
+
+  function ajouterManuel() {
+    if (!articleManuel.nom.trim()) return
+    setMateriaux([
+      ...materiaux,
+      {
+        id: `manuel-${Date.now()}`,
+        catalogueId: null,
+        manuel: true,
+        nom: articleManuel.nom.trim(),
+        unite: normalizeUnite(articleManuel.unite, articleManuel.nom),
+        qte: Math.max(0, Number(articleManuel.qte) || 0)
+      }
+    ])
+    setArticleManuel({ nom: '', unite: 'pce', qte: 1 })
   }
 
   function modQte(materiauId, delta) {
@@ -518,7 +535,7 @@ export default function Depannage({ mode = 'employe' }) {
       .from('depannage_materiaux')
       .insert(materiaux.map(item => ({
         depannage_id: depannageSauveId,
-        ref_article: item.catalogueId || item.id || null,
+        ref_article: item.catalogueId || null,
         designation: item.nom,
         unite: item.unite,
         quantite: Math.max(0, Number(item.qte) || 0),
@@ -581,6 +598,27 @@ export default function Depannage({ mode = 'employe' }) {
               {erreur}
             </div>
           )}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5' }}>Article manuel</div>
+            <div className="form-group">
+              <label>Designation *</label>
+              <input value={articleManuel.nom} onChange={event => setArticleManuel(current => ({ ...current, nom: event.target.value }))} placeholder="Ex: materiel specifique" />
+            </div>
+            <div className="grid2">
+              <div className="form-group">
+                <label>Unite</label>
+                <select value={articleManuel.unite} onChange={event => setArticleManuel(current => ({ ...current, unite: event.target.value }))}>
+                  <option value="pce">pce</option>
+                  <option value="m">m</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Quantite</label>
+                <input type="number" min="0" value={articleManuel.qte} onChange={event => setArticleManuel(current => ({ ...current, qte: event.target.value }))} />
+              </div>
+            </div>
+            <button type="button" className="btn-primary" disabled={!articleManuel.nom.trim()} onClick={ajouterManuel}>+ Ajouter l'article manuel</button>
+          </div>
           <input type="search" placeholder="Rechercher..." value={recherche} onChange={event => setRecherche(event.target.value)} />
           <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
             {categories.map(categorie => (

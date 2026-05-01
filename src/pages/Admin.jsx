@@ -31,11 +31,10 @@ const STATUT_INTERVENTION_FAITE = 'Intervention faite'
 const STATUT_RAPPORT_RECU = 'Rapport reçu'
 const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
 const STATUT_FACTURE_PRETE = 'Facture prête'
-const ADMIN_VUES_OUVERTES = ['chantiers', 'depannages', 'a_verifier', 'calendrier', 'vacances', 'employes']
+const ADMIN_VUES_OUVERTES = ['chantiers', 'depannages', 'catalogue', 'calendrier', 'vacances', 'employes']
 
 function getAdminVueInitiale(location) {
   if (ADMIN_VUES_OUVERTES.includes(location.state?.vue)) return location.state.vue
-  if (location.pathname.endsWith('/a-verifier')) return 'a_verifier'
   if (location.pathname.endsWith('/calendrier')) return 'calendrier'
   if (location.pathname.endsWith('/employes')) return 'employes'
   return 'accueil'
@@ -278,6 +277,17 @@ export default function Admin() {
   const [catFiltre, setCatFiltre] = useState('Tous')
   const [articleManuel, setArticleManuel] = useState({ designation: '', unite: '', prix: '0', quantite: 1 })
 
+  // Catalogue admin (vue gestion)
+  const [catalogueAdmin, setCatalogueAdmin] = useState([])
+  const [catalogueAdminLoading, setCatalogueAdminLoading] = useState(false)
+  const [catalogueAdminError, setCatalogueAdminError] = useState('')
+  const [catalogueAdminSearch, setCatalogueAdminSearch] = useState('')
+  const [catalogueAdminCatFiltre, setCatalogueAdminCatFiltre] = useState('Tous')
+  const [catalogueAdminEdit, setCatalogueAdminEdit] = useState(null)
+  const [catalogueAdminAjout, setCatalogueAdminAjout] = useState(false)
+  const [catalogueAdminNouvel, setCatalogueAdminNouvel] = useState({ nom: '', unite: '', prix_net: '', categorie: '' })
+  const [catalogueAdminSaving, setCatalogueAdminSaving] = useState(false)
+
   // Rapport édition (tâche 8)
   const [editRapportMode, setEditRapportMode] = useState(false)
   const [editRapportRemarques, setEditRapportRemarques] = useState('')
@@ -317,6 +327,7 @@ export default function Admin() {
     if (vue === 'calendrier') chargerCalendrier(calMois)
     if (vue === 'vacances') chargerVacancesAdmin()
     if (vue === 'employes') chargerStatsEmployes()
+    if (vue === 'catalogue') chargerCatalogueAdmin()
   }, [])
 
   const refreshPage = usePageRefresh(async () => {
@@ -880,6 +891,64 @@ export default function Admin() {
     ])
     setEmpCharteData({ charte, sig })
     setEmpCharteLoading(false)
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // CATALOGUE ADMIN
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async function chargerCatalogueAdmin() {
+    setCatalogueAdminLoading(true)
+    setCatalogueAdminError('')
+    try {
+      const { data, error } = await supabase.from('catalogue').select('*').order('categorie').order('nom')
+      if (error) throw error
+      setCatalogueAdmin(data || [])
+    } catch (e) {
+      setCatalogueAdminError(e?.message || 'Erreur chargement catalogue')
+    } finally {
+      setCatalogueAdminLoading(false)
+    }
+  }
+
+  async function sauvegarderArticleCatalogue(id, changes) {
+    setCatalogueAdminEdit(null)
+    setCatalogueAdminError('')
+    try {
+      const { error } = await supabase.from('catalogue').update(changes).eq('id', id)
+      if (error) throw error
+      setCatalogueAdmin(prev => prev.map(a => a.id === id ? { ...a, ...changes } : a))
+    } catch (e) {
+      setCatalogueAdminError(e?.message || 'Erreur sauvegarde')
+    }
+  }
+
+  async function ajouterArticleCatalogue() {
+    if (!catalogueAdminNouvel.nom?.trim()) return
+    setCatalogueAdminSaving(true)
+    setCatalogueAdminError('')
+    try {
+      const { data, error } = await supabase.from('catalogue').insert({
+        nom: catalogueAdminNouvel.nom.trim(),
+        categorie: catalogueAdminNouvel.categorie?.trim() || null,
+        unite: catalogueAdminNouvel.unite?.trim() || null,
+        prix_net: catalogueAdminNouvel.prix_net ? parseFloat(catalogueAdminNouvel.prix_net) : null,
+        actif: true
+      }).select().single()
+      if (error) throw error
+      setCatalogueAdmin(prev =>
+        [...prev, data].sort((a, b) =>
+          (a.categorie || '').localeCompare(b.categorie || '', 'fr') ||
+          (a.nom || '').localeCompare(b.nom || '', 'fr')
+        )
+      )
+      setCatalogueAdminAjout(false)
+      setCatalogueAdminNouvel({ nom: '', unite: '', prix_net: '', categorie: '' })
+    } catch (e) {
+      setCatalogueAdminError(e?.message || 'Erreur ajout article')
+    } finally {
+      setCatalogueAdminSaving(false)
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -2746,41 +2815,94 @@ export default function Admin() {
     )
   }
 
-  if (vue === 'a_verifier') {
+  if (vue === 'catalogue') {
+    const catsAdmin = ['Tous', ...Array.from(new Set(catalogueAdmin.map(a => a.categorie).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'fr'))]
+    const filteredAdmin = catalogueAdmin.filter(a => {
+      const matchSearch = !catalogueAdminSearch || (a.nom || '').toLowerCase().includes(catalogueAdminSearch.toLowerCase())
+      const matchCat = catalogueAdminCatFiltre === 'Tous' || a.categorie === catalogueAdminCatFiltre
+      return matchSearch && matchCat
+    })
     return (
       <div>
         <PageHeader
-          title="À vérifier"
-          subtitle="Rapports et validations en attente"
+          title="Catalogue"
+          subtitle={`${catalogueAdmin.length} articles`}
           onBack={() => setVue('accueil')}
           rightSlot={adminHeaderRight()}
         />
         <div className="page-content">
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Rapports à valider</span>
-              <span className="badge badge-amber">{rapportsEnAttente.length}</span>
-            </div>
-            {rapportsEnAttente.length === 0 && (
-              <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px 0' }}>
-                Aucun rapport en attente de validation.
+          {catalogueAdminError && (
+            <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D', marginBottom: '12px' }}>{catalogueAdminError}</div>
+          )}
+          {catalogueAdminAjout && (
+            <div style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+              <div style={{ fontWeight: 600, fontSize: '13px', color: '#185FA5', marginBottom: '10px' }}>Nouvel article</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                <input placeholder="Désignation" value={catalogueAdminNouvel.nom} onChange={e => setCatalogueAdminNouvel(n => ({ ...n, nom: e.target.value }))} style={{ border: '1px solid #c5daee', borderRadius: '6px', padding: '7px 10px', fontSize: '13px', gridColumn: '1 / -1' }} />
+                <input placeholder="Catégorie" value={catalogueAdminNouvel.categorie} onChange={e => setCatalogueAdminNouvel(n => ({ ...n, categorie: e.target.value }))} style={{ border: '1px solid #c5daee', borderRadius: '6px', padding: '7px 10px', fontSize: '13px' }} />
+                <input placeholder="Unité (p, m, h…)" value={catalogueAdminNouvel.unite} onChange={e => setCatalogueAdminNouvel(n => ({ ...n, unite: e.target.value }))} style={{ border: '1px solid #c5daee', borderRadius: '6px', padding: '7px 10px', fontSize: '13px' }} />
+                <input type="number" placeholder="Prix net CHF" value={catalogueAdminNouvel.prix_net} onChange={e => setCatalogueAdminNouvel(n => ({ ...n, prix_net: e.target.value }))} style={{ border: '1px solid #c5daee', borderRadius: '6px', padding: '7px 10px', fontSize: '13px' }} />
               </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={ajouterArticleCatalogue} disabled={catalogueAdminSaving || !catalogueAdminNouvel.nom.trim()} style={{ background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px', padding: '7px 14px', fontSize: '13px', cursor: 'pointer', fontWeight: 500 }}>+ Ajouter</button>
+                <button onClick={() => { setCatalogueAdminAjout(false); setCatalogueAdminNouvel({ nom: '', unite: '', prix_net: '', categorie: '' }) }} style={{ background: '#fff', border: '1px solid #c5daee', borderRadius: '6px', padding: '7px 14px', fontSize: '13px', cursor: 'pointer' }}>Annuler</button>
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
+            <input
+              placeholder="Rechercher…"
+              value={catalogueAdminSearch}
+              onChange={e => setCatalogueAdminSearch(e.target.value)}
+              style={{ flex: '1 1 160px', border: '1px solid #D8E3EF', borderRadius: '6px', padding: '7px 10px', fontSize: '13px' }}
+            />
+            {!catalogueAdminAjout && (
+              <button onClick={() => setCatalogueAdminAjout(true)} style={{ background: '#185FA5', color: '#fff', border: 'none', borderRadius: '6px', padding: '7px 12px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Ajouter</button>
             )}
-            {rapportsEnAttente.map(r => {
-              const t = totaux(r)
-              const nomChantier = r.sous_dossiers?.chantiers?.nom || r.affaires?.chantiers?.nom || '—'
-              const nomDossier = r.sous_dossiers?.nom || r.affaires?.nom || ''
-              return (
-                <div key={r.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => setRapportDetail(r)}>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{nomChantier}{nomDossier ? ` › ${nomDossier}` : ''}</div>
-                    <div style={{ fontSize: '11px', color: '#888' }}>{r.employe?.prenom} · {fmtDuree(t.duree)} · {new Date(r.date_travail + 'T12:00:00').toLocaleDateString('fr-CH')}</div>
-                  </div>
-                  <span style={{ color: '#185FA5' }}>›</span>
-                </div>
-              )
-            })}
           </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {catsAdmin.map(cat => (
+              <button key={cat} onClick={() => setCatalogueAdminCatFiltre(cat)} style={{ background: catalogueAdminCatFiltre === cat ? '#185FA5' : '#D8E3EF', color: catalogueAdminCatFiltre === cat ? '#fff' : '#185FA5', border: 'none', borderRadius: '20px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: catalogueAdminCatFiltre === cat ? 600 : 400 }}>{cat}</button>
+            ))}
+          </div>
+          {catalogueAdminLoading && <div style={{ textAlign: 'center', color: '#888', padding: '20px', fontSize: '13px' }}>Chargement…</div>}
+          {!catalogueAdminLoading && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              {filteredAdmin.length === 0 && (
+                <div style={{ textAlign: 'center', color: '#888', fontSize: '13px', padding: '20px' }}>Aucun article trouvé.</div>
+              )}
+              {filteredAdmin.map((a, i) => (
+                <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '8px', alignItems: 'center', padding: '10px 14px', borderBottom: i < filteredAdmin.length - 1 ? '1px solid #F0F4F8' : 'none', opacity: a.actif ? 1 : 0.55 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '11px', color: '#185FA5', fontWeight: 500, marginBottom: '2px' }}>{a.categorie}</div>
+                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#1a1a2e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.nom}</div>
+                    <div style={{ fontSize: '11px', color: '#888' }}>{a.unite}</div>
+                  </div>
+                  {catalogueAdminEdit === a.id ? (
+                    <input
+                      type="number"
+                      defaultValue={a.prix_net ?? ''}
+                      autoFocus
+                      onBlur={e => sauvegarderArticleCatalogue(a.id, { prix_net: e.target.value !== '' ? parseFloat(e.target.value) : null })}
+                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setCatalogueAdminEdit(null) }}
+                      style={{ width: '72px', border: '1px solid #185FA5', borderRadius: '6px', padding: '4px 8px', fontSize: '13px', textAlign: 'right' }}
+                    />
+                  ) : (
+                    <button onClick={() => setCatalogueAdminEdit(a.id)} style={{ background: '#F3F4F6', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '13px', cursor: 'pointer', minWidth: '60px', textAlign: 'right' }}>
+                      {a.prix_net != null ? Number(a.prix_net).toFixed(2) : '—'}
+                    </button>
+                  )}
+                  <div style={{ fontSize: '11px', color: '#888' }}>CHF</div>
+                  <button
+                    onClick={() => sauvegarderArticleCatalogue(a.id, { actif: !a.actif })}
+                    style={{ background: a.actif ? '#E7F6EA' : '#F3F4F6', color: a.actif ? '#247A35' : '#9CA3AF', border: `1px solid ${a.actif ? '#B9DFC1' : '#e5e7eb'}`, borderRadius: '6px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    {a.actif ? 'Actif' : 'Inactif'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -3376,11 +3498,11 @@ export default function Admin() {
             <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
             <span style={{ fontSize: '11px', color: '#666' }}>{depannages.length} au total</span>
           </button>
-          <button onClick={() => setVue('a_verifier')}
-            style={{ background: '#E8F5F2', border: '1px solid #157A6E', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '28px' }}>✓</span>
-            <span style={{ fontWeight: 600, fontSize: '14px', color: '#157A6E' }}>À vérifier</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>{rapportsEnAttente.length} validation(s)</span>
+          <button onClick={() => setVue('catalogue')}
+            style={{ background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '28px' }}>📋</span>
+            <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Catalogue</span>
+            <span style={{ fontSize: '11px', color: '#666' }}>{catalogue.length} actifs</span>
           </button>
           <button onClick={() => ouvrirVueAdmin('employes')}
             style={{ background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>

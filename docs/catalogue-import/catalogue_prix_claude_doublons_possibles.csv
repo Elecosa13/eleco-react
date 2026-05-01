@@ -1,0 +1,13 @@
+﻿cle_doublon,nombre,nom,unite,prix_net,occurrences
+"ampoule e27 827 15w 1500lm|pce|22.9","2","Ampoule E27 827 15w 1500lm","pce","22.9","560 lustrerie:L62 [560 lustrerie > AMPOULES] ; 590 ABA:L36 [590 ABA > ABA/CIR]"
+"ampoule e27 4000k 2452lm 20w|pce|26.9","2","Ampoule E27 4000k 2452lm 20w","pce","26.9","560 lustrerie:L61 [560 lustrerie > AMPOULES] ; 590 ABA:L35 [590 ABA > ABA/CIR]"
+"ampoule e27 4000k 1055lm 10w|pce|13.9","2","Ampoule E27 4000k 1055lm 10w","pce","13.9","560 lustrerie:L60 [560 lustrerie > AMPOULES] ; 590 ABA:L34 [590 ABA > ABA/CIR]"
+"ampoule e14 4000k & 2700k 806lm 6,5w|pce|13.9","2","Ampoule E14 4000k & 2700k 806lm 6,5w","pce","13.9","560 lustrerie:L65 [560 lustrerie > AMPOULES] ; 590 ABA:L39 [590 ABA > ABA/CIR]"
+"ampoule e14 4000k 470lm|pce|12.4","2","Ampoule E14 4000k 470lm","pce","12.4","560 lustrerie:L64 [560 lustrerie > AMPOULES] ; 590 ABA:L38 [590 ABA > ABA/CIR]"
+"ampoule e27 4000k 3451lm|pce|39.9","2","Ampoule E27 4000k 3451lm","pce","39.9","560 lustrerie:L63 [560 lustrerie > AMPOULES] ; 590 ABA:L37 [590 ABA > ABA/CIR]"
+"câble tt pvc 3x1.5 ci 52|m|8.736","2","Câble TT PVC 3x1.5 CI 52","m","8.736","520 Conducteurs:L38 [520 Conducteurs > Câble d'installation rigide] ; 590 ABA:L45 [590 ABA > ABA/CIR]"
+"canal d'installation pvc blanc 15x15 ci 11|m|19.435","2","Canal d'installation PVC blanc 15x15 CI 11","m","19.435","510 Système de support:L155 [510 Système de support > Canal d'installation] ; 590 ABA:L44 [590 ABA > ABA/CIR]"
+"boîte de dérivation mdm speedbox gr1 ci 12|pce|82.2835","2","Boîte de dérivation MDM Speedbox Gr1 CI 12","pce","82.2835","510 Système de support:L79 [510 Système de support > AP] ; 590 ABA:L43 [590 ABA > ABA/CIR]"
+"lumiled l pipe 150 cm ci 12|pce|89.9","2","Lumiled L PIPE 150 cm CI 12","pce","89.9","560 lustrerie:L39 [560 lustrerie > Lustreries] ; 590 ABA:L32 [590 ABA > ABA/CIR]"
+"lumiled l pipe 120 cm ci 12|pce|78.9","2","Lumiled L PIPE 120 cm CI 12","pce","78.9","560 lustrerie:L38 [560 lustrerie > Lustreries] ; 590 ABA:L31 [590 ABA > ABA/CIR]"
+"variateur led enc ci 20|pce|233","2","Variateur led ENC CI 20","pce","233","540 Appareils à c fort:L79 [540 Appareils à c fort > Interrupteurs ENC] ; 590 ABA:L24 [590 ABA > ABA/CIR]"

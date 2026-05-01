@@ -1,18 +1,18 @@
 import { supabase } from '../lib/supabase'
 
-export const STATUT_A_TRAITER = '\u00c0 traiter'
+export const STATUT_A_TRAITER = 'À traiter'
 export const STATUT_PRIS = 'Pris'
-export const STATUT_PLANIFIE = 'Planifi\u00e9'
+export const STATUT_PLANIFIE = 'Planifié'
 export const STATUT_EN_COURS = 'En cours'
 export const STATUT_INTERVENTION_FAITE = 'Intervention faite'
-export const STATUT_RAPPORT_RECU = 'Rapport re\u00e7u'
+export const STATUT_RAPPORT_RECU = 'Rapport reçu'
 
 export async function fetchDepannages() {
   const { data, error } = await supabase
-    .from('depannages')
+    .from('dossiers')
     .select(`
       id,
-      adresse,
+      adresse_chantier,
       adresse_normalisee,
       statut,
       date_travail,
@@ -21,7 +21,7 @@ export async function fetchDepannages() {
       chantier_id,
       created_at,
       pris_par,
-      regie:regies (
+      client:clients (
         id,
         nom
       ),
@@ -33,6 +33,7 @@ export async function fetchDepannages() {
         employe_id
       )
     `)
+    .eq('type', 'depannage')
     .order('created_at', { ascending: false })
 
   if (error) throw error
@@ -156,5 +157,9 @@ export function formatPlanningLabel(depannage) {
   const dateLabel = year && month && day ? `${day}.${month}.${year}` : String(dateValue)
   const heure = String(depannage?.heure_planifiee || '').slice(0, 5)
 
-  return heure ? `${dateLabel} \u00b7 ${heure}` : dateLabel
+  return heure ? `${dateLabel} · ${heure}` : dateLabel
+}
+
+export function isDepannageValide(depannage) {
+  return depannage?.statut === 'valide'
 }

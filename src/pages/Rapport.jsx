@@ -117,12 +117,10 @@ export default function Rapport() {
       return
     }
 
-    const foreignKey = isAffaire ? 'affaire_id' : 'sous_dossier_id'
-
     const { data, error } = await supabase
       .from('rapports')
-      .select('id, valide')
-      .eq(foreignKey, id)
+      .select('id, statut')
+      .eq('dossier_id', id)
       .eq('employe_id', user.id)
       .eq('date_travail', dateTravail)
       .is('deleted_at', null)
@@ -227,10 +225,9 @@ export default function Rapport() {
       const rapportPayload = {
         employe_id: user.id,
         date_travail: date,
-        heure_debut: '07:30',
-        heure_fin: '17:00',
-        remarques,
-        ...(isAffaire ? { affaire_id: id } : { sous_dossier_id: id })
+        heures: duree,
+        notes: remarques,
+        dossier_id: id
       }
 
       const rapport = await supabaseSafe(
@@ -423,14 +420,14 @@ export default function Rapport() {
 
           {rapportExistant?.id && (
             <div style={{
-              background: rapportExistant.valide ? '#FAEEDA' : '#FCEBEB',
-              border: `1px solid ${rapportExistant.valide ? '#efd19c' : '#f09595'}`,
+              background: rapportExistant.statut === 'valide' ? '#FAEEDA' : '#FCEBEB',
+              border: `1px solid ${rapportExistant.statut === 'valide' ? '#efd19c' : '#f09595'}`,
               borderRadius: '8px',
               padding: '10px 14px',
               fontSize: '12px',
-              color: rapportExistant.valide ? '#8A5A10' : '#A32D2D'
+              color: rapportExistant.statut === 'valide' ? '#8A5A10' : '#A32D2D'
             }}>
-              {rapportExistant.valide
+              {rapportExistant.statut === 'valide'
                 ? "Un rapport valide existe deja pour cette date. Les heures sont verrouillees."
                 : `Un rapport existe deja pour cette date dans ${isAffaire ? 'cette affaire' : 'ce sous-dossier'}. La recreation est bloquee pour eviter un double comptage.`}
             </div>

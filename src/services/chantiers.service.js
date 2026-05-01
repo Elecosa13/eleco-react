@@ -26,7 +26,7 @@ const INTERMEDIAIRES_METIER = [
 function normaliserNom(value) {
   return String(value || '')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .trim()
 }
@@ -39,7 +39,7 @@ export function getChantierClientLabel(chantier) {
     ''
   ).trim()
 
-  const legacyClientNom = String(chantier?.client_nom || '').trim()
+  const legacyClientNom = String(chantier?.client?.nom || '').trim()
 
   return intermediaireNom || legacyClientNom || 'Intermédiaire non défini'
 }
@@ -47,7 +47,7 @@ export function getChantierClientLabel(chantier) {
 export function isStandaloneIntermediaireRecord(chantier, intermediaires = []) {
   if (!chantier) return false
 
-  const nom = normaliserNom(chantier.nom)
+  const nom = normaliserNom(chantier.description)
   if (!nom) return false
 
   const nomsIntermediaires = [
@@ -125,6 +125,6 @@ export function groupChantiersByClient(chantiers) {
     .sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }))
     .map(([clientLabel, items]) => ({
       clientLabel,
-      items: items.sort((a, b) => String(a?.nom || '').localeCompare(String(b?.nom || ''), 'fr', { sensitivity: 'base' }))
+      items: items.sort((a, b) => String(a?.description || '').localeCompare(String(b?.description || ''), 'fr', { sensitivity: 'base' }))
     }))
 }

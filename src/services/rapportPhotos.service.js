@@ -12,7 +12,9 @@ export async function uploadRapportPhotos({
   userId
 }) {
   const photoFiles = Array.from(files || []).filter(Boolean)
-  if (!rapportId || !chantierId || (!sousDossierId && !affaireId) || photoFiles.length === 0) return []
+  const dossierId = sousDossierId || affaireId || depannageId || null
+
+  if (!rapportId || !chantierId || !dossierId || photoFiles.length === 0) return []
 
   const uploadedObjects = []
 
@@ -39,10 +41,8 @@ export async function uploadRapportPhotos({
 
       uploadedObjects.push({
         rapport_id: rapportId,
-        depannage_id: depannageId,
+        dossier_id: dossierId,
         chantier_id: chantierId,
-        ...(affaireId ? { affaire_id: affaireId } : {}),
-        ...(sousDossierId ? { sous_dossier_id: sousDossierId } : {}),
         storage_bucket: RAPPORT_PHOTOS_BUCKET,
         storage_path: storagePath,
         file_name: file.name || 'photo.jpg',
@@ -148,7 +148,7 @@ function slugify(value) {
   return String(value || 'photo')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60) || 'photo'

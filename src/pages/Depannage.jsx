@@ -184,7 +184,7 @@ export default function Depannage({ mode = 'employe' }) {
 
       const { data: commonMateriaux, error: commonMateriauxError } = await supabase
         .from('depannage_materiaux')
-        .select('*')
+        .select('id, depannage_id, ref_article, designation, unite, quantite')
         .eq('depannage_id', depannageId)
 
       if (commonMateriauxError) throw commonMateriauxError
@@ -255,8 +255,7 @@ export default function Depannage({ mode = 'employe' }) {
         catalogueId: article.id,
         nom: article.nom,
         unite: normalizeUnite(article.unite, article.nom),
-        qte: 1,
-        pu: 0
+        qte: 1
       }
     ])
   }
@@ -850,8 +849,7 @@ function mapRapportMateriauToUi(item) {
     catalogueId: item.ref_article || null,
     nom: item.designation,
     unite: normalizeUnite(item.unite, item.designation),
-    qte: Math.max(0, Number(item.quantite) || 0),
-    pu: Number(item.prix_net) || 0
+    qte: Math.max(0, Number(item.quantite) || 0)
   }
 }
 

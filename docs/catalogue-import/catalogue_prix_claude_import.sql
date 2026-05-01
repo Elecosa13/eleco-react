@@ -1,11 +1,26 @@
 ﻿-- Eleco SA - Import catalogue depuis Prix claude.xls
--- PRET A RELIRE UNIQUEMENT : ne pas executer sans validation.
+-- SQL final pret a executer manuellement dans Supabase SQL Editor apres validation.
 -- Source CSV: docs/catalogue-import/catalogue_prix_claude.csv
 -- Prix repris uniquement depuis la colonne P.U.; prix_net arrondi a 2 decimales; lignes #REF!, titres, Main oeuvre et Controle final exclus.
 BEGIN;
 
--- Option recommandee apres backup: desactiver ancien lot avant insertion.
--- UPDATE public.catalogue SET actif = false WHERE actif = true;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.catalogue
+    WHERE import_batch = 'prix_claude_20260501'
+    LIMIT 1
+  ) THEN
+    RAISE EXCEPTION 'Import deja present: import_batch prix_claude_20260501 existe deja dans public.catalogue.';
+  END IF;
+END $$;
+
+-- Remplacement non destructif: les anciennes lignes restent en base mais ne sont plus visibles.
+UPDATE public.catalogue
+SET actif = false
+WHERE actif = true
+  AND COALESCE(import_batch, '') <> 'prix_claude_20260501';
 
 INSERT INTO public.catalogue (
   reference, nom, categorie, unite, prix_net, actif, visible_employe, source_import, import_batch
@@ -413,5 +428,4 @@ INSERT INTO public.catalogue (
 -- SELECT import_batch, count(*) FROM public.catalogue WHERE import_batch = 'prix_claude_20260501' GROUP BY import_batch;
 -- SELECT categorie, count(*) FROM public.catalogue WHERE import_batch = 'prix_claude_20260501' GROUP BY categorie ORDER BY categorie;
 
--- Remplacer ROLLBACK par COMMIT uniquement apres validation.
-ROLLBACK;
+COMMIT;

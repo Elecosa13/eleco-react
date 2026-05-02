@@ -1,1247 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
-import { supabaseSafe } from '../lib/supabaseSafe'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
-import DepannageCard from '../components/depannage/DepannageCard'
 import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
-import {
-  demarrerDepannage,
-  libererDepannage,
-  planifierDepannage,
-  prendreDepannage,
-  prendreDepannageSansDate,
-  quitterDepannage,
-  rejoindreDepannage
-} from '../services/depannages.service'
-import {
-  getChantierStatusBadgeStyle,
-  isChantierVisibleToEmployees,
-  isStandaloneIntermediaireRecord
-} from '../services/chantiers.service'
-import RapportV1 from './RapportV1'
-
-const QUOTA_VACANCES = 20
-const CREDIT_JOUR = 8
-const STATUT_RAPPORT_RECU = 'Rapport reçu'
-const STATUT_FACTURE_A_PREPARER = 'Facture à préparer'
-const STATUT_FACTURE_PRETE = 'Facture prête'
-const STATUT_ANNULE = 'Annulé'
-const STATUTS_DEPANNAGE_ADMIN = [STATUT_RAPPORT_RECU, STATUT_FACTURE_A_PREPARER, STATUT_FACTURE_PRETE, STATUT_ANNULE]
-const REGIE_NON_ASSIGNEE = { id: '__sans_regie__', nom: 'Régie non assignée' }
-
-function countJoursOuvrables(dateDebut, dateFin) {
-  if (!dateDebut || !dateFin) return 0
-  const start = new Date(dateDebut + 'T12:00:00')
-  const end = new Date(dateFin + 'T12:00:00')
-  if (end < start) return 0
-  let count = 0
-  const cur = new Date(start)
-  while (cur <= end) {
-    const day = cur.getDay()
-    if (day !== 0 && day !== 6) count++
-    cur.setDate(cur.getDate() + 1)
-  }
-  return count
-}
-
-function datesSeChevauchent(debutA, finA, debutB, finB) {
-  return debutA <= finB && finA >= debutB
-}
-
-function getISOWeek(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
-  const week1 = new Date(d.getFullYear(), 0, 4)
-  return 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
-}
-
-function fmtDate(dateStr, opts) {
-  return new Date(dateStr + 'T12:00:00').toLocaleDateString('fr-CH', opts)
-}
-
-export default function Employe() {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { profile: user, signOut } = useAuth()
-
-  const [chantiers, setChantiers] = useState([])
-  const [vue, setVue] = useState(() => location.state?.restoreDepannages ? 'depannages' : 'accueil')
-  const [creditUtilise, setCreditUtilise] = useState(0)
-  const [recherche, setRecherche] = useState('')
-  const [ajoutChantier, setAjoutChantier] = useState(false)
-  const [intermediaireSel, setIntermediaireSel] = useState(null)
-  const [nouveauNom, setNouveauNom] = useState('')
-  const [nouvelleAdresse, setNouvelleAdresse] = useState('')
-  const [confirmDoublon, setConfirmDoublon] = useState(null)
-  const [depannagesRecents, setDepannagesRecents] = useState([])
-  const [depannagesTerrain, setDepannagesTerrain] = useState([])
-  const [depannagesLoading, setDepannagesLoading] = useState(false)
-  const [depannagesErreur, setDepannagesErreur] = useState('')
-  const [depannagesRecherche, setDepannagesRecherche] = useState('')
-  const [depannageActionLoading, setDepannageActionLoading] = useState('')
-  const [depannagesNiveau, setDepannagesNiveau] = useState(() => (location.state?.restoreDepannages && location.state?.moisSel) ? 3 : 1)
-  const [regieSel, setRegieSel] = useState(null)
-  const [moisSel, setMoisSel] = useState(() => location.state?.restoreDepannages ? (location.state?.moisSel || null) : null)
-  const [regiesAll, setRegiesAll] = useState([])
-
-  const [modalSupp, setModalSupp] = useState(false)
-  const [suppHeures, setSuppHeures] = useState(1)
-  const [suppJustification, setSuppJustification] = useState('')
-  const [suppChantierId, setSuppChantierId] = useState('')
-  const [suppDepannageId, setSuppDepannageId] = useState('')
-  const [suppEnvoi, setSuppEnvoi] = useState(false)
-  const [suppSucces, setSuppSucces] = useState(false)
-  const [suppHistorique, setSuppHistorique] = useState([])
-
-  const [vacances, setVacances] = useState([])
-  const [couvertureInfo, setCouvertureInfo] = useState({ count: 0, noms: null })
-  const [soldeVacances, setSoldeVacances] = useState({ pris: 0, attente: 0 })
-  const [quotaVacances, setQuotaVacances] = useState(QUOTA_VACANCES)
-  const [periodesAdmin, setPeriodesAdmin] = useState([])
-  const [vacErreur, setVacErreur] = useState('')
-  const [modalVacances, setModalVacances] = useState(false)
-  const [vacDateDebut, setVacDateDebut] = useState('')
-  const [vacDateFin, setVacDateFin] = useState('')
-  const [vacCommentaire, setVacCommentaire] = useState('')
-  const [vacEnvoi, setVacEnvoi] = useState(false)
-  const [vacSucces, setVacSucces] = useState(false)
-
-  const [absences, setAbsences] = useState([])
-  const [modalAbsence, setModalAbsence] = useState(false)
-  const [absType, setAbsType] = useState('maladie')
-  const [absDateDebut, setAbsDateDebut] = useState('')
-  const [absDateFin, setAbsDateFin] = useState('')
-  const [absCommentaire, setAbsCommentaire] = useState('')
-  const [absEnvoi, setAbsEnvoi] = useState(false)
-  const [absSucces, setAbsSucces] = useState(false)
-  const [absErreur, setAbsErreur] = useState('')
-
-  useEffect(() => { charger() }, [])
-  const refreshPage = usePageRefresh(() => charger(), [user?.id])
-
-  useEffect(() => {
-    if (location.state?.restoreDepannages && location.state?.regieId && regiesAll.length > 0 && !regieSel) {
-      const found = regiesAll.find(r => r.id === location.state.regieId)
-      if (found) setRegieSel(found)
-    }
-  }, [regiesAll])
-
-  useEffect(() => {
-    function handlePop() {
-      if (vue !== 'accueil' || intermediaireSel || depannagesNiveau > 1) {
-        revenirDepuisHeader()
-      }
-    }
-    window.addEventListener('popstate', handlePop)
-    return () => window.removeEventListener('popstate', handlePop)
-  }, [vue, depannagesNiveau, intermediaireSel, regieSel, moisSel])
-
-  useEffect(() => {
-    if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) {
-      setCouvertureInfo({ count: 0, noms: null })
-      return
-    }
-    supabase.rpc('get_couverture_vacances', { p_debut: vacDateDebut, p_fin: vacDateFin })
-      .then(({ data }) => { if (data) setCouvertureInfo(data) })
-  }, [vacDateDebut, vacDateFin])
-
-  async function charger() {
-    const { data: ch } = await supabase.from('chantiers').select('*, intermediaires(id, nom)').eq('actif', true).order('nom')
-    if (ch) setChantiers(ch.filter(isChantierVisibleToEmployees).filter(chantier => !isStandaloneIntermediaireRecord(chantier)))
-
-    const aujourdHui = new Date().toISOString().split('T')[0]
-    const { data: entries } = await supabase
-      .from('time_entries')
-      .select('duree')
-      .eq('employe_id', user.id)
-      .eq('date_travail', aujourdHui)
-    if (entries) setCreditUtilise(entries.reduce((s, e) => s + Number(e.duree), 0))
-
-    const { data: deps } = await supabase
-      .from('depannages')
-      .select('id, adresse, date_travail, statut')
-      .eq('employe_id', user.id)
-      .not('statut', 'in', `(${STATUTS_DEPANNAGE_ADMIN.map(statut => `"${statut}"`).join(',')})`)
-      .order('date_travail', { ascending: false })
-      .limit(10)
-    if (deps) setDepannagesRecents(deps)
-
-    const { data: supp } = await supabase
-      .from('time_entries')
-      .select('id, date_travail, duree, commentaire, chantiers(nom)')
-      .eq('employe_id', user.id)
-      .eq('type', 'heures_supp')
-      .order('date_travail', { ascending: false })
-      .limit(8)
-    if (supp) setSuppHistorique(supp)
-
-    const annee = new Date().getFullYear()
-    const { data: profil } = await supabase
-      .from('utilisateurs')
-      .select('vacances_quota_annuel')
-      .eq('id', user.id)
-      .maybeSingle()
-    const quota = profil?.vacances_quota_annuel || QUOTA_VACANCES
-    setQuotaVacances(quota)
-
-    const { data: periodes } = await supabase.from('vacances_blocages')
-      .select('*')
-      .eq('actif', true)
-      .order('date_debut', { ascending: true })
-    if (periodes) setPeriodesAdmin(periodes)
-
-    const { data: vac } = await supabase.from('vacances')
-      .select('*')
-      .eq('employe_id', user.id)
-      .order('created_at', { ascending: false })
-
-    if (vac) {
-      setVacances(vac)
-      const pris = vac
-        .filter(v => v.statut === 'accepte' && new Date(v.date_debut + 'T12:00:00').getFullYear() === annee)
-        .reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
-      const attente = vac
-        .filter(v => v.statut === 'en_attente' && new Date(v.date_debut + 'T12:00:00').getFullYear() === annee)
-        .reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
-      setSoldeVacances({ pris, attente })
-    }
-
-    await chargerAbsences()
-    await chargerDepannagesTerrain()
-
-  }
-
-  async function chargerDepannagesTerrain() {
-    setDepannagesLoading(true)
-    setDepannagesErreur('')
-    try {
-      const formatSupabaseError = error => error
-        ? {
-          code: error.code || null,
-          message: error.message || String(error),
-          details: error.details || null,
-          hint: error.hint || null
-        }
-        : null
-
-      const DEPANNAGE_SELECT = `
-        id,
-        adresse,
-        adresse_normalisee,
-        statut,
-        date_travail,
-        date_planifiee,
-        heure_planifiee,
-        chantier_id,
-        regie_id,
-        created_at,
-        employe_id,
-        pris_par,
-        regie:regies (
-          id,
-          nom
-        ),
-        chantier:chantiers (
-          id,
-          nom
-        ),
-        depannage_intervenants (
-          employe_id
-        )
-      `
-
-      const { data: interventions, error: interventionsError } = await supabase
-        .from('depannage_intervenants')
-        .select('depannage_id')
-        .eq('employe_id', user.id)
-
-      const depannageIdsIntervenant = (interventions || [])
-        .map(intervention => intervention.depannage_id)
-        .filter(Boolean)
-
-      const statutsResult = await supabase
-        .from('depannages')
-        .select('statut')
-        .order('statut', { ascending: true })
-
-      const statutsTrouves = Array.from(new Set(
-        (statutsResult.data || []).map(depannage => depannage.statut || '(vide)')
-      )).sort((a, b) => a.localeCompare(b, 'fr'))
-
-      const ouvertsResult = await supabase
-        .from('depannages')
-        .select(DEPANNAGE_SELECT)
-        .not('statut', 'in', `(${STATUTS_DEPANNAGE_ADMIN.map(statut => `"${statut}"`).join(',')})`)
-        .order('created_at', { ascending: false })
-
-      const prisParResult = await supabase
-        .from('depannages')
-        .select(DEPANNAGE_SELECT)
-        .eq('pris_par', user.id)
-        .order('created_at', { ascending: false })
-
-      const employeIdResult = await supabase
-        .from('depannages')
-        .select(DEPANNAGE_SELECT)
-        .eq('employe_id', user.id)
-        .order('created_at', { ascending: false })
-
-      const intervenantsResult = depannageIdsIntervenant.length > 0
-        ? await supabase
-          .from('depannages')
-          .select(DEPANNAGE_SELECT)
-          .in('id', depannageIdsIntervenant)
-          .order('created_at', { ascending: false })
-        : { data: [], error: null }
-
-      console.log('[Eleco][Employe][Depannages] chargement', {
-        userId: user.id,
-        statutsTrouves,
-        counts: {
-          ouverts: Array.isArray(ouvertsResult.data) ? ouvertsResult.data.length : 0,
-          prisPar: Array.isArray(prisParResult.data) ? prisParResult.data.length : 0,
-          employeId: Array.isArray(employeIdResult.data) ? employeIdResult.data.length : 0,
-          intervenantsIds: depannageIdsIntervenant.length,
-          intervenants: Array.isArray(intervenantsResult.data) ? intervenantsResult.data.length : 0
-        },
-        errors: {
-          statuts: formatSupabaseError(statutsResult.error),
-          interventions: formatSupabaseError(interventionsError),
-          ouverts: formatSupabaseError(ouvertsResult.error),
-          prisPar: formatSupabaseError(prisParResult.error),
-          employeId: formatSupabaseError(employeIdResult.error),
-          intervenants: formatSupabaseError(intervenantsResult.error)
-        }
-      })
-
-      const error = statutsResult.error ||
-        interventionsError ||
-        ouvertsResult.error ||
-        prisParResult.error ||
-        employeIdResult.error ||
-        intervenantsResult.error
-
-      if (error) throw error
-
-      const idsRegies = Array.from(new Set(
-        ([
-          ...(ouvertsResult.data || []),
-          ...(prisParResult.data || []),
-          ...(employeIdResult.data || []),
-          ...(intervenantsResult.data || [])
-        ]).map(depannage => depannage.regie_id).filter(Boolean)
-      ))
-
-      const regiesById = new Map()
-      const { data: regiesData, error: regiesError } = await supabase
-        .from('regies')
-        .select('id, nom')
-        .eq('actif', true)
-        .order('nom')
-
-      if (regiesError) {
-        console.error('Erreur chargement regies depannages employe', regiesError)
-      } else {
-        for (const regie of regiesData || []) regiesById.set(String(regie.id), regie)
-        setRegiesAll(regiesData || [])
-      }
-
-      const depannagesById = new Map()
-      for (const depannage of [
-        ...(ouvertsResult.data || []),
-        ...(prisParResult.data || []),
-        ...(employeIdResult.data || []),
-        ...(intervenantsResult.data || [])
-      ]) {
-        if (depannage?.id) depannagesById.set(String(depannage.id), depannage)
-      }
-
-      const data = Array.from(depannagesById.values())
-        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-
-      const idsProfil = Array.from(new Set(
-        (data || []).flatMap(depannage => [
-          depannage.pris_par,
-          ...(depannage.depannage_intervenants || []).map(intervenant => intervenant.employe_id)
-        ]).filter(Boolean)
-      ))
-
-      const profilsById = new Map()
-      if (idsProfil.length > 0) {
-        const { data: profils, error: profilsError } = await supabase
-          .from('profils_publics')
-          .select('id, prenom, initiales')
-          .in('id', idsProfil)
-
-        if (profilsError) throw profilsError
-        for (const profil of profils || []) profilsById.set(String(profil.id), profil)
-      }
-
-      const depannages = (data || []).map(depannage => ({
-        ...depannage,
-        regie: depannage.regie || (depannage.regie_id ? regiesById.get(String(depannage.regie_id)) || null : null) || REGIE_NON_ASSIGNEE,
-        pris_par_user: depannage.pris_par ? profilsById.get(String(depannage.pris_par)) || null : null,
-        depannage_intervenants: (depannage.depannage_intervenants || []).map(intervenant => ({
-          ...intervenant,
-          employe: intervenant.employe_id ? profilsById.get(String(intervenant.employe_id)) || null : null
-        }))
-      }))
-
-      setDepannagesTerrain(depannages)
-    } catch (error) {
-      console.error('Erreur chargement depannages terrain', error)
-      setDepannagesErreur("Impossible de charger les dépannages. Réessaie dans un instant.")
-    } finally {
-      setDepannagesLoading(false)
-    }
-  }
-
-  async function chargerAbsences() {
-    const { data: abs } = await supabase.from('absences')
-      .select('*')
-      .eq('employe_id', user.id)
-      .order('date_debut', { ascending: false })
-      .limit(3)
-    if (abs) setAbsences(abs)
-  }
-
-  async function creerChantier(forcer = false) {
-    if (!nouveauNom.trim()) return
-    if (!forcer) {
-      const existe = chantiers.find(c => c.nom.toLowerCase() === nouveauNom.toLowerCase())
-      if (existe) { setConfirmDoublon(existe); return }
-    }
-    try {
-      await supabaseSafe(supabase.from('chantiers').insert({
-        nom: nouveauNom,
-        adresse: nouvelleAdresse,
-        statut: 'A confirmer'
-      }))
-      setNouveauNom('')
-      setNouvelleAdresse('')
-      setAjoutChantier(false)
-      setConfirmDoublon(null)
-      charger()
-    } catch (error) {
-      alert("Erreur lors de la création du chantier. Veuillez réessayer.")
-    }
-  }
-
-  async function soumettreHeuresSupp(e) {
-    e.preventDefault()
-    if (!suppJustification.trim() || Number(suppHeures) <= 0) return
-    setSuppEnvoi(true)
-    const aujourdHui = new Date().toISOString().split('T')[0]
-    const annee = new Date(aujourdHui + 'T12:00:00').getFullYear()
-    try {
-      await supabaseSafe(supabase.from('time_entries').insert({
-        employe_id: user.id,
-        date_travail: aujourdHui,
-        type: 'heures_supp',
-        duree: Number(suppHeures),
-        heures_nettes: Number(suppHeures),
-        semaine: getISOWeek(aujourdHui),
-        annee,
-        commentaire: suppJustification.trim(),
-        chantier_id: suppChantierId || null,
-        reference_id: suppDepannageId || null
-      }))
-      setSuppSucces(true)
-      setTimeout(() => {
-        setSuppSucces(false)
-        setModalSupp(false)
-        setSuppHeures(1)
-        setSuppJustification('')
-        setSuppChantierId('')
-        setSuppDepannageId('')
-        charger()
-      }, 1500)
-    } catch (error) {
-      alert("Erreur lors de l'enregistrement des heures supplémentaires. Veuillez réessayer.")
-    } finally {
-      setSuppEnvoi(false)
-    }
-  }
-
-  const joursVacancesSelectionnes = useMemo(
-    () => countJoursOuvrables(vacDateDebut, vacDateFin),
-    [vacDateDebut, vacDateFin]
-  )
-
-  const periodeSpeciale = useMemo(() => {
-    if (!vacDateDebut || !vacDateFin) return null
-    return periodesAdmin.find(p =>
-      (p.type || 'blocage') === 'fermeture_collective' &&
-      datesSeChevauchent(vacDateDebut, vacDateFin, p.date_debut, p.date_fin)
-    )
-  }, [periodesAdmin, vacDateDebut, vacDateFin])
-
-  const alerteCouverture = useMemo(() => {
-    if (!couvertureInfo || couvertureInfo.count < 2 || periodeSpeciale) return ''
-    const noms = (couvertureInfo.noms || []).filter(Boolean)
-    const periode = noms.length ? ' (' + noms.join(', ') + ')' : ''
-    return 'Attention effectif reduit : ' + couvertureInfo.count + ' autre(s) absence(s) sur cette periode' + periode + '.'
-  }, [couvertureInfo, periodeSpeciale])
-
-  async function soumettreVacances(e) {
-    e.preventDefault()
-    if (!vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut) return
-
-    const blocage = periodesAdmin.find(p =>
-      (p.type || 'blocage') === 'blocage' &&
-      datesSeChevauchent(vacDateDebut, vacDateFin, p.date_debut, p.date_fin)
-    )
-    if (blocage) {
-      setVacErreur(`Période bloquée : ${blocage.motif}`)
-      return
-    }
-
-    if (joursVacancesSelectionnes <= 0) {
-      setVacErreur('Sélectionne au moins un jour ouvrable.')
-      return
-    }
-
-    const restant = quotaVacances - soldeVacances.pris
-    if (joursVacancesSelectionnes > restant) {
-      setVacErreur(`Quota dépassé : il reste ${Math.max(0, restant)} jour(s).`)
-      return
-    }
-
-    const doublonPerso = vacances.find(v =>
-      ['en_attente', 'accepte'].includes(v.statut) &&
-      datesSeChevauchent(vacDateDebut, vacDateFin, v.date_debut, v.date_fin)
-    )
-    if (doublonPerso) {
-      setVacErreur('Tu as déjà une demande en attente ou acceptée sur cette période.')
-      return
-    }
-
-    setVacErreur('')
-    setVacEnvoi(true)
-    try {
-      await supabaseSafe(supabase.from('vacances').insert({
-        employe_id: user.id,
-        date_debut: vacDateDebut,
-        date_fin: vacDateFin,
-        commentaire: vacCommentaire.trim() || null,
-        statut: 'en_attente',
-        jours_ouvrables: joursVacancesSelectionnes
-      }))
-      setVacSucces(true)
-      setTimeout(() => {
-        setVacSucces(false)
-        setModalVacances(false)
-        setVacDateDebut('')
-        setVacDateFin('')
-        setVacCommentaire('')
-        setVacErreur('')
-        charger()
-      }, 1500)
-    } catch (error) {
-      setVacErreur("Erreur lors de l'envoi de la demande. Veuillez réessayer.")
-    } finally {
-      setVacEnvoi(false)
-    }
-  }
-
-  async function soumettreAbsence(e) {
-    e.preventDefault()
-    if (!absDateDebut || !absDateFin || absDateFin < absDateDebut) return
-    setAbsErreur('')
-    setAbsEnvoi(true)
-    try {
-      await supabaseSafe(supabase.from('absences').insert({
-        employe_id: user.id,
-        type: absType,
-        date_debut: absDateDebut,
-        date_fin: absDateFin,
-        commentaire: absCommentaire.trim() || null,
-        statut: 'en_attente'
-      }))
-      setAbsSucces(true)
-      setTimeout(() => {
-        setAbsSucces(false)
-        setModalAbsence(false)
-        setAbsType('maladie')
-        setAbsDateDebut('')
-        setAbsDateFin('')
-        setAbsCommentaire('')
-        setAbsErreur('')
-        chargerAbsences()
-      }, 1500)
-    } catch {
-      setAbsErreur("Erreur lors de l'envoi. Veuillez réessayer.")
-    } finally {
-      setAbsEnvoi(false)
-    }
-  }
-
-  async function deconnecter() {
-    await signOut()
-    navigate('/login')
-  }
-
-  async function agirSurDepannage(action, depannage, payload = null) {
-    if (!depannage?.id) return
-
-    if (action === 'rapport') {
-      navigate(`/employe/depannage?depannageId=${depannage.id}`, { state: { from: '/employe' } })
-      return
-    }
-
-    const actions = {
-      prendre: prendreDepannage,
-      prendreSansDate: prendreDepannageSansDate,
-      planifier: id => planifierDepannage(id, payload || {}),
-      demarrer: demarrerDepannage,
-      rejoindre: rejoindreDepannage,
-      quitter: quitterDepannage,
-      liberer: libererDepannage
-    }
-    const executer = actions[action]
-    if (!executer) return
-
-    setDepannagesErreur('')
-    setDepannageActionLoading(`${action}:${depannage.id}`)
-    try {
-      await executer(depannage.id)
-      await chargerDepannagesTerrain()
-    } catch (error) {
-      console.error(`Erreur action depannage ${action}`, error)
-      if (String(error?.message || '').includes('depannage_employe_id_locked')) {
-        setDepannagesErreur('Ce dépannage a déjà été pris par un autre employé. Actualise la liste.')
-        return
-      }
-      setDepannagesErreur(error?.message || "Action impossible pour ce dépannage. La liste reste disponible.")
-    } finally {
-      setDepannageActionLoading('')
-    }
-  }
-
-  function ouvrirDepannage(depannage) {
-    if (!depannage?.id) return
-    navigate(`/employe/depannage?depannageId=${depannage.id}`, { state: { from: '/employe' } })
-  }
-
-  const isCarlosAdmin = user?.email?.toLowerCase() === 'carlos.a@eleco.ch'
-  const employeUserMark = isCarlosAdmin ? '∞' : user?.initiales
-  const creditRestant = CREDIT_JOUR - creditUtilise
-  const pourcent = isCarlosAdmin ? 0 : Math.min(100, (creditUtilise / CREDIT_JOUR) * 100)
-  const couleurBarre = isCarlosAdmin ? '#9CA3AF' : creditUtilise >= CREDIT_JOUR ? '#27ae60' : creditUtilise >= 6 ? '#f39c12' : '#185FA5'
-  const intermediaires = useMemo(() => {
-    const map = new Map()
-    chantiers.forEach(c => {
-      if (c.intermediaire_id && c.intermediaires?.nom && !map.has(c.intermediaire_id))
-        map.set(c.intermediaire_id, c.intermediaires.nom)
-    })
-    return [...map.entries()].map(([id, nom]) => ({ id, nom })).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
-  }, [chantiers])
-  const depannagesFiltres = useMemo(() => {
-    const term = normaliserRecherche(depannagesRecherche)
-    if (!term) return depannagesTerrain
-    return depannagesTerrain.filter(depannage =>
-      normaliserRecherche(depannage.adresse).includes(term) ||
-      normaliserRecherche(depannage.adresse_normalisee).includes(term)
-    )
-  }, [depannagesRecherche, depannagesTerrain])
-
-  const regiesListe = useMemo(() => {
-    const map = new Map()
-    depannagesTerrain.forEach(d => {
-      if (d.regie?.id) map.set(d.regie.id, d.regie.nom)
-    })
-    return [...map.entries()]
-      .map(([id, nom]) => ({ id, nom }))
-      .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
-  }, [depannagesTerrain])
-
-  const now = new Date()
-  const moisCourant = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const moisPrecedentDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  const moisPrecedent = `${moisPrecedentDate.getFullYear()}-${String(moisPrecedentDate.getMonth() + 1).padStart(2, '0')}`
-
-  const statutLabel = { en_attente: 'En attente', accepte: 'Accepté', refuse: 'Refusé' }
-  const statutColor = { en_attente: '#BA7517', accepte: '#3B6D11', refuse: '#A32D2D' }
-  const statutBg = { en_attente: '#FAEEDA', accepte: '#EAF3DE', refuse: '#FCEBEB' }
-  const absStatutLabel = { en_attente: 'En attente', approuve: 'Approuvé', refuse: 'Refusé' }
-  const absStatutColor = { en_attente: '#BA7517', approuve: '#3B6D11', refuse: '#A32D2D' }
-  const absStatutBg = { en_attente: '#FAEEDA', approuve: '#EAF3DE', refuse: '#FCEBEB' }
-  const absTypeLabel = { maladie: 'Maladie', accident: 'Accident', autre: 'Autre' }
-  const titrePage = vue === 'accueil'
-    ? `Bonjour, ${user?.prenom}`
-    : vue === 'depannages' && depannagesNiveau === 2
-      ? (regieSel?.nom || 'Dépannages')
-      : vue === 'depannages' && depannagesNiveau === 3
-        ? (moisSel ? formatMoisLabel(moisSel) : regieSel?.nom || 'Dépannages')
-        : vue === 'depannages'
-          ? 'Dépannages'
-          : vue === 'autres'
-            ? 'Autres'
-            : vue === 'testv1'
-              ? 'Rapport V1'
-              : vue === 'chantiers' && intermediaireSel
-                ? (intermediaires.find(i => i.id === intermediaireSel)?.nom || 'Chantiers actifs')
-                : 'Chantiers actifs'
-  const employeHeaderRight = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <PageTopActions navigate={navigate} fallbackPath="/employe" onRefresh={refreshPage} showBack={false} />
-      <button className="avatar" onClick={deconnecter}>{employeUserMark}</button>
-    </div>
-  )
-
-  function revenirDepuisHeader() {
-    if (vue === 'chantiers' && intermediaireSel) {
-      setIntermediaireSel(null)
-      setRecherche('')
-      return
-    }
-
-    if (vue === 'depannages' && depannagesNiveau > 1) {
-      if (depannagesNiveau === 3) {
-        setMoisSel(null)
-        setDepannagesNiveau(2)
-      } else {
-        setRegieSel(null)
-        setDepannagesNiveau(1)
-      }
-      return
-    }
-
-    setVue('accueil')
-    setRecherche('')
-    setDepannagesRecherche('')
-    setAjoutChantier(false)
-    setDepannagesNiveau(1)
-    setRegieSel(null)
-    setMoisSel(null)
-  }
-
-  if (modalSupp) {
-    if (suppSucces) return (
-      <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
-        <div style={{ fontSize: '48px' }}>✅</div>
-        <div style={{ fontWeight: 600, fontSize: '16px' }}>Heures supp. enregistrées !</div>
-      </div>
-    )
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <span style={{ fontWeight: 700, fontSize: '16px' }}>Heures supplémentaires</span>
-            <button onClick={() => setModalSupp(false)} style={{ background: 'none', border: 'none', fontSize: '22px', color: '#888', padding: '4px', lineHeight: 1 }}>×</button>
-          </div>
-          <form onSubmit={soumettreHeuresSupp} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="form-group">
-              <label>Nombre d'heures *</label>
-              <input type="number" min="0.5" max="24" step="0.5" value={suppHeures} onChange={e => setSuppHeures(e.target.value)} required />
-            </div>
-            <div className="form-group">
-              <label>Justification *</label>
-              <textarea rows={3} value={suppJustification} onChange={e => setSuppJustification(e.target.value)} placeholder="Motif des heures supplémentaires..." required style={{ resize: 'none' }} />
-            </div>
-            <div className="form-group">
-              <label>Chantier (optionnel)</label>
-              <select value={suppChantierId} onChange={e => { setSuppChantierId(e.target.value); if (e.target.value) setSuppDepannageId('') }}>
-                <option value="">Aucun</option>
-                {chantiers.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
-              </select>
-            </div>
-            {depannagesRecents.length > 0 && (
-              <div className="form-group">
-                <label>Dépannage (optionnel)</label>
-                <select value={suppDepannageId} onChange={e => { setSuppDepannageId(e.target.value); if (e.target.value) setSuppChantierId('') }}>
-                  <option value="">Aucun</option>
-                  {depannagesRecents.map(d => (
-                    <option key={d.id} value={d.id}>{d.adresse} · {fmtDate(d.date_travail)}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div style={{ background: '#FAEEDA', border: '1px solid #f39c12', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
-              Ces heures seront visibles par l'administration.
-            </div>
-            <button type="submit" className="btn-primary" disabled={suppEnvoi || !suppJustification.trim()}>
-              {suppEnvoi ? 'Enregistrement...' : '✓ Enregistrer les heures supp.'}
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
-  if (modalVacances) {
-    if (vacSucces) return (
-      <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
-        <div style={{ fontSize: '48px' }}>✅</div>
-        <div style={{ fontWeight: 600, fontSize: '16px' }}>Demande envoyée !</div>
-        <div style={{ fontSize: '13px', color: '#888' }}>En attente de validation par l'administration.</div>
-      </div>
-    )
-    const restant = quotaVacances - soldeVacances.pris
-    const blocages = periodesAdmin.filter(p => (p.type || 'blocage') === 'blocage')
-    const fermetures = periodesAdmin.filter(p => (p.type || 'blocage') === 'fermeture_collective')
-
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
-          <PageHeader
-            title="Demande de vacances"
-            subtitle="Espace employé"
-            onBack={() => { setModalVacances(false); setVacErreur('') }}
-            rightSlot={employeHeaderRight}
-          />
-          <form onSubmit={soumettreVacances} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="grid2">
-              <div className="form-group">
-                <label>Date de début *</label>
-                <input type="date" value={vacDateDebut} onChange={e => { setVacDateDebut(e.target.value); setVacErreur('') }} required />
-              </div>
-              <div className="form-group">
-                <label>Date de fin *</label>
-                <input type="date" value={vacDateFin} min={vacDateDebut} onChange={e => { setVacDateFin(e.target.value); setVacErreur('') }} required />
-              </div>
-            </div>
-            {joursVacancesSelectionnes > 0 && (
-              <div style={{
-                background: joursVacancesSelectionnes > restant ? '#FCEBEB' : '#E6F1FB',
-                border: `1px solid ${joursVacancesSelectionnes > restant ? '#f09595' : '#185FA5'}`,
-                borderRadius: '8px', padding: '10px 14px', fontSize: '12px',
-                color: joursVacancesSelectionnes > restant ? '#A32D2D' : '#185FA5'
-              }}>
-                {joursVacancesSelectionnes} j. ouvrables sélectionnés · {Math.max(0, restant)} j. restants au quota
-                {joursVacancesSelectionnes > restant && ' · quota dépassé'}
-              </div>
-            )}
-            {periodeSpeciale && (
-              <div style={{ background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#3B6D11' }}>
-                Fermeture collective : {periodeSpeciale.motif}
-              </div>
-            )}
-            {!periodeSpeciale && alerteCouverture && (
-              <div style={{ background: '#FAEEDA', border: '1px solid #f39c12', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
-                {alerteCouverture}
-              </div>
-            )}
-            <div className="form-group">
-              <label>Commentaire (optionnel)</label>
-              <textarea rows={2} value={vacCommentaire} onChange={e => setVacCommentaire(e.target.value)} placeholder="Informations complémentaires..." style={{ resize: 'none' }} />
-            </div>
-            {vacErreur && (
-              <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
-                {vacErreur}
-              </div>
-            )}
-            {(blocages.length > 0 || fermetures.length > 0) && (
-              <div style={{ background: '#f8f8f8', border: '1px solid #e2e2e2', borderRadius: '8px', padding: '10px 14px', fontSize: '11px', color: '#666' }}>
-                {blocages.length > 0 && <div>Blocages : {blocages.slice(0, 3).map(b => `${fmtDate(b.date_debut)} - ${fmtDate(b.date_fin)}`).join(', ')}</div>}
-                {fermetures.length > 0 && <div>Fermetures collectives : {fermetures.slice(0, 3).map(b => `${fmtDate(b.date_debut)} - ${fmtDate(b.date_fin)}`).join(', ')}</div>}
-              </div>
-            )}
-            <button type="submit" className="btn-primary" disabled={vacEnvoi || !vacDateDebut || !vacDateFin || vacDateFin < vacDateDebut}>
-              {vacEnvoi ? 'Envoi...' : '✓ Envoyer la demande'}
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
-  if (modalAbsence) {
-    if (absSucces) return (
-      <div style={{ position: 'fixed', inset: 0, background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', zIndex: 100 }}>
-        <div style={{ fontSize: '48px' }}>✅</div>
-        <div style={{ fontWeight: 600, fontSize: '16px' }}>Absence déclarée !</div>
-        <div style={{ fontSize: '13px', color: '#888' }}>En attente de validation par l'administration.</div>
-      </div>
-    )
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        <div style={{ background: 'white', borderRadius: '16px 16px 0 0', padding: '20px 16px', maxHeight: '90vh', overflowY: 'auto' }}>
-          <PageHeader
-            title="Déclarer une absence"
-            subtitle="Espace employé"
-            onBack={() => { setModalAbsence(false); setAbsErreur('') }}
-            rightSlot={employeHeaderRight}
-          />
-          <form onSubmit={soumettreAbsence} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="form-group">
-              <label>Type d'absence *</label>
-              <select value={absType} onChange={e => setAbsType(e.target.value)} required>
-                <option value="maladie">Maladie</option>
-                <option value="accident">Accident</option>
-                <option value="autre">Autre</option>
-              </select>
-            </div>
-            <div className="grid2">
-              <div className="form-group">
-                <label>Date de début *</label>
-                <input type="date" value={absDateDebut} onChange={e => { setAbsDateDebut(e.target.value); setAbsErreur('') }} required />
-              </div>
-              <div className="form-group">
-                <label>Date de fin *</label>
-                <input type="date" value={absDateFin} min={absDateDebut} onChange={e => { setAbsDateFin(e.target.value); setAbsErreur('') }} required />
-              </div>
-            </div>
-            <div className="form-group">
-              <label>Commentaire (optionnel)</label>
-              <textarea rows={2} value={absCommentaire} onChange={e => setAbsCommentaire(e.target.value)} placeholder="Informations complémentaires..." style={{ resize: 'none' }} />
-            </div>
-            {absErreur && (
-              <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>
-                {absErreur}
-              </div>
-            )}
-            <div style={{ background: '#FAEEDA', border: '1px solid #f39c12', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#BA7517' }}>
-              Cette absence sera visible par l'administration.
-            </div>
-            <button type="submit" className="btn-primary" disabled={absEnvoi || !absDateDebut || !absDateFin || absDateFin < absDateDebut}>
-              {absEnvoi ? 'Envoi...' : "✓ Déclarer l'absence"}
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
-  if (confirmDoublon) return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '16px' }}>
-      <div style={{ fontSize: '40px' }}>⚠️</div>
-      <div style={{ fontWeight: 600, fontSize: '16px', textAlign: 'center' }}>"{nouveauNom}" existe déjà</div>
-      <div style={{ fontSize: '13px', color: '#888', textAlign: 'center' }}>Voulez-vous quand même créer un nouveau chantier avec ce nom ?</div>
-      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '300px' }}>
-        <button className="btn-outline" style={{ flex: 1 }} onClick={() => setConfirmDoublon(null)}>Non</button>
-        <button className="btn-primary" style={{ flex: 1 }} onClick={() => creerChantier(true)}>Oui, créer</button>
-      </div>
-    </div>
-  )
-
-  return (
-    <div>
-      <PageHeader
-        title={titrePage}
-        subtitle="Espace employé"
-        onBack={vue !== 'accueil' ? revenirDepuisHeader : undefined}
-        rightSlot={employeHeaderRight}
-      />
-
-      <div className="page-content">
-        {vue === 'accueil' && <>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>Crédit heures aujourd'hui</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: couleurBarre }}>
-                  {isCarlosAdmin ? '\u221e' : `${creditUtilise.toFixed(1)}h / ${CREDIT_JOUR}h`}
-                </span>
-                <button
-                  onClick={() => setModalSupp(true)}
-                  title="Ajouter des heures supplémentaires"
-                  style={{ width: 26, height: 26, borderRadius: '50%', background: '#185FA5', color: 'white', border: 'none', fontSize: '18px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0, lineHeight: 1 }}
-                >+</button>
-              </div>
-            </div>
-            <div style={{ background: '#eee', borderRadius: '6px', height: '8px', overflow: 'hidden' }}>
-              <div style={{ width: `${pourcent}%`, background: couleurBarre, height: '100%', borderRadius: '6px', transition: 'width 0.3s' }} />
-            </div>
-            <div style={{ fontSize: '12px', color: '#888' }}>
-              {isCarlosAdmin ? 'Cr\u00e9dit illimit\u00e9 admin' : creditRestant > 0 ? `Il reste ${creditRestant.toFixed(1)}h \u00e0 saisir` : '\u2705 Journ\u00e9e compl\u00e8te'}
-            </div>
-            {suppHistorique.length > 0 && (
-              <div style={{ borderTop: '1px solid #eee', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Historique heures supp.</div>
-                {suppHistorique.slice(0, 3).map(s => (
-                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '11px', color: '#666' }}>
-                    <span>
-                      {fmtDate(s.date_travail)}
-                      {s.chantiers?.nom ? ` · ${s.chantiers.nom}` : ''}
-                      {s.commentaire ? ` · ${s.commentaire}` : ''}
-                    </span>
-                    <strong style={{ color: '#185FA5', flexShrink: 0 }}>{Number(s.duree || 0).toFixed(1)}h</strong>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <button onClick={() => navigate('/employe/chantier')} style={{ position: 'relative', background: '#E6F1FB', border: '1px solid #185FA5', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '28px' }}>🏗️</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#185FA5' }}>Chantiers</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>Travail sur chantier</span>
-              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#185FA5', fontSize: '18px' }}>›</span>
-            </button>
-            <button onClick={() => { window.history.pushState(null, ''); setVue('depannages') }} style={{ position: 'relative', background: '#FEF3E2', border: '1px solid #f39c12', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '28px' }}>⚡</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#d68910' }}>Dépannages</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>Interventions rapides</span>
-              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#d68910', fontSize: '18px' }}>›</span>
-            </button>
-            <button onClick={() => navigate('/employe/devis')} style={{ position: 'relative', background: '#EAF3DE', border: '1px solid #3B6D11', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '28px' }}>📄</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#3B6D11' }}>Devis à faire</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>À venir</span>
-              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#3B6D11', fontSize: '18px' }}>›</span>
-            </button>
-            <button onClick={() => { window.history.pushState(null, ''); setVue('autres') }} style={{ position: 'relative', background: '#F3F4F6', border: '1px solid #9CA3AF', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '28px' }}>☰</span>
-              <span style={{ fontWeight: 600, fontSize: '14px', color: '#4B5563' }}>Autres</span>
-              <span style={{ fontSize: '11px', color: '#666' }}>Vacances, absences</span>
-              <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#4B5563', fontSize: '18px' }}>›</span>
-            </button>
-            {user?.prenom?.toLowerCase() === 'noylan' && (
-              <button onClick={() => { window.history.pushState(null, ''); setVue('testv1') }} style={{ position: 'relative', background: '#F0E6FB', border: '1px solid #7C3AED', borderRadius: '12px', padding: '20px 28px 20px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', gridColumn: '1 / -1' }}>
-                <span style={{ fontSize: '28px' }}>📋</span>
-                <span style={{ fontWeight: 600, fontSize: '14px', color: '#7C3AED' }}>Rapport V1</span>
-                <span style={{ fontSize: '11px', color: '#666' }}>Envoyer un rapport de journée</span>
-                <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#7C3AED', fontSize: '18px' }}>›</span>
-              </button>
-            )}
-          </div>
-        </>}
-
-        {vue === 'autres' && <>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>🏖️ Vacances {new Date().getFullYear()}</span>
-              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setModalVacances(true)}>+ Demande</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
-              <div style={{ background: '#EAF3DE', borderRadius: '8px', padding: '8px 4px' }}>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: '#3B6D11' }}>{soldeVacances.pris}</div>
-                <div style={{ fontSize: '10px', color: '#3B6D11', marginTop: '2px' }}>Pris</div>
-              </div>
-              <div style={{ background: '#FAEEDA', borderRadius: '8px', padding: '8px 4px' }}>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: '#BA7517' }}>{soldeVacances.attente}</div>
-                <div style={{ fontSize: '10px', color: '#BA7517', marginTop: '2px' }}>En attente</div>
-              </div>
-              <div style={{ background: '#E6F1FB', borderRadius: '8px', padding: '8px 4px' }}>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: '#185FA5' }}>{Math.max(0, quotaVacances - soldeVacances.pris)}</div>
-                <div style={{ fontSize: '10px', color: '#185FA5', marginTop: '2px' }}>Restants</div>
-              </div>
-            </div>
-            <div style={{ fontSize: '11px', color: '#aaa', textAlign: 'right' }}>Quota annuel : {quotaVacances} j. ouvrables</div>
-            {vacances.length === 0 && (
-              <div style={{ fontSize: '12px', color: '#bbb', textAlign: 'center', padding: '4px 0' }}>Aucune demande</div>
-            )}
-            {vacances.slice(0, 4).map((v, i) => (
-              <div key={v.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: i === 0 ? '1px solid #eee' : 'none', paddingBottom: '4px' }}>
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 500 }}>
-                    {fmtDate(v.date_debut, { day: '2-digit', month: '2-digit' })}
-                    {v.date_fin !== v.date_debut && ` → ${fmtDate(v.date_fin, { day: '2-digit', month: '2-digit' })}`}
-                    <span style={{ color: '#aaa', marginLeft: '4px', fontWeight: 400, fontSize: '11px' }}>({countJoursOuvrables(v.date_debut, v.date_fin)} j.)</span>
-                  </div>
-                  {v.commentaire && <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic', marginTop: '1px' }}>{v.commentaire}</div>}
-                </div>
-                <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 8px', borderRadius: '12px', flexShrink: 0, marginLeft: '8px', background: statutBg[v.statut] || '#f0f0f0', color: statutColor[v.statut] || '#666' }}>
-                  {statutLabel[v.statut] || v.statut}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: '14px' }}>🤒 Absences</span>
-              <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => setModalAbsence(true)}>Déclarer une absence</button>
-            </div>
-            {absences.length === 0 && (
-              <div style={{ fontSize: '12px', color: '#bbb', textAlign: 'center', padding: '4px 0' }}>Aucune absence enregistrée</div>
-            )}
-            {absences.slice(0, 3).map((a, i) => (
-              <div key={a.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: i === 0 ? '1px solid #eee' : 'none', paddingBottom: '4px' }}>
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 500 }}>
-                    {absTypeLabel[a.type] || a.type || 'Absence'}
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#999', marginTop: '1px' }}>
-                    {a.date_debut ? fmtDate(a.date_debut, { day: '2-digit', month: '2-digit' }) : '—'}
-                    {a.date_fin && a.date_fin !== a.date_debut ? ` → ${fmtDate(a.date_fin, { day: '2-digit', month: '2-digit' })}` : ''}
-                  </div>
-                  {a.commentaire && <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic', marginTop: '1px' }}>{a.commentaire}</div>}
-                </div>
-                <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 8px', borderRadius: '12px', flexShrink: 0, marginLeft: '8px', background: absStatutBg[a.statut] || '#f0f0f0', color: absStatutColor[a.statut] || '#666' }}>
-                  {absStatutLabel[a.statut] || a.statut || 'En attente'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>}
-
-        {vue === 'chantiers' && <>
-          {!intermediaireSel ? (
-            <div className="card">
-              <div style={{ marginBottom: '12px', fontWeight: 600, fontSize: '14px' }}>Intermédiaire</div>
-              {intermediaires.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier disponible pour l'instant.</div>}
-              {intermediaires.map(interm => {
-                const count = chantiers.filter(c => c.intermediaire_id === interm.id).length
-                return (
-                  <div key={interm.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => { window.history.pushState(null, ''); setIntermediaireSel(interm.id) }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                      <div>
-                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{interm.nom}</div>
-                        <div style={{ fontSize: '11px', color: '#888' }}>{count} chantier{count > 1 ? 's' : ''}</div>
-                      </div>
-                    </div>
-                    <span style={{ color: '#185FA5', fontSize: '18px' }}>›</span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <>
-              <input
-                type="search"
-                placeholder="🔍 Rechercher un chantier..."
-                value={recherche}
-                onChange={e => setRecherche(e.target.value)}
-                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '13px' }}
-              />
-              <div className="card">
-                {chantiers
-                  .filter(c => c.intermediaire_id === intermediaireSel)
-                  .filter(c => !recherche || c.nom.toLowerCase().includes(recherche.toLowerCase()) || (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()))
-                  .length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun chantier trouvé.</div>}
-                {chantiers
-                  .filter(c => c.intermediaire_id === intermediaireSel)
-                  .filter(c => !recherche || c.nom.toLowerCase().includes(recherche.toLowerCase()) || (c.adresse || '').toLowerCase().includes(recherche.toLowerCase()))
-                  .map(c => {
-                    const badgeStyle = getChantierStatusBadgeStyle(c.statut)
-                    return (
-                      <div key={c.id} className="row-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employe/chantier/${c.id}`)}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: 34, height: 34, borderRadius: '8px', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🏗️</div>
-                          <div>
-                            <div style={{ fontWeight: 500, fontSize: '13px' }}>{c.nom}</div>
-                            <div style={{ fontSize: '11px', color: '#888' }}>{c.adresse || '—'}</div>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ ...badgeStyle, borderRadius: '6px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                            {c.statut || 'A confirmer'}
-                          </span>
-                          <span style={{ color: '#185FA5' }}>›</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-              </div>
-            </>
-          )}
-        </>}
-
-        {vue === 'depannages' && depannagesNiveau === 1 && <>
-          {depannagesLoading && <div style={{ fontSize: '13px', color: '#888', textAlign: 'center', padding: '18px 0' }}>Chargement...</div>}
-          {depannagesErreur && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#A32D2D' }}>{depannagesErreur}</div>}
-          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Régies</div>
-            {!depannagesLoading && regiesAll.length === 0 && (
-              <div style={{ fontSize: '13px', color: '#888' }}>Aucune régie disponible.</div>
-            )}
-            {regiesAll.map((regie, idx) => {
-              const count = depannagesTerrain.filter(d => d.regie?.id === regie.id).length
-              return (
-                <div
-                  key={regie.id}
-                  className="row-item"
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'pointer', borderBottom: idx < regiesAll.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
-                  onClick={() => { window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) }}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setRegieSel(regie); setDepannagesNiveau(2) } }}
-                >
-                  <div>
-                    <div style={{ fontSize: '16px', fontWeight: 800, color: '#185FA5' }}>{regie.nom}</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
-                    <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </>}
-
-        {vue === 'depannages' && depannagesNiveau === 2 && (
-          <div className="card" style={{ borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>{regieSel?.nom}</div>
-            {(() => {
-              const moisPrecedentActif = depannagesTerrain.some(d => {
-                if (d.regie?.id !== regieSel?.id) return false
-                const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
-                return dateStr && dateStr.substring(0, 7) === moisPrecedent
-              })
-              const moisVisibles = moisPrecedentActif ? [moisCourant, moisPrecedent] : [moisCourant]
-              return moisVisibles.map((mois, idx) => {
-                const count = depannagesTerrain.filter(d => {
-                  if (d.regie?.id !== regieSel?.id) return false
-                  const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
-                  return dateStr && dateStr.substring(0, 7) === mois
-                }).length
-                return (
-                  <div
-                    key={mois}
-                    className="row-item"
-                    role="button"
-                    tabIndex={0}
-                    style={{ cursor: 'pointer', borderBottom: idx < moisVisibles.length - 1 ? '1px solid #eee' : 'none', padding: '12px 4px' }}
-                    onClick={() => { window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) }}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.history.pushState(null, ''); setMoisSel(mois); setDepannagesNiveau(3) } }}
-                  >
-                    <div style={{ fontWeight: 700, fontSize: '15px', color: '#185FA5' }}>{formatMoisLabel(mois)}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span className="badge badge-blue">{count} dépannage{count !== 1 ? 's' : ''}</span>
-                      <span style={{ color: '#185FA5', fontSize: '16px', lineHeight: 1 }}>›</span>
-                    </div>
-                  </div>
-                )
-              })
-            })()}
-          </div>
-        )}
-
-        {vue === 'depannages' && depannagesNiveau === 3 && <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', paddingLeft: '4px' }}>
-            <span style={{ fontSize: '12px', color: '#6D7B8A', fontWeight: 600 }}>{regieSel?.nom} · {formatMoisLabel(moisSel)}</span>
-            <button className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => navigate('/employe/depannage', { state: { from: '/employe', regieId: regieSel?.id, moisSel } })}>+ Dépannage</button>
-          </div>
-          {depannagesTerrain.filter(d => {
-            if (d.regie?.id !== regieSel?.id) return false
-            const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
-            return dateStr && dateStr.substring(0, 7) === moisSel
-          }).length === 0 && (
-            <div className="card" style={{ fontSize: '13px', color: '#888' }}>Aucun dépannage ce mois-ci.</div>
-          )}
-          {depannagesTerrain.filter(d => {
-            if (d.regie?.id !== regieSel?.id) return false
-            const dateStr = d.date_travail || (d.created_at ? d.created_at.substring(0, 10) : null)
-            return dateStr && dateStr.substring(0, 7) === moisSel
-          }).map(depannage => (
-            <DepannageCard
-              key={depannage.id}
-              depannage={depannage}
-              currentUserId={user?.id}
-              onAction={agirSurDepannage}
-              actionLoading={depannageActionLoading}
-              onClick={ouvrirDepannage}
-            />
-          ))}
-        </>}
-
-        {vue === 'testv1' && user?.prenom?.toLowerCase() === 'noylan' && (
-          <RapportV1 user={user} onRetour={() => setVue('accueil')} />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function normaliserRecherche(value) {
+import { fetchDossiersATraiterV1, fetchDossiersV1 } from '../services/dossiers.service'
+
+const VIEWS = [
+  { id: 'a_traiter', label: 'A traiter' },
+  { id: 'depannage', label: 'Depannages' },
+  { id: 'chantier', label: 'Chantiers' }
+]
+
+function normalizeSearch(value) {
   return String(value || '')
     .toLowerCase()
     .normalize('NFD')
@@ -1249,9 +20,194 @@ function normaliserRecherche(value) {
     .trim()
 }
 
-function formatMoisLabel(moisStr) {
-  if (!moisStr) return ''
-  const [annee, mois] = moisStr.split('-')
-  return new Date(Number(annee), Number(mois) - 1, 1)
-    .toLocaleDateString('fr-CH', { month: 'long', year: 'numeric' })
+function formatDate(dateStr) {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleDateString('fr-CH', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  })
+}
+
+function getDossierTitle(dossier) {
+  return dossier.numero_affaire || dossier.description || 'Dossier sans numero'
+}
+
+function dossierMatchesSearch(dossier, search) {
+  if (!search) return true
+  return [
+    dossier.numero_affaire,
+    dossier.description,
+    dossier.adresse_chantier,
+    dossier.client_nom,
+    dossier.statut
+  ].some(value => normalizeSearch(value).includes(search))
+}
+
+function DossierCard({ dossier }) {
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: '15px', color: '#1f2933', overflowWrap: 'anywhere' }}>
+            {getDossierTitle(dossier)}
+          </div>
+          {dossier.client_nom && (
+            <div style={{ fontSize: '12px', color: '#607080', marginTop: '2px', overflowWrap: 'anywhere' }}>
+              {dossier.client_nom}
+            </div>
+          )}
+        </div>
+        <span className="badge badge-blue" style={{ whiteSpace: 'nowrap' }}>
+          {dossier.statut || 'Sans statut'}
+        </span>
+      </div>
+
+      {dossier.description && dossier.description !== dossier.numero_affaire && (
+        <div style={{ fontSize: '13px', color: '#334155', overflowWrap: 'anywhere' }}>
+          {dossier.description}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gap: '4px', fontSize: '12px', color: '#64748b' }}>
+        {dossier.adresse_chantier && <span>{dossier.adresse_chantier}</span>}
+        <span>
+          {dossier.type || 'dossier'}
+          {dossier.created_at ? ` - cree le ${formatDate(dossier.created_at)}` : ''}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export default function Employe() {
+  const navigate = useNavigate()
+  const { profile: user, signOut } = useAuth()
+  const [activeView, setActiveView] = useState('a_traiter')
+  const [dossiers, setDossiers] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+
+  async function charger() {
+    setLoading(true)
+    setError('')
+    try {
+      const data = activeView === 'a_traiter'
+        ? await fetchDossiersATraiterV1()
+        : await fetchDossiersV1({ type: activeView })
+      setDossiers(data)
+    } catch (err) {
+      console.error('Erreur chargement dossiers V1 employe', err)
+      setError("Impossible de charger les dossiers V1 pour l'instant.")
+      setDossiers([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    charger()
+  }, [activeView])
+
+  const refreshPage = usePageRefresh(() => charger(), [activeView])
+
+  const filteredDossiers = useMemo(() => {
+    const term = normalizeSearch(search)
+    return dossiers.filter(dossier => dossierMatchesSearch(dossier, term))
+  }, [dossiers, search])
+
+  const title = VIEWS.find(view => view.id === activeView)?.label || 'Dossiers'
+
+  return (
+    <div className="app">
+      <PageHeader
+        title="Espace employe"
+        subtitle={user?.nom || user?.email || ''}
+        rightSlot={
+          <PageTopActions
+            navigate={navigate}
+            fallbackPath="/employe"
+            onRefresh={refreshPage}
+            refreshing={loading}
+            showBack={false}
+          />
+        }
+      />
+
+      <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: '#64748b' }}>Vue V1 reelle</div>
+            <h1 style={{ margin: 0, fontSize: '22px', color: '#1f2933' }}>{title}</h1>
+          </div>
+          <button type="button" className="btn-secondary btn-sm" style={{ width: 'auto' }} onClick={signOut}>
+            Deconnexion
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+          {VIEWS.map(view => {
+            const active = activeView === view.id
+            return (
+              <button
+                key={view.id}
+                type="button"
+                onClick={() => setActiveView(view.id)}
+                style={{
+                  minHeight: '42px',
+                  borderRadius: '8px',
+                  border: active ? '1px solid #185FA5' : '1px solid #d9e2ec',
+                  background: active ? '#E6F1FB' : '#fff',
+                  color: active ? '#185FA5' : '#334155',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer'
+                }}
+              >
+                {view.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <input
+          type="search"
+          placeholder="Rechercher par affaire, client, adresse ou statut"
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          style={{
+            width: '100%',
+            padding: '11px 12px',
+            borderRadius: '8px',
+            border: '1px solid #d9e2ec',
+            fontSize: '14px',
+            boxSizing: 'border-box'
+          }}
+        />
+
+        {error && (
+          <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#A32D2D' }}>
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="card" style={{ fontSize: '13px', color: '#64748b', textAlign: 'center' }}>
+            Chargement des dossiers...
+          </div>
+        )}
+
+        {!loading && filteredDossiers.length === 0 && (
+          <div className="card" style={{ fontSize: '13px', color: '#64748b', textAlign: 'center' }}>
+            Aucun dossier trouve.
+          </div>
+        )}
+
+        {!loading && filteredDossiers.map(dossier => (
+          <DossierCard key={dossier.id} dossier={dossier} />
+        ))}
+      </div>
+    </div>
+  )
 }

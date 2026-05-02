@@ -189,6 +189,30 @@ function chantierSchemaErrorMessage(error) {
   return error?.message || 'Erreur Supabase inconnue.'
 }
 
+function logAdminDashboardQueryError(name, error) {
+  if (!error) return
+  console.error(`[Admin dashboard] ${name}`, {
+    message: error.message || null,
+    details: error.details || null,
+    hint: error.hint || null,
+    code: error.code || null
+  })
+}
+
+function isAdminDashboardFallbackError(error) {
+  return ['PGRST200', 'PGRST205', '42703'].includes(error?.code)
+}
+
+async function adminDashboardQuery(name, queryPromise, fallback = []) {
+  const { data, error } = await queryPromise
+  if (error) {
+    logAdminDashboardQueryError(name, error)
+    if (isAdminDashboardFallbackError(error)) return fallback
+    throw error
+  }
+  return data
+}
+
 export default function Admin() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -454,7 +478,7 @@ export default function Admin() {
       })))
     } catch (error) {
       if (requestId !== depannagesRequestRef.current) return
-      console.error('Erreur chargement depannages admin', error)
+      logAdminDashboardQueryError('depannages', error)
       setDepannages([])
       if (error?.code === '42703' && error?.message?.includes('regie_id')) {
         setDepannagesError("Le filtre régie est indisponible sur la base actuelle. Réinitialise les filtres pour afficher les dépannages.")
@@ -479,8 +503,8 @@ export default function Admin() {
       const chantierColumns = await verifierColonnesChantiers()
       setChantierSchema(chantierColumns)
 
-      const rap = await supabaseSafe(supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+      const rap = await adminDashboardQuery('rapports_attente', supabase.from('rapports')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*)')
         .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
@@ -491,7 +515,7 @@ export default function Admin() {
       }
 
       // Recharge la corbeille rapports depuis la DB (survive au rechargement de page)
-      const rapsSupprimes = await supabaseSafe(supabase.from('rapports')
+      const rapsSupprimes = await adminDashboardQuery('rapports_corbeille', supabase.from('rapports')
         .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
         .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }))
       if (rapsSupprimes && rapsSupprimes.length > 0) {
@@ -506,13 +530,13 @@ export default function Admin() {
         setCorbeille(prev => prev.filter(i => i.type !== 'rapport'))
       }
 
-      const ch = await supabaseSafe(
+      const ch = await adminDashboardQuery('chantiers',
         supabase.from('chantiers').select('*').eq('actif', true).order('nom')
       )
 
       let intermediairesListe = []
       try {
-        intermediairesListe = await supabaseSafe(
+        intermediairesListe = await adminDashboardQuery('intermediaires',
           supabase.from('intermediaires').select('id, nom').order('nom')
         ) || []
       } catch {
@@ -536,12 +560,13 @@ export default function Admin() {
 
       let regs = null
       try {
-        regs = await supabaseSafe(supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
+        regs = await adminDashboardQuery('regies', supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
         setRegies(regs || [])
       } catch { setRegies([]) }
 
       let regieFiltreOk = regieFilterAvailable
       const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
+      logAdminDashboardQueryError('depannages_regie_id_probe', regieColumnError)
       if (regieColumnError?.code === '42703') {
         regieFiltreOk = false
         setRegieFilterAvailable(false)
@@ -559,14 +584,14 @@ export default function Admin() {
 
       let cat = []
       try {
-        cat = await supabaseSafe(supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')) || []
+        cat = await adminDashboardQuery('catalogue', supabase.from('catalogue').select('*').eq('actif', true).order('categorie').order('nom')) || []
       } catch { cat = [] }
       setCatalogue(cat)
       setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
 
       let emp = null
       try {
-        emp = await supabaseSafe(supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom'))
+        emp = await adminDashboardQuery('utilisateurs', supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom')) || []
         setEmployes(emp || [])
       } catch { setEmployes([]) }
     } catch (error) {
@@ -732,7 +757,7 @@ export default function Admin() {
     const foreignKey = sourceItem?.isAffaire ? 'affaire_id' : 'sous_dossier_id'
 
     const { data } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
       .eq(foreignKey, sdId).is('deleted_at', null).order('date_travail', { ascending: false })
     if (!data) { setRapports([]); return }
     const rapportsHydrates = await hydraterRapportsPhotos(data)
@@ -747,7 +772,7 @@ export default function Admin() {
     const m = mois || calMois
     const { debut, fin } = debutFin(m.year, m.month)
     const { data: raps } = await supabase.from('rapports')
-      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom)), affaires(nom, chantier_id, chantiers(nom))')
+      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
       .gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null)
     if (raps) setCalRapports(raps)
     const { data: deps } = await supabase.from('depannages')
@@ -836,7 +861,7 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
 
     const { data: raps } = await supabase.from('rapports')
-      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom)), affaires(nom, chantier_id, chantiers(nom))')
+      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom))')
       .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null).order('date_travail')
 
     if (raps && raps.length > 0) {
@@ -967,7 +992,7 @@ export default function Admin() {
     // Rapports + time_entries pour les durées correctes
     const [{ data: raps }, { data: deps }, { data: suppEntries }] = await Promise.all([
       supabase.from('rapports')
-        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse)), affaires(nom, chantier_id, chantiers(nom, adresse))')
+        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse))')
         .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
         .is('deleted_at', null).order('date_travail'),
       supabase.from('depannages')
@@ -1459,7 +1484,7 @@ export default function Admin() {
     const updatedR = await supabaseSafe(
       supabase
         .from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), affaires(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
         .eq('id', rapportId)
         .single()
     )

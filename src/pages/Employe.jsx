@@ -5,6 +5,7 @@ import { usePageRefresh } from '../lib/refresh'
 import PageHeader from '../components/PageHeader'
 import PageTopActions from '../components/PageTopActions'
 import { fetchDossiersATraiterV1, fetchDossiersV1 } from '../services/dossiers.service'
+import { creerRapportEmployeV1, fetchCatalogueEmployeV1 } from '../services/rapportsV1.service'
 
 const VIEWS = [
   { id: 'a_traiter', label: 'A traiter' },
@@ -44,7 +45,7 @@ function dossierMatchesSearch(dossier, search) {
   ].some(value => normalizeSearch(value).includes(search))
 }
 
-function DossierCard({ dossier }) {
+function DossierCard({ dossier, onCreateRapport }) {
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
@@ -76,8 +77,24 @@ function DossierCard({ dossier }) {
           {dossier.created_at ? ` - cree le ${formatDate(dossier.created_at)}` : ''}
         </span>
       </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
+        <button type="button" className="btn-primary btn-sm" style={{ width: 'auto' }} onClick={() => onCreateRapport(dossier)}>
+          Creer rapport
+        </button>
+      </div>
     </div>
   )
+}
+
+function createEmptyMateriel() {
+  return {
+    catalogueId: '',
+    reference: '',
+    nom: '',
+    unite: '',
+    quantite: 1
+  }
 }
 
 export default function Employe() {
@@ -88,6 +105,17 @@ export default function Employe() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [rapportDossier, setRapportDossier] = useState(null)
+  const [rapportDate, setRapportDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [rapportHeures, setRapportHeures] = useState('')
+  const [rapportHeuresDeplacement, setRapportHeuresDeplacement] = useState('0')
+  const [rapportNotes, setRapportNotes] = useState('')
+  const [materiaux, setMateriaux] = useState([])
+  const [catalogue, setCatalogue] = useState([])
+  const [catalogueLoading, setCatalogueLoading] = useState(false)
+  const [rapportSubmitting, setRapportSubmitting] = useState(false)
+  const [rapportError, setRapportError] = useState('')
+  const [rapportSuccess, setRapportSuccess] = useState('')
 
   async function charger() {
     setLoading(true)
@@ -118,6 +146,95 @@ export default function Employe() {
   }, [dossiers, search])
 
   const title = VIEWS.find(view => view.id === activeView)?.label || 'Dossiers'
+
+  async function ouvrirRapport(dossier) {
+    setRapportDossier(dossier)
+    setRapportDate(new Date().toISOString().slice(0, 10))
+    setRapportHeures('')
+    setRapportHeuresDeplacement('0')
+    setRapportNotes('')
+    setMateriaux([])
+    setRapportError('')
+    setRapportSuccess('')
+
+    if (catalogue.length === 0) {
+      setCatalogueLoading(true)
+      try {
+        setCatalogue(await fetchCatalogueEmployeV1())
+      } catch (err) {
+        console.error('Erreur chargement catalogue employe V1', err)
+        setRapportError("Impossible de charger le catalogue employe.")
+      } finally {
+        setCatalogueLoading(false)
+      }
+    }
+  }
+
+  function fermerRapport() {
+    if (rapportSubmitting) return
+    setRapportDossier(null)
+    setRapportError('')
+    setRapportSuccess('')
+  }
+
+  function ajouterMateriel() {
+    setMateriaux(items => [...items, createEmptyMateriel()])
+  }
+
+  function modifierMateriel(index, patch) {
+    setMateriaux(items => items.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, ...patch } : item
+    )))
+  }
+
+  function choisirMateriel(index, catalogueId) {
+    const article = catalogue.find(item => item.id === catalogueId)
+    modifierMateriel(index, {
+      catalogueId,
+      reference: article?.reference || '',
+      nom: article?.nom || '',
+      unite: article?.unite || ''
+    })
+  }
+
+  function retirerMateriel(index) {
+    setMateriaux(items => items.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  async function envoyerRapport(event) {
+    event.preventDefault()
+    if (!rapportDossier || !rapportDate || Number(rapportHeures) <= 0) {
+      setRapportError('Date et heures travaillees sont obligatoires.')
+      return
+    }
+
+    setRapportSubmitting(true)
+    setRapportError('')
+    setRapportSuccess('')
+
+    try {
+      await creerRapportEmployeV1({
+        dossierId: rapportDossier.id,
+        employeId: user?.id,
+        dateIntervention: rapportDate,
+        heures: rapportHeures,
+        heuresDeplacement: rapportHeuresDeplacement,
+        materiaux,
+        notes: rapportNotes
+      })
+      setRapportSuccess('Rapport envoye.')
+      await charger()
+      setTimeout(() => {
+        setRapportDossier(null)
+        setRapportSuccess('')
+      }, 900)
+    } catch (err) {
+      console.error('Erreur creation rapport V1 employe', err)
+      setRapportError("Impossible d'envoyer le rapport.")
+    } finally {
+      setRapportSubmitting(false)
+    }
+  }
 
   return (
     <div className="app">
@@ -205,9 +322,85 @@ export default function Employe() {
         )}
 
         {!loading && filteredDossiers.map(dossier => (
-          <DossierCard key={dossier.id} dossier={dossier} />
+          <DossierCard key={dossier.id} dossier={dossier} onCreateRapport={ouvrirRapport} />
         ))}
       </div>
+
+      {rapportDossier && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '14px' }}>
+          <form onSubmit={envoyerRapport} className="card" style={{ width: '100%', maxWidth: '560px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontSize: '12px', color: '#64748b' }}>Rapport employe</div>
+                <div style={{ fontWeight: 800, fontSize: '16px', color: '#1f2933' }}>{getDossierTitle(rapportDossier)}</div>
+              </div>
+              <button type="button" className="btn-secondary btn-sm" style={{ width: 'auto' }} onClick={fermerRapport}>
+                Fermer
+              </button>
+            </div>
+
+            <label style={{ display: 'grid', gap: '5px', fontSize: '13px', color: '#334155', fontWeight: 700 }}>
+              Date intervention
+              <input type="date" value={rapportDate} onChange={event => setRapportDate(event.target.value)} required style={{ padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '14px' }} />
+            </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '13px', color: '#334155', fontWeight: 700 }}>
+                Heures
+                <input type="number" min="0" step="0.25" value={rapportHeures} onChange={event => setRapportHeures(event.target.value)} required style={{ padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '14px' }} />
+              </label>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '13px', color: '#334155', fontWeight: 700 }}>
+                Deplacement
+                <input type="number" min="0" step="0.25" value={rapportHeuresDeplacement} onChange={event => setRapportHeuresDeplacement(event.target.value)} required style={{ padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '14px' }} />
+              </label>
+            </div>
+
+            <label style={{ display: 'grid', gap: '5px', fontSize: '13px', color: '#334155', fontWeight: 700 }}>
+              Notes
+              <textarea value={rapportNotes} onChange={event => setRapportNotes(event.target.value)} rows={3} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '14px', resize: 'vertical' }} />
+            </label>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+              <div style={{ fontWeight: 800, fontSize: '14px', color: '#1f2933' }}>Materiel</div>
+              <button type="button" className="btn-secondary btn-sm" style={{ width: 'auto' }} onClick={ajouterMateriel} disabled={catalogueLoading}>
+                Ajouter
+              </button>
+            </div>
+
+            {catalogueLoading && <div style={{ fontSize: '13px', color: '#64748b' }}>Chargement catalogue...</div>}
+
+            {materiaux.map((item, index) => (
+              <div key={index} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 90px 42px', gap: '8px', alignItems: 'end' }}>
+                <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: '#334155', fontWeight: 700 }}>
+                  Article
+                  <select value={item.catalogueId} onChange={event => choisirMateriel(index, event.target.value)} style={{ minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '13px' }}>
+                    <option value="">Choisir</option>
+                    {catalogue.map(article => (
+                      <option key={article.id} value={article.id}>
+                        {[article.reference, article.nom, article.unite].filter(Boolean).join(' - ')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: '#334155', fontWeight: 700 }}>
+                  Qte
+                  <input type="number" min="0" step="0.01" value={item.quantite} onChange={event => modifierMateriel(index, { quantite: event.target.value })} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #d9e2ec', fontSize: '13px' }} />
+                </label>
+                <button type="button" className="btn-secondary btn-sm" style={{ width: '42px', height: '40px', padding: 0 }} onClick={() => retirerMateriel(index)}>
+                  X
+                </button>
+              </div>
+            ))}
+
+            {rapportError && <div style={{ background: '#FCEBEB', border: '1px solid #f09595', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#A32D2D' }}>{rapportError}</div>}
+            {rapportSuccess && <div style={{ background: '#EAF7EA', border: '1px solid #9fd39f', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#2D6B2D' }}>{rapportSuccess}</div>}
+
+            <button type="submit" className="btn-primary" disabled={rapportSubmitting || catalogueLoading}>
+              {rapportSubmitting ? 'Envoi...' : 'Envoyer le rapport'}
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   )
 }

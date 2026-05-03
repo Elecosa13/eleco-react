@@ -8,16 +8,6 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { safeLocalStorage } from '../lib/safe-browser'
 import { usePageRefresh } from '../lib/refresh'
-import { fetchLinkedTimeEntry, upsertLinkedTimeEntry } from '../services/timeEntries.service'
-import {
-  ensureDepannageSousDossier,
-  STATUT_INTERVENTION_FAITE,
-  STATUT_RAPPORT_RECU
-} from '../services/depannages.service'
-import {
-  uploadRapportPhotos,
-  withSignedPhotoUrls
-} from '../services/rapportPhotos.service'
 
 const DUREES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8]
 const FAVORIS_KEY = 'eleco_favoris'
@@ -29,6 +19,24 @@ function loadFavoris() {
 
 function saveFavoris(favoris) {
   safeLocalStorage.setJSON(FAVORIS_KEY, favoris)
+}
+
+function buildRegiesFromRegiesClients(regiesClients) {
+  return (regiesClients || [])
+    .filter(regie => regie.client_id)
+    .map(regie => ({
+      id: regie.client_id,
+      nom: regie.clients?.nom || `Client ${regie.client_id}`,
+      nom_normalise: String(regie.clients?.nom || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    }))
+}
+
+function mapDossierToChantierOption(dossier) {
+  return {
+    id: dossier.id,
+    nom: dossier.numero_affaire || dossier.description || 'Dossier',
+    adresse: dossier.adresse_chantier || ''
+  }
 }
 
 export default function Depannage({ mode = 'employe' }) {
@@ -92,20 +100,36 @@ export default function Depannage({ mode = 'employe' }) {
 
     try {
       const [regiesResult, catalogueResult, chantiersResult, employesResult] = await Promise.all([
-        supabase.from('regies').select('id, nom, nom_normalise').eq('actif', true).order('nom'),
+        supabase.from('regies_clients').select('id, client_id, clients(id, nom)').order('created_at'),
         supabase.from('catalogue_employe').select('id, categorie, nom, unite').order('categorie').order('nom'),
-        supabase.from('chantiers').select('id, nom, adresse').eq('actif', true).order('nom'),
+        supabase.from('dossiers').select('id, numero_affaire, description, adresse_chantier, statut').order('created_at'),
         isAdminMode
           ? supabase.from('utilisateurs').select('id, prenom, initiales').eq('role', 'employe').order('prenom')
           : Promise.resolve({ data: [], error: null })
       ])
 
-      if (regiesResult.error) throw regiesResult.error
-      if (catalogueResult.error) throw catalogueResult.error
-      if (chantiersResult.error) throw chantiersResult.error
-      if (employesResult.error) throw employesResult.error
+      if (regiesResult.error) throw Object.assign(regiesResult.error, {
+        queryName: 'charger.regies depuis depannages',
+        queryTable: 'regies_clients',
+        querySelect: 'id, client_id'
+      })
+      if (catalogueResult.error) throw Object.assign(catalogueResult.error, {
+        queryName: 'charger.catalogue',
+        queryTable: 'catalogue_employe',
+        querySelect: 'id, categorie, nom, unite'
+      })
+      if (chantiersResult.error) throw Object.assign(chantiersResult.error, {
+        queryName: 'charger.chantiers',
+        queryTable: 'dossiers',
+        querySelect: 'id, numero_affaire, description, adresse_chantier, statut'
+      })
+      if (employesResult.error) throw Object.assign(employesResult.error, {
+        queryName: 'charger.employes',
+        queryTable: 'utilisateurs',
+        querySelect: 'id, prenom, initiales'
+      })
 
-      const listeRegies = regiesResult.data || []
+      const listeRegies = buildRegiesFromRegiesClients(regiesResult.data || [])
       const nonAssignee = listeRegies.find(regie => regie.nom_normalise === 'non assignee')
       setRegies(listeRegies)
       setRegieNonAssigneeId(nonAssignee?.id || '')
@@ -114,7 +138,7 @@ export default function Depannage({ mode = 'employe' }) {
       const listeCatalogue = catalogueResult.data || []
       setCatalogue(listeCatalogue)
       setCategories(['Favoris', ...Array.from(new Set(listeCatalogue.map(article => article.categorie).filter(Boolean)))])
-      setChantiers(chantiersResult.data || [])
+      setChantiers((chantiersResult.data || []).map(mapDossierToChantierOption))
       setEmployes(employesResult.data || [])
 
       if (depannageId) {
@@ -123,7 +147,16 @@ export default function Depannage({ mode = 'employe' }) {
 
       await chargerCredit(date)
     } catch (error) {
-      console.error('Erreur chargement depannage', error)
+      console.error('Erreur chargement depannage Supabase', {
+        queryName: error?.queryName,
+        table: error?.queryTable,
+        select: error?.querySelect,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code,
+        error
+      })
       setErreur('Impossible de charger les données. Réessaie dans un instant.')
     } finally {
       setLoading(false)
@@ -132,51 +165,33 @@ export default function Depannage({ mode = 'employe' }) {
 
   async function chargerDepannageExistant() {
     const { data: depannage, error: depannageError } = await supabase
-      .from('depannages')
-      .select(`
-        *,
-        chantier:chantiers(id, nom)
-      `)
+      .from('dossiers')
+      .select('*')
       .eq('id', depannageId)
+      .eq('type', 'depannage')
       .maybeSingle()
 
     if (depannageError) throw depannageError
     if (!depannage) throw new Error('depannage_introuvable')
 
-    setAdresse(depannage.adresse || '')
-    setNumeroBon(depannage.numero_bon || '')
+    setAdresse(depannage.adresse_chantier || '')
+    setNumeroBon(depannage.numero_affaire || '')
     setDuree(1)
-    setRemarques(depannage.remarques || '')
-    setDate(depannage.date_travail || new Date().toISOString().split('T')[0])
-    setRegieId(depannage.regie_id || regieNonAssigneeId || '')
-    setChantierId(depannage.chantier_id || '')
-    setDepannageResponsableId(depannage.pris_par || depannage.employe_id || '')
-    if (isAdminMode) setEmployeId(depannage.employe_id || '')
+    setRemarques(depannage.description || '')
+    setRegieId(depannage.client_id || regieNonAssigneeId || '')
+    setChantierId(depannage.id || '')
+    setDepannageResponsableId(depannage.created_by || '')
 
     try {
-      const timeEntry = await fetchLinkedTimeEntry({
-        type: 'depannage',
-        referenceId: depannageId,
-        employeId: isAdminMode ? depannage.employe_id : user?.id
-      })
-      if (timeEntry?.duree !== undefined && timeEntry?.duree !== null) {
-        setDuree(Number(timeEntry.duree) || 1)
-      }
-    } catch (error) {
-      console.error('Erreur chargement time_entry depannage', error)
-    }
-
-    try {
-      const rapportEmployeId = isAdminMode ? depannage.employe_id : user?.id
+      const rapportEmployeId = isAdminMode ? employeId : user?.id
       let rapport = null
 
       if (rapportEmployeId) {
         const { data, error: rapportError } = await supabase
           .from('rapports')
-          .select('id, sous_dossier_id, date_travail, remarques, valide, rapport_photos(*)')
-          .eq('depannage_id', depannageId)
+          .select('id, dossier_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut')
+          .eq('dossier_id', depannageId)
           .eq('employe_id', rapportEmployeId)
-          .is('deleted_at', null)
           .maybeSingle()
 
         if (rapportError) throw rapportError
@@ -184,9 +199,10 @@ export default function Depannage({ mode = 'employe' }) {
       }
 
       const { data: commonMateriaux, error: commonMateriauxError } = await supabase
-        .from('depannage_materiaux')
-        .select('id, depannage_id, ref_article, designation, unite, quantite')
-        .eq('depannage_id', depannageId)
+        .from('lignes_facturables')
+        .select('id, dossier_id, rapport_id, type, description, quantite, prix_unitaire')
+        .eq('dossier_id', depannageId)
+        .eq('type', 'materiel')
 
       if (commonMateriauxError) throw commonMateriauxError
       setMateriaux((commonMateriaux || []).map(mapRapportMateriauToUi))
@@ -199,17 +215,12 @@ export default function Depannage({ mode = 'employe' }) {
       }
 
       setRapportExistantId(rapport.id)
-      setRapportValide(Boolean(rapport.valide))
-      setDate(rapport.date_travail || depannage.date_travail || '')
-      setRemarques(rapport.remarques || depannage.remarques || '')
-
-      try {
-        setPhotosExistantes(await withSignedPhotoUrls(rapport.rapport_photos || []))
-      } catch (error) {
-        console.error('Erreur chargement photos rapport depannage', error)
-        setPhotosExistantes([])
-        setRapportErreur("Le rapport existant est charge sans ses photos pour l'instant.")
-      }
+      setRapportValide(rapport.statut === 'valide')
+      setDuree(Number(rapport.heures || 0) || 1)
+      setDate(rapport.date_intervention || '')
+      setRemarques(rapport.notes || depannage.description || '')
+      // TODO: table manquante rapport_photos
+      setPhotosExistantes([])
     } catch (error) {
       console.error('Erreur chargement rapport depannage existant', error)
       setRapportExistantId('')
@@ -227,13 +238,13 @@ export default function Depannage({ mode = 'employe' }) {
       return
     }
     const { data, error } = await supabase
-      .from('time_entries')
-      .select('duree')
+      .from('rapports')
+      .select('heures, heures_deplacement')
       .eq('employe_id', targetEmployeId)
-      .eq('date_travail', nextDate)
+      .eq('date_intervention', nextDate)
 
     if (error) throw error
-    if (data) setCreditUtilise(data.reduce((sum, entry) => sum + Number(entry.duree), 0))
+    if (data) setCreditUtilise(data.reduce((sum, entry) => sum + Number(entry.heures || 0) + Number(entry.heures_deplacement || 0), 0))
   }
 
   function toggleFavori(favId) {
@@ -243,22 +254,23 @@ export default function Depannage({ mode = 'employe' }) {
   }
 
   function ajouter(article) {
-    const existant = materiaux.find(item => item.id === article.id)
-    if (existant) {
-      setMateriaux(materiaux.map(item => item.id === article.id ? { ...item, qte: item.qte + 1 } : item))
-      return
-    }
-
-    setMateriaux([
-      ...materiaux,
-      {
-        id: article.id,
-        catalogueId: article.id,
-        nom: article.nom,
-        unite: normalizeUnite(article.unite, article.nom),
-        qte: 1
+    setMateriaux(current => {
+      const existant = current.find(item => String(item.id) === String(article.id))
+      if (existant) {
+        return current.map(item => String(item.id) === String(article.id) ? { ...item, qte: item.qte + 1 } : item)
       }
-    ])
+
+      return [
+        ...current,
+        {
+          id: article.id,
+          catalogueId: article.id,
+          nom: article.nom,
+          unite: normalizeUnite(article.unite, article.nom),
+          qte: 1
+        }
+      ]
+    })
   }
 
   function ajouterManuel() {
@@ -279,13 +291,13 @@ export default function Depannage({ mode = 'employe' }) {
 
   function modQte(materiauId, delta) {
     setMateriaux(
-      materiaux.map(item => item.id === materiauId ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
+      current => current.map(item => String(item.id) === String(materiauId) ? { ...item, qte: Math.max(0, item.qte + delta) } : item)
     )
   }
 
   function setQte(materiauId, value) {
     const nextQte = Math.max(0, Number(value) || 0)
-    setMateriaux(materiaux.map(item => item.id === materiauId ? { ...item, qte: nextQte } : item))
+    setMateriaux(current => current.map(item => String(item.id) === String(materiauId) ? { ...item, qte: nextQte } : item))
   }
 
   function supprimerMateriau(materiauId) {
@@ -368,25 +380,22 @@ export default function Depannage({ mode = 'employe' }) {
 
     try {
       const regieIdFinal = regieId || regieNonAssigneeId || null
-      const chantierIdFinal = chantierId || null
       const depannagePayload = {
-        chantier_id: chantierIdFinal,
-        regie_id: regieIdFinal,
-        date_travail: date,
-        adresse: adresse.trim(),
-        remarques: remarques.trim(),
+        client_id: regieIdFinal,
+        type: 'depannage',
+        adresse_chantier: adresse.trim(),
+        description: remarques.trim(),
         statut: 'À traiter',
-        duree: Number(duree) || 1,
-        ...(isAdminMode ? { numero_bon: numeroBon.trim() || null } : {})
+        ...(isAdminMode ? { numero_affaire: numeroBon.trim() || null } : {})
       }
 
       if (!depannageSauveId) {
-        depannagePayload.employe_id = employeFinalId
+        depannagePayload.created_by = user.id
       }
 
       if (depannageSauveId) {
         const { data: depannageUpdated, error: depannageUpdateError } = await supabase
-          .from('depannages')
+          .from('dossiers')
           .update(depannagePayload)
           .eq('id', depannageSauveId)
           .select('id')
@@ -397,7 +406,7 @@ export default function Depannage({ mode = 'employe' }) {
       } else {
         console.log('[depannage-insert] payload:', JSON.stringify(depannagePayload), '| user.id:', user?.id)
         const { data: depannageInserted, error: depannageInsertError } = await supabase
-          .from('depannages')
+          .from('dossiers')
           .insert(depannagePayload)
           .select('id')
           .single()
@@ -407,23 +416,18 @@ export default function Depannage({ mode = 'employe' }) {
         depannageSauveId = depannageInserted.id
       }
 
-      if (depannageSauveId) {
-        const { error: intervenantError } = await supabase
-          .from('depannage_intervenants')
-          .insert({ depannage_id: depannageSauveId, employe_id: employeFinalId })
-        if (intervenantError) throw intervenantError
-      }
-
-      const sousDossierId = chantierIdFinal ? await ensureDepannageSousDossier(chantierIdFinal) : null
+      // TODO: table manquante depannage_intervenants
 
       const rapportPayload = {
-        sous_dossier_id: sousDossierId,
+        dossier_id: depannageSauveId,
         employe_id: employeFinalId,
-        date_travail: date,
-        heure_debut: '07:30',
-        heure_fin: '17:00',
-        remarques: remarques.trim(),
-        depannage_id: depannageSauveId
+        date_intervention: date,
+        heures: Number(duree) || 1,
+        heures_deplacement: 0,
+        materiaux_notes: materiaux.map(item => `${item.qte} ${item.unite} ${item.nom}`).join('\n') || null,
+        notes: remarques.trim(),
+        statut: 'envoye',
+        modifie_par_admin: isAdminMode
       }
 
       if (rapportSauveId) {
@@ -453,23 +457,16 @@ export default function Depannage({ mode = 'employe' }) {
         await sauvegarderMateriaux(depannageSauveId)
       }
 
-      if (photos.length > 0 && chantierIdFinal && sousDossierId) {
-        await uploadRapportPhotos({
-          rapportId: rapportSauveId,
-          depannageId: depannageSauveId,
-          chantierId: chantierIdFinal,
-          sousDossierId,
-          files: photos.map(item => item.file),
-          userId: user.id
-        })
+      if (photos.length > 0) {
+        // TODO: table manquante rapport_photos
       }
 
       const { error: statutError } = await supabase
-        .from('depannages')
+        .from('dossiers')
         .update({
-          chantier_id: chantierIdFinal,
+          // TODO: colonne manquante chantier_id
           statut: 'Rapport reçu',
-          rapport_envoye_le: new Date().toISOString()
+          // TODO: colonne manquante rapport_envoye_le
         })
         .eq('id', depannageSauveId)
 
@@ -512,34 +509,29 @@ export default function Depannage({ mode = 'employe' }) {
   }
 
   async function sauvegarderTimeEntry(depannageSauveId, employeFinalId) {
-    await upsertLinkedTimeEntry({
-      employeId: employeFinalId,
-      type: 'depannage',
-      referenceId: depannageSauveId,
-      dateTravail: date,
-      duree,
-      chantierId: chantierId || null
-    })
+    // time_entries -> rapports dans le schema V1; les heures sont sauvegardees dans rapportPayload.
   }
 
   async function sauvegarderMateriaux(depannageSauveId) {
     const { error: deleteError } = await supabase
-      .from('depannage_materiaux')
+      .from('lignes_facturables')
       .delete()
-      .eq('depannage_id', depannageSauveId)
+      .eq('dossier_id', depannageSauveId)
+      .eq('type', 'materiel')
 
     if (deleteError) throw deleteError
     if (materiaux.length === 0) return
 
     const { error: insertError } = await supabase
-      .from('depannage_materiaux')
+      .from('lignes_facturables')
       .insert(materiaux.map(item => ({
-        depannage_id: depannageSauveId,
-        ref_article: item.catalogueId || null,
-        designation: item.nom,
-        unite: item.unite,
+        dossier_id: depannageSauveId,
+        type: 'materiel',
+        description: `${item.nom}${item.unite ? ` (${item.unite})` : ''}`,
         quantite: Math.max(0, Number(item.qte) || 0),
-        created_by: user?.id || null
+        prix_unitaire: 0,
+        montant_ht: 0,
+        statut: 'brouillon'
       })))
 
     if (insertError) throw insertError
@@ -623,6 +615,7 @@ export default function Depannage({ mode = 'employe' }) {
           <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
             {categories.map(categorie => (
               <button
+                type="button"
                 key={categorie}
                 onClick={() => setCatFiltre(categorie)}
                 style={{
@@ -647,21 +640,21 @@ export default function Depannage({ mode = 'employe' }) {
           )}
           <div className="card" style={{ padding: 0 }}>
             {articlesFiltres.map((article, index) => {
-              const qte = materiaux.find(item => item.id === article.id)?.qte || 0
+              const qte = materiaux.find(item => String(item.id) === String(article.id))?.qte || 0
               return (
                 <div key={article.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', gap: '8px', borderBottom: index < articlesFiltres.length - 1 ? '1px solid #eee' : 'none' }}>
-                  <button onClick={() => toggleFavori(article.id)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', opacity: favoris.includes(article.id) ? 1 : 0.25, padding: 0, flexShrink: 0 }}>⭐</button>
+                  <button type="button" onClick={() => toggleFavori(article.id)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', opacity: favoris.includes(article.id) ? 1 : 0.25, padding: 0, flexShrink: 0 }}>⭐</button>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '13px', fontWeight: 500 }}>{article.nom}</div>
                     <div style={{ fontSize: '11px', color: '#888' }}>{article.categorie} · {normalizeUnite(article.unite, article.nom)}</div>
                   </div>
                   {qte === 0 ? (
-                    <button onClick={() => ajouter(article)} style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #185FA5', background: '#E6F1FB', color: '#185FA5', fontSize: '18px', cursor: 'pointer', flexShrink: 0 }}>+</button>
+                    <button type="button" onClick={() => ajouter(article)} style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #185FA5', background: '#E6F1FB', color: '#185FA5', fontSize: '18px', cursor: 'pointer', flexShrink: 0 }}>+</button>
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                      <button onClick={() => modQte(article.id, -1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
+                      <button type="button" onClick={() => modQte(article.id, -1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #ddd', background: 'white', cursor: 'pointer', fontSize: '14px' }}>−</button>
                       <span style={{ fontSize: '13px', fontWeight: 600, minWidth: '20px', textAlign: 'center' }}>{qte}</span>
-                      <button onClick={() => modQte(article.id, 1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #185FA5', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
+                      <button type="button" onClick={() => modQte(article.id, 1)} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid #185FA5', background: '#185FA5', color: 'white', cursor: 'pointer', fontSize: '14px' }}>+</button>
                     </div>
                   )}
                 </div>
@@ -669,7 +662,7 @@ export default function Depannage({ mode = 'employe' }) {
             })}
             {!loading && articlesFiltres.length === 0 && <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: '13px' }}>Aucun article</div>}
           </div>
-          <button className="btn-primary" onClick={() => setCatalogueVue(false)}>✓ Confirmer ({materiaux.reduce((sum, item) => sum + item.qte, 0)} articles)</button>
+          <button type="button" className="btn-primary" onClick={() => setCatalogueVue(false)}>✓ Confirmer ({materiaux.reduce((sum, item) => sum + item.qte, 0)} articles)</button>
         </div>
       </div>
     )
@@ -883,10 +876,10 @@ export default function Depannage({ mode = 'employe' }) {
 
 function mapRapportMateriauToUi(item) {
   return {
-    id: item.ref_article || item.id,
-    catalogueId: item.ref_article || null,
-    nom: item.designation,
-    unite: normalizeUnite(item.unite, item.designation),
+    id: item.id,
+    catalogueId: null,
+    nom: item.description,
+    unite: normalizeUnite('', item.description),
     qte: Math.max(0, Number(item.quantite) || 0)
   }
 }

@@ -9,9 +9,6 @@ import { supabaseSafe } from '../lib/supabaseSafe'
 import { useAuth } from '../lib/auth-context'
 import { usePageRefresh } from '../lib/refresh'
 import { safeConfirm } from '../lib/safe-browser'
-import { getInitiales } from '../services/depannages.service'
-import { deleteRapportPhoto, uploadRapportPhotos, withSignedPhotoUrls } from '../services/rapportPhotos.service'
-import { fetchTimeEntryDurationsMap } from '../services/timeEntries.service'
 import {
   CHANTIER_STATUT_A_CONFIRMER,
   chantierBelongsToIntermediaire,
@@ -87,44 +84,63 @@ function fmtDuree(h) {
 
 async function hydraterRapportsPhotos(rapports) {
   const list = Array.from(rapports || [])
-  const allPhotos = list.flatMap(rapport => rapport.rapport_photos || [])
-  if (allPhotos.length === 0) return list
+  // TODO: table manquante rapport_photos
+  return list.map(rapport => ({ ...rapport, rapport_photos: [] }))
+}
 
-  try {
-    const signedPhotos = await withSignedPhotoUrls(allPhotos)
-    const photosByRapportId = {}
-
-    for (const photo of signedPhotos) {
-      const key = String(photo.rapport_id)
-      if (!photosByRapportId[key]) photosByRapportId[key] = []
-      photosByRapportId[key].push(photo)
-    }
-
-    return list.map(rapport => ({
-      ...rapport,
-      rapport_photos: photosByRapportId[String(rapport.id)] || []
-    }))
-  } catch (error) {
-    console.error('Erreur signature photos rapports admin', error)
-    return list
+function mapLigneFacturableToMateriau(ligne) {
+  return {
+    id: ligne.id,
+    rapport_id: ligne.rapport_id,
+    dossier_id: ligne.dossier_id,
+    designation: ligne.description,
+    description: ligne.description,
+    quantite: Number(ligne.quantite || 0),
+    prix_net: Number(ligne.prix_unitaire || 0),
+    prix_unitaire: Number(ligne.prix_unitaire || 0),
+    montant_ht: Number(ligne.montant_ht || 0)
   }
+}
+
+async function hydraterRapportsMateriaux(rapports) {
+  const list = Array.from(rapports || [])
+  const ids = list.map(rapport => rapport.id).filter(Boolean)
+  if (ids.length === 0) return list.map(rapport => ({ ...rapport, rapport_materiaux: [] }))
+
+  const { data, error } = await supabase
+    .from('lignes_facturables')
+    .select('id, dossier_id, rapport_id, type, description, quantite, prix_unitaire, montant_ht, statut')
+    .in('rapport_id', ids)
+
+  if (error) {
+    console.error('Erreur chargement lignes_facturables rapports', error)
+    return list.map(rapport => ({ ...rapport, rapport_materiaux: [] }))
+  }
+
+  const byRapport = {}
+  for (const ligne of data || []) {
+    if (ligne.type !== 'materiel') continue
+    const key = String(ligne.rapport_id)
+    if (!byRapport[key]) byRapport[key] = []
+    byRapport[key].push(mapLigneFacturableToMateriau(ligne))
+  }
+
+  return list.map(rapport => ({
+    ...rapport,
+    rapport_materiaux: byRapport[String(rapport.id)] || []
+  }))
 }
 
 async function hydraterRapportsDurees(rapports, employeId = null, dateFrom = null, dateTo = null) {
   const list = Array.from(rapports || [])
   if (list.length === 0) return list
 
-  const byRapportId = await fetchTimeEntryDurationsMap({
-    type: 'chantier',
-    referenceIds: list.map(rapport => rapport.id),
-    employeId,
-    dateFrom,
-    dateTo
-  })
-
   return list.map(rapport => ({
     ...rapport,
-    _duree: byRapportId[String(rapport.id)] ?? 0
+    date_travail: rapport.date_intervention,
+    remarques: rapport.notes,
+    valide: rapport.statut === 'valide',
+    _duree: Number(rapport.heures || 0) + Number(rapport.heures_deplacement || 0)
   }))
 }
 
@@ -132,17 +148,11 @@ async function hydraterDepannagesDurees(depannages, employeId = null, dateFrom =
   const list = Array.from(depannages || [])
   if (list.length === 0) return list
 
-  const byDepannageId = await fetchTimeEntryDurationsMap({
-    type: 'depannage',
-    referenceIds: list.map(depannage => depannage.id),
-    employeId,
-    dateFrom,
-    dateTo
-  })
-
   return list.map(depannage => ({
     ...depannage,
-    _duree: byDepannageId[String(depannage.id)] ?? 0
+    date_travail: depannage.created_at?.slice(0, 10),
+    adresse: depannage.adresse_chantier,
+    _duree: 0
   }))
 }
 
@@ -178,13 +188,7 @@ function isMissingChantierColumnError(error, column) {
 
 function chantierSchemaErrorMessage(error) {
   if (isMissingChantierColumnError(error, 'statut')) {
-    return "La colonne chantiers.statut est absente dans la base Supabase."
-  }
-  if (isMissingChantierColumnError(error, 'client_nom')) {
-    return "La colonne chantiers.client_nom est absente dans la base Supabase."
-  }
-  if (isMissingChantierColumnError(error, 'documents_visibilite_employe')) {
-    return "La colonne chantiers.documents_visibilite_employe est absente dans la base Supabase."
+    return "La colonne dossiers.statut est absente dans la base Supabase."
   }
   return error?.message || 'Erreur Supabase inconnue.'
 }
@@ -352,7 +356,7 @@ export default function Admin() {
     if (vue === 'vacances') chargerVacancesAdmin()
     if (vue === 'employes') chargerStatsEmployes()
     if (vue === 'catalogue') chargerCatalogueAdmin()
-  }, [])
+  }, [vue])
 
   const refreshPage = usePageRefresh(async () => {
     setRefreshingData(true)
@@ -360,6 +364,7 @@ export default function Admin() {
       if (vue === 'calendrier') return await chargerCalendrier(calMois)
       if (vue === 'vacances') return await chargerVacancesAdmin()
       if (vue === 'employes') return await chargerStatsEmployes()
+      if (vue === 'catalogue') return await chargerCatalogueAdmin()
       if (vue === 'employe_detail' && empDetail) return await chargerDetailEmploye(empDetail.id, empDetailMois)
       if (rapportDetail?.id) return await rechargerRapportDetail(rapportDetail.id)
       if (vue === 'sous_dossiers' && chantierActif) return await chargerSousDossiers(chantierActif.id)
@@ -388,15 +393,16 @@ export default function Admin() {
       return
     }
 
-    let query = supabase.from('depannages')
-      .select('*, employe:employe_id(prenom), regie:regies(id, nom), pris_par_user:utilisateurs!depannages_pris_par_fkey(id, prenom, initiales), depannage_intervenants(employe_id)')
+    let query = supabase.from('dossiers')
+      .select('id, numero_affaire, type, client_id, statut, description, adresse_chantier, created_by, created_at, clients(id, nom)')
+      .eq('type', 'depannage')
 
     if (regieValue) {
-      query = query.eq('regie_id', regieValue)
+      query = query.eq('client_id', regieValue)
     }
 
     if (dateValue) {
-      query = query.eq('date_travail', dateValue)
+      query = query.gte('created_at', `${dateValue}T00:00:00`).lte('created_at', `${dateValue}T23:59:59`)
     }
 
     query = query.order('created_at', { ascending: false })
@@ -413,18 +419,18 @@ export default function Admin() {
       let linkedRapportsByDepannage = {}
       const ids = (data || []).map(d => d.id).filter(Boolean)
       const depannageDurees = ids.length > 0
-        ? await fetchTimeEntryDurationsMap({ type: 'depannage', referenceIds: ids })
+        ? {}
         : {}
       if (ids.length > 0) {
         const [{ data: mats, error: matsError }, { data: linkedRapports, error: linkedRapportsError }] = await Promise.all([
           supabase
-            .from('rapport_materiaux')
+            .from('lignes_facturables')
             .select('*')
-            .in('rapport_id', ids),
+            .in('dossier_id', ids),
           supabase
             .from('rapports')
-            .select('id, depannage_id, sous_dossier_id')
-            .in('depannage_id', ids)
+            .select('id, dossier_id, heures, heures_deplacement')
+            .in('dossier_id', ids)
         ])
         if (requestId !== depannagesRequestRef.current) return
 
@@ -432,7 +438,7 @@ export default function Admin() {
           console.error('Erreur chargement rapports lies depannages', linkedRapportsError)
         } else {
           for (const rapport of linkedRapports || []) {
-            linkedRapportsByDepannage[String(rapport.depannage_id)] = rapport
+            linkedRapportsByDepannage[String(rapport.dossier_id)] = rapport
           }
         }
 
@@ -441,7 +447,7 @@ export default function Admin() {
 
         if (rapportIds.length > 0) {
           const { data: matsLinked, error: matsLinkedError } = await supabase
-            .from('rapport_materiaux')
+            .from('lignes_facturables')
             .select('*')
             .in('rapport_id', rapportIds)
           if (requestId !== depannagesRequestRef.current) return
@@ -449,20 +455,20 @@ export default function Admin() {
           if (matsLinkedError) {
             console.error('Erreur chargement materiaux rapports depannages', matsLinkedError)
           } else {
-            linkedMateriaux = matsLinked || []
+            linkedMateriaux = (matsLinked || []).map(mapLigneFacturableToMateriau)
           }
         }
 
         for (const rapport of linkedRapports || []) {
-          materiauxByDepannage[String(rapport.depannage_id)] = linkedMateriaux.filter(mat => String(mat.rapport_id) === String(rapport.id))
+          materiauxByDepannage[String(rapport.dossier_id)] = linkedMateriaux.filter(mat => String(mat.rapport_id) === String(rapport.id))
         }
 
         if (!matsError) {
           for (const mat of mats || []) {
-            const key = String(mat.rapport_id)
+            const key = String(mat.dossier_id)
             if (materiauxByDepannage[key]?.length) continue
             if (!materiauxByDepannage[key]) materiauxByDepannage[key] = []
-            materiauxByDepannage[key].push(mat)
+            materiauxByDepannage[key].push(mapLigneFacturableToMateriau(mat))
           }
         } else {
           console.error('Erreur chargement materiaux depannages', matsError)
@@ -471,8 +477,11 @@ export default function Admin() {
 
       setDepannages((data || []).map(depannage => ({
         ...depannage,
-        _duree: depannageDurees[String(depannage.id)] ?? 0,
-        regie: depannage.regie || (depannage.regie_id ? regiesById[String(depannage.regie_id)] || null : null),
+        date_travail: depannage.created_at?.slice(0, 10),
+        adresse: depannage.adresse_chantier,
+        employe: null,
+        _duree: Number(linkedRapportsByDepannage[String(depannage.id)]?.heures || 0) + Number(linkedRapportsByDepannage[String(depannage.id)]?.heures_deplacement || 0),
+        regie: depannage.clients || (depannage.client_id ? regiesById[String(depannage.client_id)] || null : null),
         rapport_lie: linkedRapportsByDepannage[String(depannage.id)] || null,
         rapport_materiaux: materiauxByDepannage[String(depannage.id)] || []
       })))
@@ -504,11 +513,11 @@ export default function Admin() {
       setChantierSchema(chantierColumns)
 
       const rap = await adminDashboardQuery('rapports_attente', supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*)')
-        .eq('valide', false).is('deleted_at', null).order('created_at', { ascending: false }))
+        .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
+        .neq('statut', 'valide').order('created_at', { ascending: false }))
 
       if (rap && rap.length > 0) {
-        const rapportsHydrates = await hydraterRapportsPhotos(rap)
+        const rapportsHydrates = await hydraterRapportsMateriaux(await hydraterRapportsPhotos(rap))
         setRapportsEnAttente(await hydraterRapportsDurees(rapportsHydrates))
       } else {
         setRapportsEnAttente(rap || [])
@@ -516,12 +525,13 @@ export default function Admin() {
 
       // Recharge la corbeille rapports depuis la DB (survive au rechargement de page)
       const rapsSupprimes = await adminDashboardQuery('rapports_corbeille', supabase.from('rapports')
-        .select('*, employe:employe_id(prenom), rapport_materiaux(*)')
-        .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }))
+        .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
+        .eq('statut', 'archive').order('created_at', { ascending: false }))
       if (rapsSupprimes && rapsSupprimes.length > 0) {
+        const rapsSupprimesHydrates = await hydraterRapportsDurees(rapsSupprimes)
         setCorbeille(prev => {
           const existingIds = new Set(prev.filter(i => i.type === 'rapport').map(i => i.data.id))
-          const newItems = rapsSupprimes
+          const newItems = rapsSupprimesHydrates
             .filter(r => !existingIds.has(r.id))
             .map(r => ({ type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }))
           return [...prev.filter(i => i.type !== 'rapport'), ...newItems]
@@ -531,13 +541,13 @@ export default function Admin() {
       }
 
       const ch = await adminDashboardQuery('chantiers',
-        supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+        supabase.from('dossiers').select('*').order('created_at')
       )
 
       let intermediairesListe = []
       try {
         intermediairesListe = await adminDashboardQuery('intermediaires',
-          supabase.from('intermediaires').select('id, nom').order('nom')
+          supabase.from('clients').select('id, nom, actif').eq('actif', true).order('nom')
         ) || []
       } catch {
         intermediairesListe = []
@@ -551,21 +561,25 @@ export default function Admin() {
 
       const chantiersHydrates = (ch || []).map(chantier => ({
         ...chantier,
-        intermediaire: chantier?.intermediaire_id != null
-          ? (intermediairesById.get(String(chantier.intermediaire_id)) || null)
+        nom: chantier.numero_affaire || chantier.description || 'Dossier',
+        adresse: chantier.adresse_chantier || '',
+        intermediaire_id: chantier.client_id,
+        intermediaire: chantier?.client_id != null
+          ? (intermediairesById.get(String(chantier.client_id)) || null)
           : null
-      })).filter(chantier => !isStandaloneIntermediaireRecord(chantier, intermediairesListe))
+      })).filter(chantier => chantier.type !== 'depannage')
 
       setChantiers(chantiersHydrates)
 
       let regs = null
       try {
-        regs = await adminDashboardQuery('regies', supabase.from('regies').select('id, nom').eq('actif', true).order('nom'))
+        regs = await adminDashboardQuery('regies', supabase.from('regies_clients').select('id, client_id, notes, clients(id, nom)').order('created_at'))
+        regs = (regs || []).map(regie => ({ ...regie, nom: regie.clients?.nom || regie.notes || `Client ${regie.client_id || regie.id}` }))
         setRegies(regs || [])
       } catch { setRegies([]) }
 
       let regieFiltreOk = regieFilterAvailable
-      const { error: regieColumnError } = await supabase.from('depannages').select('regie_id').limit(1)
+      const { error: regieColumnError } = await supabase.from('dossiers').select('client_id').limit(1)
       logAdminDashboardQueryError('depannages_regie_id_probe', regieColumnError)
       if (regieColumnError?.code === '42703') {
         regieFiltreOk = false
@@ -601,7 +615,7 @@ export default function Admin() {
   }
 
   async function verifierColonneChantier(column) {
-    const { error } = await supabase.from('chantiers').select(column).limit(1)
+    const { error } = await supabase.from('dossiers').select(column).limit(1)
     if (!error) return true
     if (isMissingChantierColumnError(error, column)) return false
     console.error(`Erreur verification colonne chantiers.${column}`, error)
@@ -609,11 +623,11 @@ export default function Admin() {
   }
 
   async function verifierColonnesChantiers() {
-    const [statut, clientNom, documentsVisibiliteEmploye] = await Promise.all([
-      verifierColonneChantier('statut'),
-      verifierColonneChantier('client_nom'),
-      verifierColonneChantier('documents_visibilite_employe')
-    ])
+    const statut = await verifierColonneChantier('statut')
+    // TODO: colonne manquante client_nom
+    const clientNom = false
+    // TODO: colonne manquante documents_visibilite_employe
+    const documentsVisibiliteEmploye = false
 
     return { statut, clientNom, documentsVisibiliteEmploye }
   }
@@ -622,40 +636,17 @@ export default function Admin() {
     setVacancesLoading(true)
     setVacancesError('')
     try {
-      const annee = new Date().getFullYear()
-      const debutAnnee = `${annee}-01-01`
-      const finAnnee = `${annee}-12-31`
-
-      const [demandes, blocages, listeEmp] = await Promise.all([
-        supabaseSafe(supabase.from('vacances')
-          .select('*, employe:employe_id(id, prenom, initiales, vacances_quota_annuel)')
-          .order('created_at', { ascending: false })),
-        supabaseSafe(supabase.from('vacances_blocages')
-          .select('*')
-          .eq('actif', true)
-          .order('type', { ascending: true })
-          .order('date_debut', { ascending: true })),
-        supabaseSafe(supabase.from('utilisateurs')
+      // TODO: table manquante vacances
+      // TODO: table manquante vacances_blocages
+      const listeEmp = await supabaseSafe(supabase.from('utilisateurs')
           .select('id, prenom, initiales, vacances_quota_annuel')
           .eq('role', 'employe')
           .order('prenom'))
-      ])
 
-      setVacancesAdmin(demandes || [])
-      setBlocagesVacances(blocages || [])
+      setVacancesAdmin([])
+      setBlocagesVacances([])
       setEmployes(listeEmp || [])
-
-      const stats = {}
-      for (const emp of listeEmp || employes) {
-        const empDemandes = (demandes || []).filter(v => String(v.employe_id) === String(emp.id))
-        const dansAnnee = empDemandes.filter(v => datesSeChevauchent(v.date_debut, v.date_fin, debutAnnee, finAnnee))
-        stats[emp.id] = {
-          quota: emp.vacances_quota_annuel || 20,
-          pris: dansAnnee.filter(v => v.statut === 'accepte').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0),
-          attente: dansAnnee.filter(v => v.statut === 'en_attente').reduce((s, v) => s + Number(v.jours_ouvrables || countJoursOuvrables(v.date_debut, v.date_fin)), 0)
-        }
-      }
-      setVacancesStats(stats)
+      setVacancesStats({})
     } catch (error) {
       console.error('Erreur chargement vacances admin', error)
       setVacancesError("Impossible de charger les vacances. Réessaie dans un instant.")
@@ -666,11 +657,7 @@ export default function Admin() {
 
   async function deciderVacances(demande, statut) {
     try {
-      await supabaseSafe(supabase.from('vacances').update({
-        statut,
-        decide_par: user?.id || null,
-        decide_le: new Date().toISOString()
-      }).eq('id', demande.id))
+      // TODO: table manquante vacances
       chargerVacancesAdmin()
     } catch (error) {
       alert('Erreur lors de la mise à jour de la demande. Veuillez réessayer.')
@@ -681,13 +668,7 @@ export default function Admin() {
     e.preventDefault()
     if (!blocageForm.date_debut || !blocageForm.date_fin || !blocageForm.motif.trim() || blocageForm.date_fin < blocageForm.date_debut) return
     try {
-      await supabaseSafe(supabase.from('vacances_blocages').insert({
-        date_debut: blocageForm.date_debut,
-        date_fin: blocageForm.date_fin,
-        type: blocageForm.type,
-        motif: blocageForm.motif.trim(),
-        created_by: user?.id || null
-      }))
+      // TODO: table manquante vacances_blocages
       setBlocageForm({ date_debut: '', date_fin: '', type: 'blocage', motif: '' })
       chargerVacancesAdmin()
     } catch (error) {
@@ -697,7 +678,7 @@ export default function Admin() {
 
   async function supprimerBlocageVacances(id) {
     try {
-      await supabaseSafe(supabase.from('vacances_blocages').update({ actif: false }).eq('id', id))
+      // TODO: table manquante vacances_blocages
       chargerVacancesAdmin()
     } catch (error) {
       alert('Erreur lors de la suppression du blocage. Veuillez réessayer.')
@@ -723,14 +704,14 @@ export default function Admin() {
 
     try {
       const { data: affairesData, error } = await supabase
-        .from('affaires')
-        .select('*, rapports(id, rapport_photos(id))')
-        .eq('chantier_id', chantierId)
+        .from('dossiers')
+        .select('*')
+        .eq('id', chantierId)
 
       if (!error && affairesData && affairesData.length > 0) {
         data = affairesData.map(a => ({
           ...a,
-          nom: a.nom,
+          nom: a.numero_affaire || a.description || 'Dossier',
           isAffaire: true
         }))
       } else {
@@ -738,13 +719,13 @@ export default function Admin() {
       }
     } catch {
       const { data: sousDossiersData } = await supabase
-        .from('sous_dossiers')
-        .select('*, rapports(id, rapport_photos(id))')
-        .eq('chantier_id', chantierId)
+        .from('dossiers')
+        .select('*')
+        .eq('id', chantierId)
 
       data = (sousDossiersData || []).map(sd => ({
         ...sd,
-        nom: sd.nom,
+        nom: sd.numero_affaire || sd.description || 'Dossier',
         isAffaire: false
       }))
     }
@@ -753,14 +734,11 @@ export default function Admin() {
   }
 
   async function chargerRapports(sdId) {
-    const sourceItem = sousDossiers.find(item => item.id === sdId) || sousDossierActif
-    const foreignKey = sourceItem?.isAffaire ? 'affaire_id' : 'sous_dossier_id'
-
     const { data } = await supabase.from('rapports')
-      .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
-      .eq(foreignKey, sdId).is('deleted_at', null).order('date_travail', { ascending: false })
+      .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
+      .eq('dossier_id', sdId).neq('statut', 'archive').order('date_intervention', { ascending: false })
     if (!data) { setRapports([]); return }
-    const rapportsHydrates = await hydraterRapportsPhotos(data)
+    const rapportsHydrates = await hydraterRapportsMateriaux(await hydraterRapportsPhotos(data))
     if (rapportsHydrates.length > 0) {
       setRapports(await hydraterRapportsDurees(rapportsHydrates))
     } else {
@@ -772,12 +750,13 @@ export default function Admin() {
     const m = mois || calMois
     const { debut, fin } = debutFin(m.year, m.month)
     const { data: raps } = await supabase.from('rapports')
-      .select('date_travail, employe_id, employe:employe_id(id, prenom), sous_dossiers(nom, chantiers(nom))')
-      .gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null)
+      .select('date_intervention, employe_id, employe:employe_id(id, prenom), dossier_id')
+      .gte('date_intervention', debut).lte('date_intervention', fin).neq('statut', 'archive')
     if (raps) setCalRapports(raps)
-    const { data: deps } = await supabase.from('depannages')
-      .select('*, employe:employe_id(id, prenom)')
-      .gte('date_travail', debut).lte('date_travail', fin)
+    const { data: deps } = await supabase.from('dossiers')
+      .select('*')
+      .eq('type', 'depannage')
+      .gte('created_at', `${debut}T00:00:00`).lte('created_at', `${fin}T23:59:59`)
     if (deps) setCalDepannages(await hydraterDepannagesDurees(deps, null, debut, fin))
   }
 
@@ -792,13 +771,11 @@ export default function Admin() {
     try {
       const data = await supabaseSafe(
         supabase.from('rapports')
-          .select('*, employe:employe_id(prenom)')
-          .is('sous_dossier_id', null)
-          .is('depannage_id', null)
-          .is('deleted_at', null)
-          .order('date_travail', { ascending: false })
+          .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
+          .neq('statut', 'archive')
+          .order('date_intervention', { ascending: false })
       )
-      setRapportsV1(data || [])
+      setRapportsV1(await hydraterRapportsDurees(await hydraterRapportsMateriaux(await hydraterRapportsPhotos(data || []))))
     } catch (error) {
       console.error('Erreur chargement rapports V1', error)
       setRapportsV1([])
@@ -828,14 +805,14 @@ export default function Admin() {
     const { debut: debutPrev, fin: finPrev } = debutFin(prevDate.getFullYear(), prevDate.getMonth())
 
     const [{ data: entMois }, { data: entPrev }, { data: delRapsMois }, { data: delRapsPrev }] = await Promise.all([
-      supabase.from('time_entries').select('employe_id, duree, type, reference_id, chantier_id')
-        .gte('date_travail', debutMois).lte('date_travail', finMois),
-      supabase.from('time_entries').select('employe_id, duree, type, reference_id')
-        .gte('date_travail', debutPrev).lte('date_travail', finPrev),
-      supabase.from('rapports').select('id').not('deleted_at', 'is', null)
-        .gte('date_travail', debutMois).lte('date_travail', finMois),
-      supabase.from('rapports').select('id').not('deleted_at', 'is', null)
-        .gte('date_travail', debutPrev).lte('date_travail', finPrev)
+      supabase.from('rapports').select('employe_id, heures, heures_deplacement, dossier_id')
+        .gte('date_intervention', debutMois).lte('date_intervention', finMois),
+      supabase.from('rapports').select('employe_id, heures, heures_deplacement, dossier_id')
+        .gte('date_intervention', debutPrev).lte('date_intervention', finPrev),
+      supabase.from('rapports').select('id').eq('statut', 'archive')
+        .gte('date_intervention', debutMois).lte('date_intervention', finMois),
+      supabase.from('rapports').select('id').eq('statut', 'archive')
+        .gte('date_intervention', debutPrev).lte('date_intervention', finPrev)
     ])
     const deletedMoisIds = new Set((delRapsMois || []).map(r => r.id))
     const deletedPrevIds = new Set((delRapsPrev || []).map(r => r.id))
@@ -847,9 +824,9 @@ export default function Admin() {
       const moisEmp = filteredMois.filter(e => String(e.employe_id) === String(emp.id))
       const prevEmp = filteredPrev.filter(e => String(e.employe_id) === String(emp.id))
       stats[emp.id] = {
-        heureMois: moisEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
-        heurePrev: prevEmp.reduce((s, e) => s + Number(e.duree || 0), 0),
-        chantiersCount: new Set(moisEmp.filter(e => e.chantier_id).map(e => e.chantier_id)).size
+        heureMois: moisEmp.reduce((s, e) => s + Number(e.heures || 0) + Number(e.heures_deplacement || 0), 0),
+        heurePrev: prevEmp.reduce((s, e) => s + Number(e.heures || 0) + Number(e.heures_deplacement || 0), 0),
+        chantiersCount: new Set(moisEmp.filter(e => e.dossier_id).map(e => e.dossier_id)).size
       }
     }
     setEmpStats(stats)
@@ -861,8 +838,8 @@ export default function Admin() {
     const { debut, fin } = debutFin(m.year, m.month)
 
     const { data: raps } = await supabase.from('rapports')
-      .select('id, date_travail, remarques, sous_dossiers(nom, chantier_id, chantiers(nom))')
-      .eq('employe_id', empId).gte('date_travail', debut).lte('date_travail', fin).is('deleted_at', null).order('date_travail')
+      .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, notes, statut')
+      .eq('employe_id', empId).gte('date_intervention', debut).lte('date_intervention', fin).neq('statut', 'archive').order('date_intervention')
 
     if (raps && raps.length > 0) {
       setEmpDetailRapports(await hydraterRapportsDurees(raps, empId, debut, fin))
@@ -870,25 +847,19 @@ export default function Admin() {
       setEmpDetailRapports(raps || [])
     }
 
-    const { data: deps } = await supabase.from('depannages')
-      .select('*').eq('employe_id', empId)
-      .gte('date_travail', debut).lte('date_travail', fin).order('date_travail')
+    const { data: deps } = await supabase.from('dossiers')
+      .select('*')
+      .eq('type', 'depannage')
+      .gte('created_at', `${debut}T00:00:00`).lte('created_at', `${fin}T23:59:59`).order('created_at')
     if (deps) setEmpDetailDepannages(await hydraterDepannagesDurees(deps, empId, debut, fin))
 
-    // Absences
-    const { data: abs } = await supabase.from('absences')
-      .select('*').eq('employe_id', empId)
-      .order('created_at', { ascending: false }).limit(30)
-    setEmpAbsences(abs || [])
+    // TODO: table manquante absences
+    setEmpAbsences([])
   }
 
   async function approuverAbsence(id) {
     try {
-      await supabaseSafe(supabase.from('absences').update({
-        statut: 'approuve',
-        decide_par: user?.id || null,
-        decide_le: new Date().toISOString()
-      }).eq('id', id))
+      // TODO: table manquante absences
       if (empDetail) chargerDetailEmploye(empDetail.id, empDetailMois)
     } catch (error) {
       alert("Erreur lors de l'approbation de l'absence.")
@@ -897,11 +868,7 @@ export default function Admin() {
 
   async function refuserAbsence(id) {
     try {
-      await supabaseSafe(supabase.from('absences').update({
-        statut: 'refuse',
-        decide_par: user?.id || null,
-        decide_le: new Date().toISOString()
-      }).eq('id', id))
+      // TODO: table manquante absences
       if (empDetail) chargerDetailEmploye(empDetail.id, empDetailMois)
     } catch (error) {
       alert("Erreur lors du refus de l'absence.")
@@ -910,11 +877,9 @@ export default function Admin() {
 
   async function chargerCharteEmploye(empId) {
     setEmpCharteLoading(true)
-    const [{ data: charte }, { data: sig }] = await Promise.all([
-      supabase.from('chartes_acceptees').select('*').eq('employe_id', empId).maybeSingle(),
-      supabase.from('signatures').select('signature_base64, signee_le').eq('employe_id', empId).maybeSingle()
-    ])
-    setEmpCharteData({ charte, sig })
+    // TODO: table manquante chartes_acceptees
+    // TODO: table manquante signatures
+    setEmpCharteData({ charte: null, sig: null })
     setEmpCharteLoading(false)
   }
 
@@ -992,25 +957,22 @@ export default function Admin() {
     // Rapports + time_entries pour les durées correctes
     const [{ data: raps }, { data: deps }, { data: suppEntries }] = await Promise.all([
       supabase.from('rapports')
-        .select('id, date_travail, remarques, sous_dossiers(nom, chantiers(nom, adresse))')
-        .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
-        .is('deleted_at', null).order('date_travail'),
-      supabase.from('depannages')
-        .select('id, date_travail, adresse')
-        .eq('employe_id', empId).gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
-        .order('date_travail'),
-      supabase.from('time_entries')
-        .select('date_travail, duree, commentaire')
-        .eq('employe_id', empId).eq('type', 'heures_supp')
-        .gte('date_travail', lundiStr).lte('date_travail', dimancheStr)
+        .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, notes, statut')
+        .eq('employe_id', empId).gte('date_intervention', lundiStr).lte('date_intervention', dimancheStr)
+        .neq('statut', 'archive').order('date_intervention'),
+      supabase.from('dossiers')
+        .select('id, created_at, adresse_chantier')
+        .eq('type', 'depannage').gte('created_at', `${lundiStr}T00:00:00`).lte('created_at', `${dimancheStr}T23:59:59`)
+        .order('created_at'),
+      Promise.resolve({ data: [] })
     ])
 
     // Merge des durées rapports via time_entries
     const rapsAvecDuree = await hydraterRapportsDurees(raps || [], empId, lundiStr, dimancheStr)
     const depsAvecDuree = await hydraterDepannagesDurees(deps || [], empId, lundiStr, dimancheStr)
 
-    const { data: sigData } = await supabase.from('signatures')
-      .select('signature_base64').eq('employe_id', empId).maybeSingle()
+    // TODO: table manquante signatures
+    const sigData = null
 
     const { jsPDF } = await import('jspdf')
     const doc = new jsPDF({ format: 'a4' })
@@ -1180,10 +1142,8 @@ export default function Admin() {
   async function reinitialiserCharte(empId) {
     if (!safeConfirm(`Réinitialiser la charte de ${empDetail?.prenom} ? Cette action remet le statut à "non signé".`)) return
     try {
-      await Promise.all([
-        supabaseSafe(supabase.from('chartes_acceptees').delete().eq('employe_id', empId)),
-        supabaseSafe(supabase.from('signatures').delete().eq('employe_id', empId))
-      ])
+      // TODO: table manquante chartes_acceptees
+      // TODO: table manquante signatures
       setEmpCharteData({ charte: null, sig: null })
     } catch (error) {
       alert('Erreur lors de la réinitialisation de la charte. Veuillez réessayer.')
@@ -1196,9 +1156,10 @@ export default function Admin() {
 
   async function deconnecter() { await signOut(); navigate('/login') }
 
+  const adminInitiales = user?.initiales || user?.prenom?.slice(0, 2)?.toUpperCase() || user?.email?.slice(0, 2)?.toUpperCase() || ''
   const adminUserMark = user?.email?.toLowerCase() === 'carlos@eleco.ch'
     ? '∞'
-    : user?.initiales
+    : adminInitiales
 
   const adminHeaderPlusStyle = {
     width: '40px',
@@ -1225,15 +1186,15 @@ export default function Admin() {
 
   async function supprimerChantier(c) {
     const [{ data: sds }, { data: affaires }] = await Promise.all([
-      supabase.from('sous_dossiers').select('*').eq('chantier_id', c.id),
-      supabase.from('affaires').select('*').eq('chantier_id', c.id)
+      supabase.from('dossiers').select('*').eq('id', c.id),
+      supabase.from('dossiers').select('*').eq('id', c.id)
     ])
     const enfants = [
       ...((sds || []).map(item => ({ ...item, isAffaire: false }))),
       ...((affaires || []).map(item => ({ ...item, isAffaire: true })))
     ]
     try {
-      await supabaseSafe(supabase.from('chantiers').update({ actif: false }).eq('id', c.id))
+      await supabaseSafe(supabase.from('dossiers').update({ statut: 'archive' }).eq('id', c.id))
       setCorbeille(prev => [...prev, { type: 'chantier', label: c.nom, data: c, enfants }])
       chargerTout(); setConfirm(null); setVue('chantiers'); setChantierActif(null)
     } catch (error) {
@@ -1251,7 +1212,7 @@ export default function Admin() {
     }
 
     try {
-      await supabaseSafe(supabase.from('intermediaires').update({ actif: false }).eq('id', intermediaire.id))
+      await supabaseSafe(supabase.from('clients').update({ actif: false }).eq('id', intermediaire.id))
       setIntermediaires(prev => prev.filter(item => String(item.id) !== String(intermediaire.id)))
       if (intermediaireChantiersActif?.id === intermediaire.id) setIntermediaireChantiersActif(null)
       setConfirm(null)
@@ -1263,7 +1224,7 @@ export default function Admin() {
   async function archiverIntermediaire(intermediaire) {
     if (!intermediaire?.id) return
     try {
-      await supabase.from('intermediaires').update({ actif: false }).eq('id', intermediaire.id)
+      await supabase.from('clients').update({ actif: false }).eq('id', intermediaire.id)
       setIntermediaires(prev => prev.filter(item => String(item.id) !== String(intermediaire.id)))
     } catch (error) {
       alert("Erreur lors de l'archivage de l'intermédiaire.")
@@ -1271,14 +1232,14 @@ export default function Admin() {
   }
 
   async function supprimerSousDossier(sd) {
-    const { data: raps } = await supabase.from('rapports').select('*, rapport_materiaux(*)').eq('sous_dossier_id', sd.id)
+    const { data: raps } = await supabase.from('rapports').select('*').eq('dossier_id', sd.id)
     if ((raps || []).length > 0) {
       alert('Suppression bloquee: ce sous-dossier contient deja des rapports.')
       setConfirm(null)
       return
     }
     try {
-      await supabaseSafe(supabase.from('sous_dossiers').delete().eq('id', sd.id))
+      await supabaseSafe(supabase.from('dossiers').update({ statut: 'archive' }).eq('id', sd.id))
       setCorbeille(prev => [...prev, { type: 'sous_dossier', label: sd.nom, data: sd, enfants: raps || [] }])
       chargerSousDossiers(chantierActif.id); setConfirm(null)
     } catch (error) {
@@ -1288,7 +1249,7 @@ export default function Admin() {
 
   async function supprimerRapport(r) {
     try {
-      await supabaseSafe(supabase.from('rapports').update({ deleted_at: new Date().toISOString() }).eq('id', r.id))
+      await supabaseSafe(supabase.from('rapports').update({ statut: 'archive' }).eq('id', r.id))
       setCorbeille(prev => [...prev, { type: 'rapport', label: `${r.employe?.prenom} · ${new Date(r.date_travail).toLocaleDateString('fr-CH')}`, data: r, enfants: [] }])
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
       setRapportDetail(null); setConfirm(null)
@@ -1300,11 +1261,11 @@ export default function Admin() {
   async function restaurerCorbeille(item) {
     try {
     if (item.type === 'chantier') {
-      await supabaseSafe(supabase.from('chantiers').update({ actif: true }).eq('id', item.data.id))
+      await supabaseSafe(supabase.from('dossiers').update({ statut: 'actif' }).eq('id', item.data.id))
     } else if (item.type === 'sous_dossier') {
-      await supabaseSafe(supabase.from('sous_dossiers').insert({ chantier_id: item.data.chantier_id, nom: item.data.nom }))
+      await supabaseSafe(supabase.from('dossiers').insert({ client_id: item.data.client_id || null, description: item.data.nom || null }))
     } else if (item.type === 'rapport') {
-      await supabaseSafe(supabase.from('rapports').update({ deleted_at: null }).eq('id', item.data.id))
+      await supabaseSafe(supabase.from('rapports').update({ statut: 'brouillon' }).eq('id', item.data.id))
     }
     setCorbeille(prev => prev.filter(i => i !== item))
     chargerTout()
@@ -1317,16 +1278,16 @@ export default function Admin() {
     if (!renommerItem || !nouveauNom.trim()) return
     try {
       if (renommerItem.type === 'chantier') {
-        await supabaseSafe(supabase.from('chantiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
+        await supabaseSafe(supabase.from('dossiers').update({ description: nouveauNom }).eq('id', renommerItem.data.id))
         chargerTout()
       } else if (renommerItem.type === 'intermediaire') {
         const updated = await supabaseSafe(
-          supabase.from('intermediaires').update({ nom: nouveauNom.trim() }).eq('id', renommerItem.data.id).select().single()
+          supabase.from('clients').update({ nom: nouveauNom.trim() }).eq('id', renommerItem.data.id).select().single()
         )
         setIntermediaires(prev => prev.map(item => item.id === updated.id ? updated : item))
         if (intermediaireChantiersActif?.id === updated.id) setIntermediaireChantiersActif(updated)
       } else if (renommerItem.type === 'sous_dossier') {
-        await supabaseSafe(supabase.from('sous_dossiers').update({ nom: nouveauNom }).eq('id', renommerItem.data.id))
+        await supabaseSafe(supabase.from('dossiers').update({ description: nouveauNom }).eq('id', renommerItem.data.id))
         chargerSousDossiers(chantierActif.id)
       }
       setRenommerItem(null); setNouveauNom('')
@@ -1341,8 +1302,42 @@ export default function Admin() {
     setCreationChantierErreur('')
     setNouveauClientNom('')
     setNouvelIntermediaireId('')
+    setNouvelIntermediaireNom('')
     setNouveauNomChantier('')
     setNouvelleAdresse('')
+  }
+
+  async function creerIntermediaireAdmin({ closeForm = true } = {}) {
+    const nom = nouvelIntermediaireNom.trim()
+    if (!nom) return
+    const payload = { nom, actif: true }
+
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .insert(payload)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setIntermediaires(prev => [...prev, data])
+      setNouvelIntermediaireId(String(data.id))
+      setNouvelIntermediaireNom('')
+      setAjoutIntermediaire(false)
+      if (closeForm) setAjoutChantier(false)
+    } catch (err) {
+      console.error('Erreur création intermédiaire Supabase', {
+        table: 'intermediaires',
+        payload,
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code,
+        error: err
+      })
+      alert("Erreur lors de la création de l’intermédiaire")
+    }
   }
 
   async function creerChantierAdmin() {
@@ -1365,7 +1360,7 @@ export default function Admin() {
 
     const existe = chantiers.find(c =>
       String(c.nom || '').trim().toLowerCase() === nom.toLowerCase() &&
-      String(c.intermediaire_id || '') === String(intermediaireId)
+      String(c.client_id || '') === String(intermediaireId)
     )
     if (existe) {
       setCreationChantierErreur(`"${nom}" existe deja pour cet intermediaire.`)
@@ -1374,16 +1369,16 @@ export default function Admin() {
 
     try {
       const payload = {
-        nom,
-        adresse: nouvelleAdresse.trim() || null,
-        intermediaire_id: Number(intermediaireId),
-        actif: true
+        numero_affaire: nom,
+        description: nom,
+        adresse_chantier: nouvelleAdresse.trim() || null,
+        client_id: Number(intermediaireId),
+        statut: CHANTIER_STATUT_A_CONFIRMER
       }
-      if (chantierSchema.statut) payload.statut = CHANTIER_STATUT_A_CONFIRMER
-      if (chantierSchema.documentsVisibiliteEmploye) payload.documents_visibilite_employe = 'sans_prix'
+      // TODO: colonne manquante documents_visibilite_employe
 
       const created = await supabaseSafe(
-        supabase.from('chantiers').insert(payload).select('*').single()
+        supabase.from('dossiers').insert(payload).select('*').single()
       )
 
       const intermediaire = intermediaires.find(item => String(item.id) === String(intermediaireId)) || intermediaireChantiersActif || null
@@ -1399,15 +1394,18 @@ export default function Admin() {
   async function rechargerChantiersSeulement() {
     try {
       const ch = await supabaseSafe(
-        supabase.from('chantiers').select('*').eq('actif', true).order('nom')
+        supabase.from('dossiers').select('*').order('created_at')
       )
       const intermediairesById = new Map(intermediaires.map(item => [String(item.id), item]))
       const hydrates = (ch || []).map(c => ({
         ...c,
-        intermediaire: c.intermediaire_id != null
-          ? (intermediairesById.get(String(c.intermediaire_id)) || null)
+        nom: c.numero_affaire || c.description || 'Dossier',
+        adresse: c.adresse_chantier || '',
+        intermediaire_id: c.client_id,
+        intermediaire: c.client_id != null
+          ? (intermediairesById.get(String(c.client_id)) || null)
           : null
-      })).filter(c => !isStandaloneIntermediaireRecord(c, intermediaires))
+      })).filter(c => c.type !== 'depannage')
       setChantiers(hydrates)
     } catch {}
   }
@@ -1415,7 +1413,7 @@ export default function Admin() {
 
   async function valider(rid) {
     try {
-      await supabaseSafe(supabase.from('rapports').update({ valide: true }).eq('id', rid))
+      await supabaseSafe(supabase.from('rapports').update({ statut: 'valide' }).eq('id', rid))
       chargerTout()
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
       setRapportDetail(null)
@@ -1431,21 +1429,23 @@ export default function Admin() {
       const idsSupprimes = anciensIds.filter(id => !idsConserves.includes(id))
 
       if (newMat.length > 0) {
-        await supabaseSafe(supabase.from('rapport_materiaux').upsert(
+        await supabaseSafe(supabase.from('lignes_facturables').upsert(
           newMat.map(m => ({
             ...(m.id ? { id: m.id } : {}),
+            dossier_id: rapportDetail?.dossier_id || null,
             rapport_id: rapportId,
-            ref_article: m.ref_article || null,
-            designation: m.designation || m.nom,
-            unite: m.unite,
+            type: 'materiel',
+            description: m.description || m.designation || m.nom,
             quantite: m.quantite,
-            prix_net: m.prix_net || m.pu || 0
+            prix_unitaire: m.prix_unitaire || m.prix_net || m.pu || 0,
+            montant_ht: Number(m.quantite || 0) * Number(m.prix_unitaire || m.prix_net || m.pu || 0),
+            statut: 'brouillon'
           }))
         ))
       }
 
       if (idsSupprimes.length > 0) {
-        await supabaseSafe(supabase.from('rapport_materiaux').delete().in('id', idsSupprimes))
+        await supabaseSafe(supabase.from('lignes_facturables').delete().in('id', idsSupprimes))
       }
 
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
@@ -1463,10 +1463,16 @@ export default function Admin() {
     if (!rapportDetail) return
     try {
       await supabaseSafe(supabase.from('rapports').update({
-        date_travail: editRapportDate,
-        remarques: editRapportRemarques
+        date_intervention: editRapportDate,
+        notes: editRapportRemarques
       }).eq('id', rapportDetail.id))
-      setRapportDetail(prev => ({ ...prev, date_travail: editRapportDate, remarques: editRapportRemarques }))
+      setRapportDetail(prev => ({
+        ...prev,
+        date_intervention: editRapportDate,
+        date_travail: editRapportDate,
+        notes: editRapportRemarques,
+        remarques: editRapportRemarques
+      }))
       setEditRapportMode(false)
       if (sousDossierActif) chargerRapports(sousDossierActif.id)
     } catch (error) {
@@ -1484,7 +1490,7 @@ export default function Admin() {
     const updatedR = await supabaseSafe(
       supabase
         .from('rapports')
-        .select('*, employe:employe_id(prenom), sous_dossiers(id, nom, chantier_id, chantiers(id, nom)), rapport_materiaux(*), rapport_photos(*)')
+        .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
         .eq('id', rapportId)
         .single()
     )
@@ -1494,7 +1500,7 @@ export default function Admin() {
       return null
     }
 
-    const [rapportHydrate] = await hydraterRapportsDurees(await hydraterRapportsPhotos([updatedR]))
+    const [rapportHydrate] = await hydraterRapportsDurees(await hydraterRapportsMateriaux(await hydraterRapportsPhotos([updatedR])))
     setRapportDetail(rapportHydrate || null)
     if (sousDossierActif?.id) await chargerRapports(sousDossierActif.id)
     return rapportHydrate || null
@@ -1504,27 +1510,9 @@ export default function Admin() {
     const files = Array.from(fileList || []).filter(Boolean)
     if (!rapportDetail?.id || files.length === 0 || adminPhotoSaving) return
 
-    const sourceItem = sousDossiers.find(item => item.id === sousDossierActif?.id) || sousDossierActif
-    const affaireId = rapportDetail.affaire_id || (sourceItem?.isAffaire ? sourceItem.id : null) || null
-    const sousDossierId = rapportDetail.sous_dossiers?.id || rapportDetail.sous_dossier_id || (!sourceItem?.isAffaire ? sousDossierActif?.id : null) || null
-    const chantierId = rapportDetail.sous_dossiers?.chantier_id || rapportDetail.sous_dossiers?.chantiers?.id || rapportDetail.affaires?.chantier_id || sourceItem?.chantier_id || chantierActif?.id || null
-
-    if ((!sousDossierId && !affaireId) || !chantierId) {
-      alert("Impossible d'ajouter des photos sans dossier chantier rattache au rapport.")
-      return
-    }
-
     setAdminPhotoSaving(true)
     try {
-      await uploadRapportPhotos({
-        rapportId: rapportDetail.id,
-        depannageId: rapportDetail.depannage_id || null,
-        chantierId,
-        affaireId,
-        sousDossierId,
-        files,
-        userId: user?.id || null
-      })
+      // TODO: table manquante rapport_photos
       await rechargerRapportDetail(rapportDetail.id)
       chargerTout()
     } catch (error) {
@@ -1542,7 +1530,7 @@ export default function Admin() {
 
     setAdminPhotoSaving(true)
     try {
-      await deleteRapportPhoto(photo)
+      // TODO: table manquante rapport_photos
       await rechargerRapportDetail(rapportDetail?.id)
       chargerTout()
     } catch (error) {
@@ -1556,22 +1544,9 @@ export default function Admin() {
   async function basculerVisibiliteDocuments(chantier) {
     if (!chantier?.id) return
 
-    const nextVisibilite = chantier.documents_visibilite_employe === 'complet' ? 'sans_prix' : 'complet'
-
     try {
-      const updated = await supabaseSafe(
-        supabase
-          .from('chantiers')
-          .update({ documents_visibilite_employe: nextVisibilite })
-          .eq('id', chantier.id)
-          .select()
-          .single()
-      )
-
-      if (!updated) throw new Error('chantier_documents_visibility_update_empty')
-
-      setChantiers(prev => prev.map(item => item.id === updated.id ? updated : item))
-      if (chantierActif?.id === updated.id) setChantierActif(updated)
+      // TODO: colonne manquante documents_visibilite_employe
+      alert("La visibilite des documents n'est pas disponible dans le schema Supabase V1.")
     } catch (error) {
       console.error('Erreur mise a jour visibilite documents chantier', error)
       alert("Impossible de modifier la visibilite des documents pour l'instant.")
@@ -1631,10 +1606,11 @@ export default function Admin() {
   }
 
   function depannageResponsableLabel(depannage) {
-    return getInitiales(depannage.pris_par_user) || 'Aucun'
+    return depannage.created_by ? String(depannage.created_by).slice(0, 2).toUpperCase() : 'Aucun'
   }
 
   function depannageIntervenantsCount(depannage) {
+    // TODO: table manquante depannage_intervenants
     return (depannage.depannage_intervenants || []).length
   }
 
@@ -1649,7 +1625,7 @@ export default function Admin() {
     try {
       const updated = await supabaseSafe(
         supabase
-          .from('chantiers')
+          .from('dossiers')
           .update({ statut: nextStatus })
           .eq('id', chantier.id)
           .select()
@@ -2153,7 +2129,7 @@ export default function Admin() {
                 const existe = sousDossiers.find(s => s.nom.toLowerCase() === nouveauSdNom.toLowerCase())
                 if (existe) { alert(`"${nouveauSdNom}" existe déjà !`); return }
                 try {
-                  await supabaseSafe(supabase.from('sous_dossiers').insert({ chantier_id: chantierActif.id, nom: nouveauSdNom }))
+                  await supabaseSafe(supabase.from('dossiers').insert({ client_id: chantierActif.client_id || null, description: nouveauSdNom }))
                   setNouveauSdNom(''); setNouveauSd(false); chargerSousDossiers(chantierActif.id)
                 } catch (error) {
                   alert('Erreur lors de la création du sous-dossier. Veuillez réessayer.')
@@ -2197,7 +2173,7 @@ export default function Admin() {
                   <div className="row-item">
                     <div>
                       <div style={{ fontWeight: 500, fontSize: '12px' }}>Documents</div>
-                      <div style={{ fontSize: '11px', color: '#888' }}>Visibilite employe: {chantierActif.documents_visibilite_employe === 'complet' ? 'complet' : 'sans prix'}</div>
+                      <div style={{ fontSize: '11px', color: '#888' }}>Visibilite employe: indisponible schema V1</div>
                     </div>
                     <button type="button" className="btn-outline btn-sm" style={{ width: 'auto' }} onClick={() => basculerVisibiliteDocuments(chantierActif)}>Modifier</button>
                   </div>
@@ -2268,8 +2244,13 @@ export default function Admin() {
         }}
         rightSlot={adminHeaderRight(
           <button className="btn-primary btn-sm" style={adminHeaderPlusStyle} onClick={() => {
-            if (intermediaireChantiersActif?.id) setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
-            setAjoutIntermediaire(false)
+            if (intermediaireChantiersActif?.id) {
+              setNouvelIntermediaireId(String(intermediaireChantiersActif.id))
+              setAjoutIntermediaire(false)
+            } else {
+              setNouvelIntermediaireId('')
+              setAjoutIntermediaire(true)
+            }
             setCreationChantierErreur('')
             setAjoutChantier(true)
           }}>+</button>
@@ -2284,7 +2265,22 @@ export default function Admin() {
             Statuts chantier indisponibles : la colonne chantiers.statut est absente dans la base Supabase.
           </div>
         )}
-        {ajoutChantier && (
+        {ajoutChantier && ajoutIntermediaire && !intermediaireChantiersActif && (
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouvel intermédiaire</div>
+            <input
+              placeholder="Nom de l’intermédiaire *"
+              value={nouvelIntermediaireNom}
+              onChange={e => setNouvelIntermediaireNom(e.target.value)}
+              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }}
+            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button type="button" className="btn-outline" style={{ flex: 1 }} onClick={resetNouveauChantierForm}>Annuler</button>
+              <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={() => creerIntermediaireAdmin()}>Créer</button>
+            </div>
+          </div>
+        )}
+        {ajoutChantier && (!ajoutIntermediaire || intermediaireChantiersActif) && (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>Nouveau chantier</div>
             {intermediaireChantiersActif ? (
@@ -2326,33 +2322,7 @@ export default function Admin() {
                 <button
                   type="button"
                   className="btn-outline btn-sm"
-                  onClick={async () => {
-                    if (!nouvelIntermediaireNom.trim()) return
-
-                    try {
-                      const { data, error } = await supabase
-                        .from('intermediaires')
-                        .insert({ nom: nouvelIntermediaireNom.trim(), type: 'intermediaire', actif: true })
-                        .select()
-                        .single()
-
-                      if (error) throw error
-
-                      // mettre à jour la liste locale
-                      setIntermediaires(prev => [...prev, data])
-
-                      // sélectionner automatiquement
-                      setNouvelIntermediaireId(String(data.id))
-
-                      // reset
-                      setNouvelIntermediaireNom('')
-                      setAjoutIntermediaire(false)
-
-                    } catch (err) {
-                      console.error('Erreur création intermédiaire', err)
-                      alert("Erreur lors de la création de l’intermédiaire")
-                    }
-                  }}
+                  onClick={() => creerIntermediaireAdmin({ closeForm: false })}
                 >
                   OK
                 </button>
@@ -2374,7 +2344,7 @@ export default function Admin() {
           </div>
         )}
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderColor: '#D8E3EF', boxShadow: '0 6px 18px rgba(24, 95, 165, 0.06)' }}>
-          {!intermediaireChantiersActif && intermediairesChantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun intermÃ©diaire</div>}
+          {!intermediaireChantiersActif && intermediairesChantiers.length === 0 && <div style={{ fontSize: '13px', color: '#888' }}>Aucun intermédiaire</div>}
           {!intermediaireChantiersActif && intermediairesChantiers.map(intermediaire => {
             const count = chantiers.filter(chantier => chantierBelongsToIntermediaire(chantier, intermediaire)).length
             return (
@@ -2518,10 +2488,21 @@ export default function Admin() {
               setAjoutRegieSaving(true)
               setAjoutRegieErreur('')
               try {
-                const nomNormalise = nom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
-                const { data, error } = await supabase.from('regies').insert({ nom, nom_normalise: nomNormalise, actif: true }).select('id, nom, nom_normalise').single()
+                const { data: client, error: clientError } = await supabase
+                  .from('clients')
+                  .insert({ nom, type: 'regie', actif: true })
+                  .select('id, nom')
+                  .single()
+                if (clientError) throw clientError
+
+                const { data, error } = await supabase
+                  .from('regies_clients')
+                  .insert({ client_id: client.id })
+                  .select('id, client_id, notes')
+                  .single()
                 if (error) throw error
-                setRegies(prev => [...prev, data].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')))
+
+                setRegies(prev => [...prev, { ...data, clients: client, nom: client.nom }].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')))
                 setNouvelleRegieNom('')
                 setAjoutRegie(false)
               } catch (err) {
@@ -2584,11 +2565,14 @@ export default function Admin() {
               setAjoutDepannageErreur('')
               try {
                 const regieObj = regies.find(r => r.nom === selectedRegieNom)
-                const { error } = await supabase.from('depannages').insert({
-                  date_travail: nouveauDepannageDate,
-                  adresse: nouveauDepannageAdresse.trim(),
-                  numero_bon: nouveauDepannageBon.trim() || null,
-                  regie_id: regieObj?.id || null,
+                const { error } = await supabase.from('dossiers').insert({
+                  type: 'depannage',
+                  client_id: regieObj?.client_id || null,
+                  numero_affaire: nouveauDepannageBon.trim() || null,
+                  adresse_chantier: nouveauDepannageAdresse.trim(),
+                  statut: 'A traiter',
+                  description: nouveauDepannageDate,
+                  created_by: user?.id || null
                 })
                 if (error) throw error
                 setAjoutDepannage(false)

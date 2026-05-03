@@ -1,4 +1,5 @@
 import React from 'react'
+import { useAuth } from '../lib/auth-context'
 
 const sideStyle = {
   position: 'absolute',
@@ -27,7 +28,27 @@ const backButtonStyle = {
   flexShrink: 0
 }
 
+function getUserInitiales(user) {
+  const initiales = String(user?.initiales || '').trim()
+  if (initiales) return initiales.toUpperCase()
+
+  const prenom = String(user?.prenom || '').trim()
+  if (prenom) return prenom.slice(0, 2).toUpperCase()
+
+  const nom = String(user?.nom || '').trim()
+  if (nom) return nom.slice(0, 2).toUpperCase()
+
+  const email = String(user?.email || '').trim()
+  if (email) return email.slice(0, 2).toUpperCase()
+
+  return ''
+}
+
 export default function PageHeader({ title, subtitle, onBack, rightSlot }) {
+  const auth = useAuth()
+  const user = auth?.profile || auth?.user || null
+  const fallbackInitiales = getUserInitiales(user)
+
   return (
     <div
       className="top-bar"
@@ -78,7 +99,7 @@ export default function PageHeader({ title, subtitle, onBack, rightSlot }) {
       </div>
 
       <div style={{ ...sideStyle, right: '16px', justifyContent: 'flex-end' }}>
-        {rightSlot}
+        {rightSlot || (fallbackInitiales && <button type="button" className="avatar">{fallbackInitiales}</button>)}
       </div>
     </div>
   )

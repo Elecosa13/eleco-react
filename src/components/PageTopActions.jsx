@@ -35,7 +35,7 @@ export default function PageTopActions({
   showBack = true
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
       {showBack && (
         <button
           type="button"

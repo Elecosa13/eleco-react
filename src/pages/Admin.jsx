@@ -514,7 +514,7 @@ export default function Admin() {
 
       const rap = await adminDashboardQuery('rapports_attente', supabase.from('rapports')
         .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
-        .neq('statut', 'valide').order('created_at', { ascending: false }))
+        .neq('statut', 'valide').order('date_intervention', { ascending: false }))
 
       if (rap && rap.length > 0) {
         const rapportsHydrates = await hydraterRapportsMateriaux(await hydraterRapportsPhotos(rap))
@@ -526,7 +526,7 @@ export default function Admin() {
       // Recharge la corbeille rapports depuis la DB (survive au rechargement de page)
       const rapsSupprimes = await adminDashboardQuery('rapports_corbeille', supabase.from('rapports')
         .select('id, dossier_id, employe_id, date_intervention, heures, heures_deplacement, materiaux_notes, notes, statut, created_at, employe:employe_id(prenom)')
-        .eq('statut', 'archive').order('created_at', { ascending: false }))
+        .eq('statut', 'archive').order('date_intervention', { ascending: false }))
       if (rapsSupprimes && rapsSupprimes.length > 0) {
         const rapsSupprimesHydrates = await hydraterRapportsDurees(rapsSupprimes)
         setCorbeille(prev => {
@@ -2507,7 +2507,7 @@ export default function Admin() {
                 setAjoutRegie(false)
               } catch (err) {
                 console.error('Erreur création régie', err)
-                setAjoutRegieErreur(err.message || 'Erreur lors de la création.')
+                setAjoutRegieErreur(err.message || 'Erreur inconnue — vérifiez la console.')
               } finally {
                 setAjoutRegieSaving(false)
               }

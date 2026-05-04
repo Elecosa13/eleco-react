@@ -547,7 +547,7 @@ export default function Admin() {
       let intermediairesListe = []
       try {
         intermediairesListe = await adminDashboardQuery('intermediaires',
-          supabase.from('clients').select('id, nom, actif').eq('actif', true).order('nom')
+          supabase.from('clients').select('id, nom, actif').eq('actif', true).eq('type', 'intermediaire').order('nom')
         ) || []
       } catch {
         intermediairesListe = []
@@ -1310,7 +1310,7 @@ export default function Admin() {
   async function creerIntermediaireAdmin({ closeForm = true } = {}) {
     const nom = nouvelIntermediaireNom.trim()
     if (!nom) return
-    const payload = { nom, actif: true }
+    const payload = { nom, type: 'intermediaire', actif: true }
 
     try {
       const { data, error } = await supabase
@@ -1336,7 +1336,7 @@ export default function Admin() {
         code: err?.code,
         error: err
       })
-      alert("Erreur lors de la création de l’intermédiaire")
+      alert("Erreur lors de la creation de l’intermediaire : " + (err?.message || "Erreur inconnue"))
     }
   }
 

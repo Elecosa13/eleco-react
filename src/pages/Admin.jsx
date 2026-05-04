@@ -217,6 +217,105 @@ async function adminDashboardQuery(name, queryPromise, fallback = []) {
   return data
 }
 
+function normaliserEmploye(row) {
+  const prenom = String(row?.prenom || row?.nom || '').trim()
+  return {
+    ...row,
+    prenom,
+    initiales: row?.initiales || prenom.slice(0, 2).toUpperCase()
+  }
+}
+
+function normaliserRoleUtilisateur(role) {
+  return String(role || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+function normaliserNomUtilisateur(row) {
+  return String(row?.prenom || row?.nom || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+function isEmployeAdmin(row) {
+  const role = normaliserRoleUtilisateur(row?.role)
+  if (['employe', 'employee', 'ouvrier'].includes(role)) return true
+  if (['admin', 'administrateur'].includes(role)) return false
+
+  return isEmployeEleco(row)
+}
+
+function isEmployeEleco(row) {
+  return ['paulo', 'bruno', 'ivo', 'noylan'].includes(normaliserNomUtilisateur(row))
+}
+
+function isMissingUtilisateurColumnError(error, column) {
+  const message = String(error?.message || '')
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    message.includes(`utilisateurs.${column}`) ||
+    message.includes(`'${column}' column`) ||
+    message.includes(`column utilisateurs.${column} does not exist`)
+  )
+}
+
+async function chargerEmployesAdmin() {
+  const utilisateursQueries = [
+    {
+      name: 'utilisateurs_prenom_role_quota',
+      run: () => supabase.from('utilisateurs').select('id, prenom, role, initiales, vacances_quota_annuel').order('prenom')
+    },
+    {
+      name: 'utilisateurs_nom_role_quota',
+      run: () => supabase.from('utilisateurs').select('id, nom, role, initiales, vacances_quota_annuel').order('nom')
+    },
+    {
+      name: 'utilisateurs_prenom_role',
+      run: () => supabase.from('utilisateurs').select('id, prenom, role, initiales').order('prenom')
+    },
+    {
+      name: 'utilisateurs_nom_role',
+      run: () => supabase.from('utilisateurs').select('id, nom, role, initiales').order('nom')
+    }
+  ]
+
+  for (const query of utilisateursQueries) {
+    const { data, error } = await query.run()
+    if (error) {
+      if (
+        isMissingUtilisateurColumnError(error, 'prenom') ||
+        isMissingUtilisateurColumnError(error, 'nom') ||
+        isMissingUtilisateurColumnError(error, 'role') ||
+        isMissingUtilisateurColumnError(error, 'vacances_quota_annuel')
+      ) {
+        logAdminDashboardQueryError(query.name, error)
+        continue
+      }
+      throw error
+    }
+
+    const employes = (data || []).filter(isEmployeAdmin).map(normaliserEmploye)
+    if (employes.length > 0) return employes
+  }
+
+  const { data: profils, error: profilsError } = await supabase
+    .from('profils_publics')
+    .select('id, prenom, initiales')
+    .order('prenom')
+
+  if (profilsError) throw profilsError
+
+  return (profils || [])
+    .filter(isEmployeEleco)
+    .map(normaliserEmploye)
+}
+
 export default function Admin() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -603,10 +702,8 @@ export default function Admin() {
       setCatalogue(cat)
       setCategories(['Tous', ...Array.from(new Set(cat.map(a => a.categorie).filter(Boolean)))])
 
-      let emp = null
       try {
-        emp = await adminDashboardQuery('utilisateurs', supabase.from('utilisateurs').select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom')) || []
-        setEmployes(emp || [])
+        setEmployes(await chargerEmployesAdmin())
       } catch { setEmployes([]) }
     } catch (error) {
       console.error('Erreur chargement admin', error)
@@ -638,10 +735,7 @@ export default function Admin() {
     try {
       // TODO: table manquante vacances
       // TODO: table manquante vacances_blocages
-      const listeEmp = await supabaseSafe(supabase.from('utilisateurs')
-          .select('id, prenom, initiales, vacances_quota_annuel')
-          .eq('role', 'employe')
-          .order('prenom'))
+      const listeEmp = await chargerEmployesAdmin()
 
       setVacancesAdmin([])
       setBlocagesVacances([])
@@ -794,10 +888,17 @@ export default function Admin() {
 
   async function chargerStatsEmployes() {
     setEmpLoading(true)
-    const { data: listeEmp } = await supabase.from('utilisateurs')
-      .select('id, prenom, initiales, vacances_quota_annuel').eq('role', 'employe').order('prenom')
-    if (!listeEmp || listeEmp.length === 0) { setEmpLoading(false); return }
-    setEmployes(listeEmp)
+    let listeEmp = []
+    try {
+      listeEmp = await chargerEmployesAdmin()
+      setEmployes(listeEmp)
+    } catch (error) {
+      console.error('Erreur chargement employes admin', error)
+      setEmployes([])
+      setEmpLoading(false)
+      return
+    }
+    if (listeEmp.length === 0) { setEmpLoading(false); return }
 
     const now = new Date()
     const { debut: debutMois, fin: finMois } = debutFin(now.getFullYear(), now.getMonth())

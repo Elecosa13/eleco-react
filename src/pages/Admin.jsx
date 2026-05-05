@@ -1462,7 +1462,7 @@ export default function Admin() {
     }
 
     const existe = chantiers.find(c =>
-      String(c.nom || '').trim().toLowerCase() === nom.toLowerCase() &&
+      String(c.numero_affaire || '').trim().toLowerCase() === nom.toLowerCase() &&
       String(c.client_id || '') === String(intermediaireId)
     )
     if (existe) {
@@ -1472,20 +1472,26 @@ export default function Admin() {
 
     try {
       const payload = {
+        type: 'chantier',
         numero_affaire: nom,
         description: nom,
         adresse_chantier: nouvelleAdresse.trim() || null,
-        client_id: Number(intermediaireId),
-        statut: CHANTIER_STATUT_A_CONFIRMER
+        client_id: intermediaireId,
+        statut: 'en_cours'
       }
-      // TODO: colonne manquante documents_visibilite_employe
 
       const created = await supabaseSafe(
         supabase.from('dossiers').insert(payload).select('*').single()
       )
 
-      const intermediaire = intermediaires.find(item => String(item.id) === String(intermediaireId)) || intermediaireChantiersActif || null
-      setChantiers(prev => [...prev, { ...created, intermediaire }])
+      setChantiers(prev => [...prev, {
+        id: created.id,
+        numero_affaire: created.numero_affaire,
+        type: 'chantier',
+        client_id: created.client_id,
+        statut: 'en_cours',
+        adresse_chantier: created.adresse_chantier,
+      }])
       resetNouveauChantierForm()
       await rechargerChantiersSeulement()
     } catch (error) {

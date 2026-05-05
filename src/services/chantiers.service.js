@@ -60,7 +60,7 @@ export function isStandaloneIntermediaireRecord(chantier, intermediaires = []) {
 
 export function chantierBelongsToIntermediaire(chantier, intermediaire) {
   if (!chantier || !intermediaire) return false
-  if (chantier.intermediaire_id && String(chantier.intermediaire_id) === String(intermediaire.id)) return true
+  if (chantier.client_id != null && String(chantier.client_id) === String(intermediaire.id)) return true
 
   const label = normaliserNom(getChantierClientLabel(chantier))
   const nom = normaliserNom(intermediaire.nom)

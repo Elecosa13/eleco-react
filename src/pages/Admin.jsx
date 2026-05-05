@@ -672,8 +672,10 @@ export default function Admin() {
 
       let regs = null
       try {
-        regs = await adminDashboardQuery('regies', supabase.from('regies_clients').select('id, client_id, notes, clients(id, nom)').order('created_at'))
-        regs = (regs || []).map(regie => ({ ...regie, nom: regie.clients?.nom || regie.notes || `Client ${regie.client_id || regie.id}` }))
+        regs = await adminDashboardQuery('regies',
+          supabase.from('clients').select('id, nom, actif, type').eq('actif', true).eq('type', 'regie').order('nom')
+        )
+        regs = (regs || []).map(regie => ({ ...regie, client_id: regie.id, nom: regie.nom || `Client ${regie.id}` }))
         setRegies(regs || [])
       } catch { setRegies([]) }
 
@@ -2603,7 +2605,7 @@ export default function Admin() {
                   .single()
                 if (error) throw error
 
-                setRegies(prev => [...prev, { ...data, clients: client, nom: client.nom }].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')))
+                setRegies(prev => [...prev, { ...client, client_id: client.id, actif: true, type: 'regie', nom: client.nom }].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')))
                 setNouvelleRegieNom('')
                 setAjoutRegie(false)
               } catch (err) {

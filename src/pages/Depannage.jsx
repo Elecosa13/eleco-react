@@ -21,22 +21,137 @@ function saveFavoris(favoris) {
   safeLocalStorage.setJSON(FAVORIS_KEY, favoris)
 }
 
-function buildRegiesFromRegiesClients(regiesClients) {
-  return (regiesClients || [])
-    .filter(regie => regie.client_id)
-    .map(regie => ({
-      id: regie.client_id,
-      nom: regie.clients?.nom || `Client ${regie.client_id}`,
-      nom_normalise: String(regie.clients?.nom || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    }))
+function buildRegiesFromClients(clients) {
+  return (clients || []).map(client => ({
+    id: client.id,
+    nom: client.nom || `Client ${client.id}`,
+    nom_normalise: String(client.nom || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  }))
 }
 
 function mapDossierToChantierOption(dossier) {
+  const numero = String(dossier.numero_affaire || '').trim()
+  const adresse = String(dossier.adresse_chantier || '').trim()
   return {
     id: dossier.id,
-    nom: dossier.numero_affaire || dossier.description || 'Dossier',
-    adresse: dossier.adresse_chantier || ''
+    nom: [numero, adresse].filter(Boolean).join(' - ') || 'Dossier',
+    adresse
   }
+}
+
+function enrichSupabaseError(error, queryContext) {
+  if (!error) return error
+  return Object.assign(error, queryContext)
+}
+
+async function runDepannageQuery(queryContext, queryPromise) {
+  try {
+    const result = await queryPromise
+    if (result?.error) {
+      return {
+        ...result,
+        error: enrichSupabaseError(result.error, queryContext)
+      }
+    }
+    return result
+  } catch (error) {
+    throw enrichSupabaseError(error, queryContext)
+  }
+}
+
+function logDepannageLoadError(error) {
+  console.error('[Depannage] Echec chargement Nouveau depannage', {
+    queryName: error?.queryName || null,
+    table: error?.queryTable || null,
+    operation: error?.queryOperation || null,
+    select: error?.querySelect || null,
+    filters: error?.queryFilters || null,
+    order: error?.queryOrder || null,
+    supabase: {
+      message: error?.message || null,
+      code: error?.code || null,
+      details: error?.details || null,
+      hint: error?.hint || null,
+      status: error?.status || null
+    },
+    error
+  })
+}
+
+function isMissingColumnError(error, column) {
+  const message = String(error?.message || '')
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    message.includes(`utilisateurs.${column}`) ||
+    message.includes(`'${column}' column`) ||
+    message.includes(`column utilisateurs.${column} does not exist`)
+  )
+}
+
+async function chargerEmployesDepannage() {
+  const withInitialesContext = {
+    queryName: 'charger.employes',
+    queryTable: 'utilisateurs',
+    queryOperation: 'select',
+    querySelect: 'id, nom, initiales',
+    queryFilters: { role: 'employe' },
+    queryOrder: 'nom'
+  }
+
+  const withInitialesResult = await runDepannageQuery(
+    withInitialesContext,
+    supabase.from('utilisateurs').select('id, nom, initiales').eq('role', 'employe').order('nom')
+  )
+
+  if (!withInitialesResult.error) return withInitialesResult
+  if (!isMissingColumnError(withInitialesResult.error, 'initiales')) return withInitialesResult
+
+  logDepannageLoadError(withInitialesResult.error)
+
+  return runDepannageQuery({
+    ...withInitialesContext,
+    querySelect: 'id, nom'
+  }, supabase.from('utilisateurs').select('id, nom').eq('role', 'employe').order('nom'))
+}
+
+async function chargerRegiesDepannage() {
+  return runDepannageQuery({
+    queryName: 'charger.regies',
+    queryTable: 'clients',
+    queryOperation: 'select',
+    querySelect: 'id, nom, type',
+    queryFilters: { type: 'regie' },
+    queryOrder: 'nom'
+  }, supabase.from('clients').select('id, nom, type').eq('type', 'regie').order('nom'))
+}
+
+async function chargerChantiersDepannage() {
+  const chantierContext = {
+    queryName: 'charger.chantiers',
+    queryTable: 'dossiers',
+    queryOperation: 'select',
+    querySelect: 'id, numero_affaire, type, client_id, adresse_chantier',
+    queryFilters: { type: 'chantier' },
+    queryOrder: 'numero_affaire'
+  }
+
+  const chantierResult = await runDepannageQuery(
+    chantierContext,
+    supabase
+      .from('dossiers')
+      .select('id, numero_affaire, type, client_id, adresse_chantier')
+      .eq('type', 'chantier')
+      .order('numero_affaire')
+  )
+
+  if (chantierResult.error || (chantierResult.data || []).length > 0) return chantierResult
+
+  return runDepannageQuery({
+    ...chantierContext,
+    queryFilters: null,
+    queryOrder: 'created_at'
+  }, supabase.from('dossiers').select('id, numero_affaire, type, client_id, adresse_chantier').order('created_at'))
 }
 
 export default function Depannage({ mode = 'employe' }) {
@@ -88,7 +203,16 @@ export default function Depannage({ mode = 'employe' }) {
 
   useEffect(() => {
     chargerCredit(date).catch(error => {
-      console.error('Erreur chargement credit depannage', error)
+      logDepannageLoadError(enrichSupabaseError(error, {
+        queryName: 'charger.credit',
+        queryTable: 'rapports',
+        queryOperation: 'select',
+        querySelect: 'heures, heures_deplacement',
+        queryFilters: {
+          employe_id: isAdminMode ? employeId : user?.id,
+          date_intervention: date
+        }
+      }))
       setErreur('Impossible de charger les données. Réessaie dans un instant.')
     })
   }, [date, user?.id, employeId, isAdminMode])
@@ -100,36 +224,53 @@ export default function Depannage({ mode = 'employe' }) {
 
     try {
       const [regiesResult, catalogueResult, chantiersResult, employesResult] = await Promise.all([
-        supabase.from('regies_clients').select('id, client_id, clients(id, nom)').order('created_at'),
-        supabase.from('catalogue_employe').select('id, categorie, nom, unite').order('categorie').order('nom'),
-        supabase.from('dossiers').select('id, numero_affaire, description, adresse_chantier, statut').order('created_at'),
+        chargerRegiesDepannage(),
+        runDepannageQuery({
+          queryName: 'charger.catalogue',
+          queryTable: 'catalogue_employe',
+          queryOperation: 'select',
+          querySelect: 'id, categorie, nom, unite',
+          queryOrder: 'categorie, nom'
+        }, supabase.from('catalogue_employe').select('id, categorie, nom, unite').order('categorie').order('nom')),
+        chargerChantiersDepannage(),
         isAdminMode
-          ? supabase.from('utilisateurs').select('id, prenom, initiales').eq('role', 'employe').order('prenom')
+          ? chargerEmployesDepannage()
           : Promise.resolve({ data: [], error: null })
       ])
 
       if (regiesResult.error) throw Object.assign(regiesResult.error, {
-        queryName: 'charger.regies depuis depannages',
-        queryTable: 'regies_clients',
-        querySelect: 'id, client_id'
+        queryName: 'charger.regies',
+        queryTable: 'clients',
+        queryOperation: 'select',
+        querySelect: 'id, nom, type',
+        queryFilters: { type: 'regie' },
+        queryOrder: 'nom'
       })
       if (catalogueResult.error) throw Object.assign(catalogueResult.error, {
         queryName: 'charger.catalogue',
         queryTable: 'catalogue_employe',
-        querySelect: 'id, categorie, nom, unite'
+        queryOperation: 'select',
+        querySelect: 'id, categorie, nom, unite',
+        queryOrder: 'categorie, nom'
       })
       if (chantiersResult.error) throw Object.assign(chantiersResult.error, {
         queryName: 'charger.chantiers',
         queryTable: 'dossiers',
-        querySelect: 'id, numero_affaire, description, adresse_chantier, statut'
+        queryOperation: 'select',
+        querySelect: 'id, numero_affaire, type, client_id, adresse_chantier',
+        queryFilters: { type: 'chantier' },
+        queryOrder: 'numero_affaire'
       })
       if (employesResult.error) throw Object.assign(employesResult.error, {
         queryName: 'charger.employes',
         queryTable: 'utilisateurs',
-        querySelect: 'id, prenom, initiales'
+        queryOperation: 'select',
+        querySelect: 'id, nom, initiales',
+        queryFilters: { role: 'employe' },
+        queryOrder: 'nom'
       })
 
-      const listeRegies = buildRegiesFromRegiesClients(regiesResult.data || [])
+      const listeRegies = buildRegiesFromClients(regiesResult.data || [])
       const nonAssignee = listeRegies.find(regie => regie.nom_normalise === 'non assignee')
       setRegies(listeRegies)
       setRegieNonAssigneeId(nonAssignee?.id || '')
@@ -147,16 +288,7 @@ export default function Depannage({ mode = 'employe' }) {
 
       await chargerCredit(date)
     } catch (error) {
-      console.error('Erreur chargement depannage Supabase', {
-        queryName: error?.queryName,
-        table: error?.queryTable,
-        select: error?.querySelect,
-        message: error?.message,
-        details: error?.details,
-        hint: error?.hint,
-        code: error?.code,
-        error
-      })
+      logDepannageLoadError(error)
       setErreur('Impossible de charger les données. Réessaie dans un instant.')
     } finally {
       setLoading(false)
@@ -719,7 +851,7 @@ export default function Depannage({ mode = 'employe' }) {
                 <select value={employeId} onChange={event => setEmployeId(event.target.value)} required>
                   <option value="">Sélectionner un employé...</option>
                   {employes.map(employe => (
-                    <option key={employe.id} value={employe.id}>{employe.prenom || employe.initiales || 'Employé'}</option>
+                    <option key={employe.id} value={employe.id}>{employe.nom || employe.prenom || employe.initiales || 'Employé'}</option>
                   ))}
                 </select>
               </div>
@@ -750,7 +882,16 @@ export default function Depannage({ mode = 'employe' }) {
                 try {
                   await chargerCredit(nextDate)
                 } catch (error) {
-                  console.error('Erreur chargement credit depannage', error)
+                  logDepannageLoadError(enrichSupabaseError(error, {
+                    queryName: 'charger.credit',
+                    queryTable: 'rapports',
+                    queryOperation: 'select',
+                    querySelect: 'heures, heures_deplacement',
+                    queryFilters: {
+                      employe_id: isAdminMode ? employeId : user?.id,
+                      date_intervention: nextDate
+                    }
+                  }))
                   setErreur('Impossible de charger les données. Réessaie dans un instant.')
                 }
               }} required disabled={rapportEmployeVerrouille} />
